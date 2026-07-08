@@ -1,0 +1,14 @@
+/*
+ * Global stylesheet for the Coda web app (Tailwind 4, CSS-first).
+ *
+ * Pulls in Tailwind and the shared design tokens from `@coda/config` so the
+ * app and `@coda/ui` components stay on one token surface. Add app-only tokens
+ * under the local `@theme` block below.
+ */
+@import "tailwindcss";
+@import "@coda/config/tailwind/preset.css";
+
+@theme {
+  --color-surface: oklch(0.99 0 0);
+  --color-ink: oklch(0.2 0.02 300);
+}
