@@ -29,6 +29,22 @@ enum AlbumArtistRole {
   @@map("album_artist_role")
 }
 
+enum ActivityType {
+  LISTEN
+  RATING
+  REVIEW
+
+  @@map("activity_type")
+}
+
+enum RecommendationStatus {
+  ACTIVE
+  DISMISSED
+  CONSUMED
+
+  @@map("recommendation_status")
+}
+
 model User {
   id          String   @id @default(uuid()) @db.Uuid
   clerkUserId String   @unique @map("clerk_user_id")
@@ -36,13 +52,18 @@ model User {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  profile   Profile?
-  listens   Listen[]
-  ratings   Rating[]
-  reviews   Review[]
-  lists     List[]
-  following Follow[] @relation("Follower")
-  followers Follow[] @relation("Following")
+  profile          Profile?
+  listens          Listen[]
+  ratings          Rating[]
+  reviews          Review[]
+  lists            List[]
+  following        Follow[]              @relation("Follower")
+  followers        Follow[]              @relation("Following")
+  genrePreferences UserGenrePreference[]
+  artistFavorites  UserArtistFavorite[]
+  albumFavorites   UserAlbumFavorite[]
+  activityEvents   ActivityEvent[]
+  recommendations  Recommendation[]
 
   @@map("users")
 }
@@ -67,9 +88,10 @@ model Genre {
   name          String
   parentGenreId String? @map("parent_genre_id") @db.Uuid
 
-  parent   Genre?       @relation("GenreHierarchy", fields: [parentGenreId], references: [id])
-  children Genre[]      @relation("GenreHierarchy")
-  albums   AlbumGenre[]
+  parent          Genre?                @relation("GenreHierarchy", fields: [parentGenreId], references: [id])
+  children        Genre[]               @relation("GenreHierarchy")
+  albums          AlbumGenre[]
+  userPreferences UserGenrePreference[]
 
   @@index([parentGenreId])
   @@map("genres")
@@ -84,8 +106,9 @@ model Artist {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  albums       Album[]       @relation("PrimaryArtist")
-  albumArtists AlbumArtist[]
+  albums        Album[]              @relation("PrimaryArtist")
+  albumArtists  AlbumArtist[]
+  userFavorites UserArtistFavorite[]
 
   @@index([name])
   @@map("artists")
@@ -104,14 +127,17 @@ model Album {
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  primaryArtist Artist        @relation("PrimaryArtist", fields: [primaryArtistId], references: [id])
-  artists       AlbumArtist[]
-  genres        AlbumGenre[]
-  tracks        Track[]
-  listens       Listen[]
-  ratings       Rating[]
-  reviews       Review[]
-  listItems     ListItem[]
+  primaryArtist   Artist              @relation("PrimaryArtist", fields: [primaryArtistId], references: [id])
+  artists         AlbumArtist[]
+  genres          AlbumGenre[]
+  tracks          Track[]
+  listens         Listen[]
+  ratings         Rating[]
+  reviews         Review[]
+  listItems       ListItem[]
+  userFavorites   UserAlbumFavorite[]
+  activityEvents  ActivityEvent[]
+  recommendations Recommendation[]
 
   @@index([releaseDate])
   @@index([popularityScore(sort: Desc)])
@@ -167,8 +193,9 @@ model Listen {
   source     ListenSource @default(MANUAL)
   note       String?      @db.Text
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  album Album @relation(fields: [albumId], references: [id])
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album          Album           @relation(fields: [albumId], references: [id])
+  activityEvents ActivityEvent[]
 
   @@index([userId, listenedAt(sort: Desc)])
   @@index([albumId])
@@ -178,13 +205,14 @@ model Listen {
 model Rating {
   userId    String   @map("user_id") @db.Uuid
   albumId   String   @map("album_id") @db.Uuid
-  score     Int
+  score     Int // 1-10
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  album  Album   @relation(fields: [albumId], references: [id])
-  review Review?
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album          Album           @relation(fields: [albumId], references: [id])
+  review         Review?
+  activityEvents ActivityEvent[]
 
   @@id([userId, albumId])
   @@index([albumId, score(sort: Desc)])
@@ -200,9 +228,10 @@ model Review {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  album  Album  @relation(fields: [albumId], references: [id])
-  rating Rating @relation(fields: [userId, albumId], references: [userId, albumId])
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album          Album           @relation(fields: [albumId], references: [id])
+  rating         Rating          @relation(fields: [userId, albumId], references: [userId, albumId])
+  activityEvents ActivityEvent[]
 
   @@unique([userId, albumId])
   @@index([albumId, createdAt(sort: Desc)])
@@ -252,4 +281,96 @@ model Follow {
   @@id([followerId, followingId])
   @@index([followingId])
   @@map("follows")
+}
+
+// Onboarding preference: genres a user selected during onboarding, weighted for
+// recommendation scoring.
+model UserGenrePreference {
+  userId    String   @map("user_id") @db.Uuid
+  genreId   String   @map("genre_id") @db.Uuid
+  weight    Float    @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  genre Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([userId, genreId])
+  @@index([genreId])
+  @@map("user_genre_preferences")
+}
+
+// Onboarding preference: favorite artists a user selected, optionally ranked.
+model UserArtistFavorite {
+  userId    String   @map("user_id") @db.Uuid
+  artistId  String   @map("artist_id") @db.Uuid
+  rank      Int?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  artist Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([userId, artistId])
+  @@index([artistId])
+  @@map("user_artist_favorites")
+}
+
+// Onboarding preference: favorite albums a user selected, optionally ranked.
+model UserAlbumFavorite {
+  userId    String   @map("user_id") @db.Uuid
+  albumId   String   @map("album_id") @db.Uuid
+  rank      Int?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@id([userId, albumId])
+  @@index([albumId])
+  @@map("user_album_favorites")
+}
+
+// Denormalized activity row powering the own-activity stream (GET /me/activity)
+// and, in Fase 2, the social feed. `rating` reuses the event's own
+// (userId, albumId) columns as a composite FK to Rating with onDelete: Cascade,
+// so deleting a Rating removes its RATING event at the DB level (Decision #12).
+model ActivityEvent {
+  id         String       @id @default(uuid()) @db.Uuid
+  userId     String       @map("user_id") @db.Uuid
+  type       ActivityType
+  albumId    String       @map("album_id") @db.Uuid
+  listenId   String?      @map("listen_id") @db.Uuid
+  reviewId   String?      @map("review_id") @db.Uuid
+  payload    Json? // score snapshot etc. for render without joins
+  occurredAt DateTime     @default(now()) @map("occurred_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album  Album   @relation(fields: [albumId], references: [id])
+  listen Listen? @relation(fields: [listenId], references: [id], onDelete: SetNull)
+  review Review? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  rating Rating? @relation(fields: [userId, albumId], references: [userId, albumId], onDelete: Cascade)
+
+  @@index([userId, occurredAt(sort: Desc)])
+  @@index([occurredAt(sort: Desc)])
+  @@index([albumId])
+  @@map("activity_events")
+}
+
+// Precomputed heuristic recommendation surfaced on /home. Rebuildable, derived
+// from onboarding preferences + tracking activity.
+model Recommendation {
+  id          String               @id @default(uuid()) @db.Uuid
+  userId      String               @map("user_id") @db.Uuid
+  albumId     String               @map("album_id") @db.Uuid
+  score       Float
+  reason      Json? // {topGenre, matchedArtist, ...}
+  status      RecommendationStatus @default(ACTIVE)
+  generatedAt DateTime             @default(now()) @map("generated_at")
+  dismissedAt DateTime?            @map("dismissed_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, albumId])
+  @@index([userId, status, score(sort: Desc)])
+  @@map("recommendations")
 }
