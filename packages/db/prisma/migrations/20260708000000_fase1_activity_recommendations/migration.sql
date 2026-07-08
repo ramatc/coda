@@ -42,6 +42,7 @@ CREATE TABLE "activity_events" (
     "album_id" UUID NOT NULL,
     "listen_id" UUID,
     "review_id" UUID,
+    "rating_id" UUID,
     "payload" JSONB,
     "occurred_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -71,6 +72,12 @@ CREATE INDEX "user_artist_favorites_artist_id_idx" ON "user_artist_favorites"("a
 -- CreateIndex
 CREATE INDEX "user_album_favorites_album_id_idx" ON "user_album_favorites"("album_id");
 
+-- AlterTable
+ALTER TABLE "ratings" ADD COLUMN "id" UUID NOT NULL;
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ratings_id_key" ON "ratings"("id");
+
 -- CreateIndex
 CREATE INDEX "activity_events_user_id_occurred_at_idx" ON "activity_events"("user_id", "occurred_at" DESC);
 
@@ -79,6 +86,15 @@ CREATE INDEX "activity_events_occurred_at_idx" ON "activity_events"("occurred_at
 
 -- CreateIndex
 CREATE INDEX "activity_events_album_id_idx" ON "activity_events"("album_id");
+
+-- CreateIndex
+CREATE INDEX "activity_events_listen_id_idx" ON "activity_events"("listen_id");
+
+-- CreateIndex
+CREATE INDEX "activity_events_review_id_idx" ON "activity_events"("review_id");
+
+-- CreateIndex
+CREATE INDEX "activity_events_rating_id_idx" ON "activity_events"("rating_id");
 
 -- CreateIndex
 CREATE INDEX "recommendations_user_id_status_score_idx" ON "recommendations"("user_id", "status", "score" DESC);
@@ -117,7 +133,7 @@ ALTER TABLE "activity_events" ADD CONSTRAINT "activity_events_listen_id_fkey" FO
 ALTER TABLE "activity_events" ADD CONSTRAINT "activity_events_review_id_fkey" FOREIGN KEY ("review_id") REFERENCES "reviews"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "activity_events" ADD CONSTRAINT "activity_events_user_id_album_id_fkey" FOREIGN KEY ("user_id", "album_id") REFERENCES "ratings"("user_id", "album_id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "activity_events" ADD CONSTRAINT "activity_events_rating_id_fkey" FOREIGN KEY ("rating_id") REFERENCES "ratings"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "recommendations" ADD CONSTRAINT "recommendations_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

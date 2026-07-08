@@ -203,6 +203,7 @@ model Listen {
 }
 
 model Rating {
+  id        String   @unique @default(uuid()) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
   albumId   String   @map("album_id") @db.Uuid
   score     Int // 1-10
@@ -330,9 +331,11 @@ model UserAlbumFavorite {
 }
 
 // Denormalized activity row powering the own-activity stream (GET /me/activity)
-// and, in Fase 2, the social feed. `rating` reuses the event's own
-// (userId, albumId) columns as a composite FK to Rating with onDelete: Cascade,
-// so deleting a Rating removes its RATING event at the DB level (Decision #12).
+// and, in Fase 2, the social feed. `rating` is a nullable scalar FK to
+// Rating.id (SetNull on delete), symmetric with the `listenId`/`reviewId`
+// pattern — the composite (userId, albumId) FK was unconditional and broke
+// every LISTEN-type insert, so app-layer cleanup is required on delete
+// instead of a DB-level cascade.
 model ActivityEvent {
   id         String       @id @default(uuid()) @db.Uuid
   userId     String       @map("user_id") @db.Uuid
@@ -340,6 +343,7 @@ model ActivityEvent {
   albumId    String       @map("album_id") @db.Uuid
   listenId   String?      @map("listen_id") @db.Uuid
   reviewId   String?      @map("review_id") @db.Uuid
+  ratingId   String?      @map("rating_id") @db.Uuid
   payload    Json? // score snapshot etc. for render without joins
   occurredAt DateTime     @default(now()) @map("occurred_at")
 
@@ -347,11 +351,14 @@ model ActivityEvent {
   album  Album   @relation(fields: [albumId], references: [id])
   listen Listen? @relation(fields: [listenId], references: [id], onDelete: SetNull)
   review Review? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
-  rating Rating? @relation(fields: [userId, albumId], references: [userId, albumId], onDelete: Cascade)
+  rating Rating? @relation(fields: [ratingId], references: [id], onDelete: SetNull)
 
   @@index([userId, occurredAt(sort: Desc)])
   @@index([occurredAt(sort: Desc)])
   @@index([albumId])
+  @@index([listenId])
+  @@index([reviewId])
+  @@index([ratingId])
   @@map("activity_events")
 }
 

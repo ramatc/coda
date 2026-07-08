@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Logger,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -17,6 +18,8 @@ export interface ReadinessResponse {
 
 @Controller("health")
 export class HealthController {
+  private readonly logger = new Logger(HealthController.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -38,7 +41,8 @@ export class HealthController {
     try {
       await this.prisma.client.$queryRaw`SELECT 1`;
       return { status: "ok", database: "up" };
-    } catch {
+    } catch (err) {
+      this.logger.error("Readiness check failed", err);
       throw new ServiceUnavailableException({
         status: "error",
         database: "down",
