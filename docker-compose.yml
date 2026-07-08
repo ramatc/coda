@@ -1,0 +1,40 @@
+# Local development infrastructure for Coda (Fase 0).
+# Postgres 17 (plain, NO pgvector — deferred to Fase 3) and Redis 7.
+# Credentials match the DATABASE_URL / REDIS_URL defaults in .env.example.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: coda-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: coda
+      POSTGRES_PASSWORD: coda
+      POSTGRES_DB: coda
+    ports:
+      - "5432:5432"
+    volumes:
+      - coda_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coda"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: coda-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - coda_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  coda_pgdata:
+  coda_redisdata:
