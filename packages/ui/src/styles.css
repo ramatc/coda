@@ -1,0 +1,6 @@
+/*
+ * Base stylesheet for @coda/ui. Apps that render Coda UI components import
+ * this once so Tailwind and the shared design tokens are available.
+ */
+@import "tailwindcss";
+@import "@coda/config/tailwind/preset.css";

@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Coda Config Base",
+  "extends": "../../../tsconfig.base.json"
+}

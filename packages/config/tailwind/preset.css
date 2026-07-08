@@ -1,0 +1,19 @@
+/*
+ * Coda shared Tailwind 4 preset (CSS-first).
+ *
+ * Apps import this alongside Tailwind so design tokens stay centralized:
+ *   @import "tailwindcss";
+ *   @import "@coda/config/tailwind/preset.css";
+ *
+ * Tailwind 4 reads `@theme` tokens at build time via the PostCSS plugin.
+ */
+@theme {
+  --color-brand-50: oklch(0.97 0.02 300);
+  --color-brand-500: oklch(0.62 0.19 300);
+  --color-brand-600: oklch(0.55 0.2 300);
+  --color-brand-900: oklch(0.3 0.12 300);
+
+  --radius-card: 0.75rem;
+
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
+}

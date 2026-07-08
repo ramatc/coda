@@ -1,0 +1,28 @@
+{
+  "name": "coda",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.34.4",
+  "engines": {
+    "node": ">=22.11.0 <25.0.0",
+    "pnpm": ">=10 <11"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "dev": "turbo run dev",
+    "db:generate": "turbo run db:generate",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,cjs,json,md,css}\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.0",
+    "eslint": "^9.39.4",
+    "prettier": "^3.9.4",
+    "turbo": "^2.10.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
