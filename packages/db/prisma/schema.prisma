@@ -1,0 +1,255 @@
+// Coda — Fase 0 core schema.
+// Prisma 7 requires an explicit generator `output`. No preview features and no
+// datasource extensions: pgvector / embeddings are deferred to Fase 3.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ListenSource {
+  MANUAL
+  SPOTIFY_SYNC
+  LASTFM_SYNC
+  APPLE_MUSIC_SYNC
+
+  @@map("listen_source")
+}
+
+enum AlbumArtistRole {
+  PRIMARY
+  FEATURED
+  PRODUCER
+  COMPOSER
+
+  @@map("album_artist_role")
+}
+
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  clerkUserId String   @unique @map("clerk_user_id")
+  email       String   @unique
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  profile   Profile?
+  listens   Listen[]
+  ratings   Rating[]
+  reviews   Review[]
+  lists     List[]
+  following Follow[] @relation("Follower")
+  followers Follow[] @relation("Following")
+
+  @@map("users")
+}
+
+model Profile {
+  userId      String  @id @map("user_id") @db.Uuid
+  username    String  @unique
+  displayName String  @map("display_name")
+  bio         String? @db.Text
+  avatarUrl   String? @map("avatar_url")
+  bannerUrl   String? @map("banner_url")
+  isPrivate   Boolean @default(false) @map("is_private")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Genre {
+  id            String  @id @default(uuid()) @db.Uuid
+  slug          String  @unique
+  name          String
+  parentGenreId String? @map("parent_genre_id") @db.Uuid
+
+  parent   Genre?       @relation("GenreHierarchy", fields: [parentGenreId], references: [id])
+  children Genre[]      @relation("GenreHierarchy")
+  albums   AlbumGenre[]
+
+  @@index([parentGenreId])
+  @@map("genres")
+}
+
+model Artist {
+  id        String   @id @default(uuid()) @db.Uuid
+  mbid      String?  @unique
+  spotifyId String?  @unique @map("spotify_id")
+  name      String
+  imageUrl  String?  @map("image_url")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  albums       Album[]       @relation("PrimaryArtist")
+  albumArtists AlbumArtist[]
+
+  @@index([name])
+  @@map("artists")
+}
+
+model Album {
+  id              String    @id @default(uuid()) @db.Uuid
+  mbid            String?   @unique
+  spotifyId       String?   @unique @map("spotify_id")
+  title           String
+  releaseDate     DateTime? @map("release_date") @db.Date
+  coverUrl        String?   @map("cover_url")
+  primaryArtistId String    @map("primary_artist_id") @db.Uuid
+  trackCount      Int?      @map("track_count")
+  popularityScore Float     @default(0) @map("popularity_score")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  primaryArtist Artist        @relation("PrimaryArtist", fields: [primaryArtistId], references: [id])
+  artists       AlbumArtist[]
+  genres        AlbumGenre[]
+  tracks        Track[]
+  listens       Listen[]
+  ratings       Rating[]
+  reviews       Review[]
+  listItems     ListItem[]
+
+  @@index([releaseDate])
+  @@index([popularityScore(sort: Desc)])
+  @@index([primaryArtistId])
+  @@map("albums")
+}
+
+model Track {
+  id         String @id @default(uuid()) @db.Uuid
+  albumId    String @map("album_id") @db.Uuid
+  position   Int
+  title      String
+  durationMs Int?   @map("duration_ms")
+
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@unique([albumId, position])
+  @@index([albumId])
+  @@map("tracks")
+}
+
+model AlbumArtist {
+  albumId  String          @map("album_id") @db.Uuid
+  artistId String          @map("artist_id") @db.Uuid
+  role     AlbumArtistRole
+
+  album  Album  @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  artist Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, artistId, role])
+  @@index([artistId])
+  @@map("album_artists")
+}
+
+model AlbumGenre {
+  albumId String @map("album_id") @db.Uuid
+  genreId String @map("genre_id") @db.Uuid
+  weight  Float  @default(1)
+
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  genre Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, genreId])
+  @@index([genreId])
+  @@map("album_genres")
+}
+
+model Listen {
+  id         String       @id @default(uuid()) @db.Uuid
+  userId     String       @map("user_id") @db.Uuid
+  albumId    String       @map("album_id") @db.Uuid
+  listenedAt DateTime     @default(now()) @map("listened_at")
+  source     ListenSource @default(MANUAL)
+  note       String?      @db.Text
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id])
+
+  @@index([userId, listenedAt(sort: Desc)])
+  @@index([albumId])
+  @@map("listens")
+}
+
+model Rating {
+  userId    String   @map("user_id") @db.Uuid
+  albumId   String   @map("album_id") @db.Uuid
+  score     Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album  Album   @relation(fields: [albumId], references: [id])
+  review Review?
+
+  @@id([userId, albumId])
+  @@index([albumId, score(sort: Desc)])
+  @@map("ratings")
+}
+
+model Review {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  albumId   String   @map("album_id") @db.Uuid
+  body      String   @db.Text
+  isSpoiler Boolean  @default(false) @map("is_spoiler")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album  Album  @relation(fields: [albumId], references: [id])
+  rating Rating @relation(fields: [userId, albumId], references: [userId, albumId])
+
+  @@unique([userId, albumId])
+  @@index([albumId, createdAt(sort: Desc)])
+  @@map("reviews")
+}
+
+model List {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  title       String
+  description String?  @db.Text
+  isRanked    Boolean  @default(false) @map("is_ranked")
+  isPublic    Boolean  @default(true) @map("is_public")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items ListItem[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("lists")
+}
+
+model ListItem {
+  id       String  @id @default(uuid()) @db.Uuid
+  listId   String  @map("list_id") @db.Uuid
+  albumId  String  @map("album_id") @db.Uuid
+  position Int
+  note     String? @db.Text
+
+  list  List  @relation(fields: [listId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id])
+
+  @@unique([listId, albumId])
+  @@index([listId, position])
+  @@map("list_items")
+}
+
+model Follow {
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+  @@map("follows")
+}
