@@ -1,0 +1,82 @@
+name: CI
+
+# Fase 0 verification pipeline. Runs on every PR and on pushes to main.
+# A single `verify` job proves the whole monorepo: lint, typecheck, build,
+# smoke tests, `prisma validate`, and `prisma migrate deploy` against a live
+# Postgres service container (the first time migrate deploy runs for real).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+
+    # Ephemeral service containers (NOT cloud). Credentials and images match
+    # the root docker-compose.yml (coda/coda/coda, postgres:17-alpine, redis:7-alpine).
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: coda
+          POSTGRES_PASSWORD: coda
+          POSTGRES_DB: coda
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coda"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      # Point at the service containers on the runner host.
+      DATABASE_URL: postgresql://coda:coda@localhost:5432/coda?schema=public
+      DIRECT_URL: postgresql://coda:coda@localhost:5432/coda?schema=public
+      REDIS_URL: redis://localhost:6379
+      # Dummy, syntactically-valid Clerk *test* keys — NOT real secrets and NOT
+      # wired to GitHub Actions Secrets (no Clerk account in Fase 0 CI). They only
+      # let `next build` succeed without a live Clerk instance. The publishable
+      # key's base64 payload decodes to "clerk.example.com$" (a non-reachable FAPI);
+      # the secret key is a throwaway placeholder never used against a real API.
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
+      CLERK_SECRET_KEY: sk_test_ZHVtbXlfc2VjcmV0X2tleV9mb3JfY2lfMDAwMDAwMDAw
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Reads the pnpm version from the root package.json `packageManager` field
+      # (Corepack-reproducible). Must run before setup-node so the pnpm cache works.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint, typecheck, build, test
+        run: pnpm turbo lint typecheck build test
+
+      - name: Validate Prisma schema
+        run: pnpm --filter @coda/db exec prisma validate
+
+      - name: Apply migrations to the service database
+        run: pnpm --filter @coda/db exec prisma migrate deploy
