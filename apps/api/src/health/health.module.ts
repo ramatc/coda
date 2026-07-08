@@ -1,21 +1,13 @@
 import { Module } from "@nestjs/common";
-import { prisma } from "@coda/db";
 import { HealthController } from "./health.controller.js";
 
 /**
- * Injection token for the shared Prisma client.
- *
- * `@coda/db` is wired here as a provider-ready dependency so downstream health
- * features (readiness/DB checks) can inject it later. The current liveness
- * endpoint does NOT query the database, keeping the check green without a live
- * connection. Constructing the client is lazy — no connection is opened until a
- * query runs.
+ * Health module. The DB-backed readiness probe injects the global
+ * {@link PrismaService} (provided by the global PrismaModule), so this module no
+ * longer wires the raw `@coda/db` singleton itself — Fase 0's provider-ready-
+ * but-unused scaffold is now superseded by the real PrismaService (Decision #3).
  */
-export const PRISMA = Symbol("PRISMA");
-
 @Module({
   controllers: [HealthController],
-  providers: [{ provide: PRISMA, useValue: prisma }],
-  exports: [PRISMA],
 })
 export class HealthModule {}
