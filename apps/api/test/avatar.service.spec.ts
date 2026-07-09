@@ -1,8 +1,26 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BadRequestException } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { AvatarService } from "../src/profile/avatar.service.js";
 import { MAX_AVATAR_BYTES } from "../src/profile/profile.constants.js";
+
+// Spies on the real `PutObjectCommand` constructor so a test can assert what
+// `ContentType` actually gets bound into the SigV4 signature, without
+// otherwise disturbing signing (the wrapped constructor still builds a real
+// command instance).
+vi.mock("@aws-sdk/client-s3", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@aws-sdk/client-s3")>();
+  return {
+    ...actual,
+    PutObjectCommand: vi.fn(function (
+      this: unknown,
+      input: ConstructorParameters<typeof actual.PutObjectCommand>[0],
+    ) {
+      return new actual.PutObjectCommand(input);
+    }),
+  };
+});
 
 /**
  * Fake ConfigService returning placeholder R2 credentials. The presigner only
@@ -87,5 +105,21 @@ describe("AvatarService", () => {
         size: 0,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("normalizes a mixed-case Content-Type consistently for both allowlist validation and the signed ContentType", async () => {
+    await service.createAvatarUpload("user_local_1", {
+      contentType: "Image/PNG",
+      size: 100_000,
+    });
+
+    // The value bound into the signature must be the SAME normalized
+    // (lowercase) value that was validated — not the raw, mixed-case input —
+    // otherwise a consumer PUTting with different casing than it presigned
+    // with would pass validation here and still get a signature mismatch
+    // from R2.
+    expect(PutObjectCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ ContentType: "image/png" }),
+    );
   });
 });

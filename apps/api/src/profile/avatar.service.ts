@@ -55,15 +55,25 @@ export class AvatarService {
     userId: string,
     request: AvatarPresignRequest,
   ): Promise<AvatarPresignResult> {
-    this.assertAllowed(request);
+    // Normalized ONCE, then reused for both validation and the signed
+    // ContentType — otherwise the MIME type checked against the allowlist
+    // could differ in casing from what actually gets bound into the SigV4
+    // signature below, and any consumer whose PUT header casing diverges
+    // from its presign request would pass validation here but get an opaque
+    // `SignatureDoesNotMatch` from R2 at PUT time.
+    const normalizedRequest: AvatarPresignRequest = {
+      ...request,
+      contentType: request.contentType?.toLowerCase(),
+    };
+    this.assertAllowed(normalizedRequest);
 
     const key = `avatars/${userId}/${randomUUID()}`;
     const bucket = this.requireConfig("R2_BUCKET");
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: key,
-      ContentType: request.contentType,
-      ContentLength: request.size,
+      ContentType: normalizedRequest.contentType,
+      ContentLength: normalizedRequest.size,
     });
 
     const uploadUrl = await getSignedUrl(this.getClient(), command, {
