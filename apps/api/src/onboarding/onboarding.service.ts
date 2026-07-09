@@ -181,16 +181,10 @@ export class OnboardingService {
         `Select at least ${MIN_ARTISTS} favorite artist(s) to complete onboarding.`,
       );
     }
-    if (artistIds.length > MAX_ARTISTS) {
-      throw new BadRequestException(
-        `Select at most ${MAX_ARTISTS} favorite artists.`,
-      );
-    }
-    if (albumIds.length > MAX_ALBUMS) {
-      throw new BadRequestException(
-        `Select at most ${MAX_ALBUMS} favorite albums.`,
-      );
-    }
+    // `parseIdList` above already guarantees `artistIds`/`albumIds` are
+    // deduplicated arrays no longer than MAX_ARTISTS/MAX_ALBUMS respectively
+    // (it throws before returning otherwise), so re-checking `.length` here
+    // would be unreachable dead code — the cap is enforced once, at parse time.
 
     try {
       await this.prisma.client.$transaction(async (tx) => {
@@ -306,10 +300,12 @@ export class OnboardingService {
     }
     // Reject an oversized array before the per-element trim/regex work below
     // runs on every element — no point paying that cost on input that will be
-    // rejected anyway. `complete()` still re-checks the (de-duplicated) count
-    // against the same bound below, so this is purely an early-exit fast
-    // path, not a behavior change.
-    if (Array.isArray(value) && value.length > max) {
+    // rejected anyway. The cap applies to the DEDUPLICATED id count (matching
+    // what this method returns), so duplicates are stripped via `Set` before
+    // comparing against `max` — a raw array with repeated ids (e.g. a client
+    // retry that appends rather than replaces) must not be rejected just
+    // because its raw length exceeds `max` while its unique id count does not.
+    if (Array.isArray(value) && new Set(value).size > max) {
       throw new BadRequestException(`${field} must contain at most ${max} ids.`);
     }
     const ids = [...new Set(this.parseStringArray(value, field))];

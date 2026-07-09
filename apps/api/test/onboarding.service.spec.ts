@@ -383,6 +383,31 @@ describe("OnboardingService", () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("accepts a raw artistIds array with duplicates that dedupes to at most MAX_ARTISTS unique ids", async () => {
+    // 25 raw ids, 10 of them repeats of the first 10 → 15 unique ids, which
+    // is within MAX_ARTISTS (20). The catalog only needs to know about the
+    // ids that are actually unique/present; unknown ones are seeded here so
+    // the request succeeds end-to-end and proves the *cap* check (not the
+    // catalog-existence check) is what's under test.
+    const uniqueArtistIds = Array.from(
+      { length: 15 },
+      (_, i) => `30000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    for (const id of uniqueArtistIds) {
+      fake.artists.set(id, { id, name: `Artist ${id}` });
+    }
+    const duplicatedRawArtistIds = [...uniqueArtistIds, ...uniqueArtistIds.slice(0, 10)];
+    expect(duplicatedRawArtistIds.length).toBe(25);
+
+    const status = await service.complete("clerk_1", {
+      genreSlugs: ["rock", "jazz", "electronic"],
+      artistIds: duplicatedRawArtistIds,
+    });
+
+    expect(status.artistCount).toBe(15);
+    expect(fake.artistFavs.size).toBe(15);
+  });
+
   it("rejects an unknown genre slug", async () => {
     await expect(
       service.complete("clerk_1", {
