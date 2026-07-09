@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { Prisma } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
@@ -111,6 +112,11 @@ export class CatalogImportService {
    * Fetches one Spotify page and upserts every album on it. Returns the next
    * offset (or `null` on the final page) so the caller — the in-process pager or
    * the BullMQ page worker — knows whether to continue.
+   *
+   * A single malformed record (a Prisma validation error from a bad/missing
+   * field shape) is logged and skipped rather than aborting the rest of the
+   * page (judgment-day issue #7); any other error (e.g. a lost DB connection)
+   * still propagates so it isn't silently swallowed.
    */
   async importPage(
     offset: number,
@@ -118,7 +124,17 @@ export class CatalogImportService {
   ): Promise<ImportPageResult> {
     const page = await this.spotify.getAlbumPage(offset, limit);
     for (const album of page.albums) {
-      await this.upsertAlbum(album);
+      try {
+        await this.upsertAlbum(album);
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientValidationError) {
+          this.logger.warn(
+            `Skipping malformed album ${album.spotifyId}: ${err.message}`,
+          );
+          continue;
+        }
+        throw err;
+      }
     }
     return { processed: page.albums.length, nextOffset: page.nextOffset };
   }
@@ -129,34 +145,75 @@ export class CatalogImportService {
    * reports no more results — writing the checkpoint AFTER each page so a crash
    * mid-run resumes from the last fully processed page, never re-doing completed
    * work and never skipping a page. Clears the checkpoint on clean completion.
+   *
+   * Guarded by the shared running-lock marker (judgment-day issue #6) so this
+   * in-process pager (`seed:catalog`) can't race the BullMQ page-worker
+   * pipeline over the same checkpoint; see
+   * {@link CatalogCheckpointStore.tryAcquireRunningLock} for why this is a
+   * best-effort marker rather than a full renewing distributed lock.
    */
   async runImport(options: RunImportOptions = {}): Promise<RunImportResult> {
     const limit = options.limit ?? SPOTIFY_PAGE_LIMIT;
     const checkpoint = options.checkpoint ?? this.checkpointStore;
-    let offset =
-      options.startOffset ?? (await checkpoint.get()) ?? 0;
 
-    let processed = 0;
-    let pages = 0;
-    for (;;) {
-      const result = await this.importPage(offset, limit);
-      processed += result.processed;
-      pages += 1;
-
-      if (result.nextOffset === null) {
-        // Import finished cleanly — drop the cursor so the next run starts fresh.
-        await checkpoint.clear();
-        break;
-      }
-      // Persist progress BEFORE advancing: if we die now, the resume reads this
-      // offset and re-fetches only the not-yet-completed remainder.
-      await checkpoint.set(result.nextOffset);
-      offset = result.nextOffset;
+    const acquired = await this.tryAcquireRunningLock(checkpoint);
+    if (!acquired) {
+      throw new Error(
+        "Catalog import is already in progress — refusing to start a concurrent run.",
+      );
     }
 
-    this.logger.log(
-      `Spotify import complete: ${processed} albums across ${pages} pages`,
-    );
-    return { processed, pages };
+    try {
+      let offset = options.startOffset ?? (await checkpoint.get()) ?? 0;
+
+      let processed = 0;
+      let pages = 0;
+      for (;;) {
+        const result = await this.importPage(offset, limit);
+        processed += result.processed;
+        pages += 1;
+
+        if (result.nextOffset === null) {
+          // Import finished cleanly — drop the cursor so the next run starts fresh.
+          await checkpoint.clear();
+          break;
+        }
+        // Persist progress BEFORE advancing: if we die now, the resume reads this
+        // offset and re-fetches only the not-yet-completed remainder.
+        await checkpoint.set(result.nextOffset);
+        offset = result.nextOffset;
+      }
+
+      this.logger.log(
+        `Spotify import complete: ${processed} albums across ${pages} pages`,
+      );
+      return { processed, pages };
+    } finally {
+      await this.releaseRunningLock(checkpoint);
+    }
+  }
+
+  /**
+   * Acquires the shared running-lock marker if the given checkpoint store
+   * supports it (real {@link SpotifyCheckpointStore} instances do; in-memory
+   * test fakes may omit it since single-run unit tests never race two
+   * imports — see the optional methods on {@link CatalogCheckpointStore}).
+   */
+  private async tryAcquireRunningLock(
+    checkpoint: CatalogCheckpointStore,
+  ): Promise<boolean> {
+    if (typeof checkpoint.tryAcquireRunningLock !== "function") {
+      return true;
+    }
+    return checkpoint.tryAcquireRunningLock();
+  }
+
+  /** Releases the marker acquired by {@link tryAcquireRunningLock}, if supported. */
+  private async releaseRunningLock(
+    checkpoint: CatalogCheckpointStore,
+  ): Promise<void> {
+    if (typeof checkpoint.releaseRunningLock === "function") {
+      await checkpoint.releaseRunningLock();
+    }
   }
 }
