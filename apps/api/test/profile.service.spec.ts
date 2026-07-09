@@ -297,6 +297,23 @@ describe("ProfileService", () => {
     expect(profiles.get("local_1")?.avatarUrl).toBeNull();
   });
 
+  it("rejects an avatarUrl on a sibling path that merely string-prefixes the base path", async () => {
+    // Same origin as R2_PUBLIC_BASE ("https://cdn.coda.test/avatars"), but the
+    // path is "/avatarsEVIL/..." — a naive `pathname.startsWith(basePath)`
+    // check (no path-separator boundary) would WRONGLY accept this because
+    // "avatarsEVIL".startsWith("avatars") is true. This is the real bypass
+    // class the origin-check fix closes; the look-alike-origin test above was
+    // already rejected by the OLD naive check and does not exercise it.
+    seedProfile({ avatarUrl: null });
+
+    await expect(
+      service.updateOwnProfile("clerk_1", {
+        avatarUrl: "https://cdn.coda.test/avatarsEVIL/x.png",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(profiles.get("local_1")?.avatarUrl).toBeNull();
+  });
+
   it("fails closed when R2_PUBLIC_BASE is not configured", async () => {
     seedProfile({ avatarUrl: null });
     const unconfigured = new ProfileService(
