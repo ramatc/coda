@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
+import type { Job } from "bullmq";
 import { Worker } from "bullmq";
 import { Prisma } from "@coda/db";
 import { AppModule } from "../app.module.js";
@@ -11,11 +12,18 @@ import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { createBullConnection } from "./catalog-redis.js";
 import {
+  extractUniqueConstraintField,
+  isUniqueConstraintViolation,
+} from "../prisma/prisma-error.util.js";
+import {
   CATALOG_ALBUM_QUEUE,
   CATALOG_PAGE_QUEUE,
   REDIS_URL_ENV,
   SPOTIFY_PAGE_LIMIT,
 } from "./catalog-import.constants.js";
+
+/** Prisma error code for a foreign-key constraint violation. */
+const FOREIGN_KEY_VIOLATION = "P2003";
 
 /**
  * Standalone consumer process for the Spotify bulk seed (Decision #4: workers
@@ -47,21 +55,28 @@ async function bootstrap(): Promise<void> {
   const pageWorker = new Worker<PageJobData>(
     CATALOG_PAGE_QUEUE,
     async (job) => {
-      const limit = job.data.limit || SPOTIFY_PAGE_LIMIT;
+      // `??`, not `||` (judgment-day issue #11): `||` would silently treat an
+      // explicit `limit: 0` as unset and fall back to the default instead.
+      const limit = job.data.limit ?? SPOTIFY_PAGE_LIMIT;
       const page = await spotify.getAlbumPage(job.data.offset, limit);
       // Bulk fan-out (judgment-day issue #4) instead of one `add()` per album.
       await queue.enqueueAlbums(page.albums);
       if (page.nextOffset === null) {
         await checkpoint.clear();
-        await checkpoint.releaseRunningLock();
+        if (job.data.lockToken) {
+          await checkpoint.releaseRunningLock(job.data.lockToken);
+        }
       } else {
         // Enqueue the NEXT page BEFORE advancing the checkpoint (judgment-day
         // issue #8): a crash between the two used to leave the checkpoint
         // advanced with no job enqueued for that page, silently stalling the
         // import. Enqueuing first means a crash before the checkpoint update
         // just re-enqueues the next page — safe, since the page job id is
-        // deterministic (natural dedup).
-        await queue.enqueuePage(page.nextOffset, limit);
+        // deterministic (natural dedup). The lock token rides along so
+        // whichever page ends the run (here, or the `failed` handler below)
+        // releases the SAME lock this run's `enqueueSeed()` acquired
+        // (judgment-day issue #2).
+        await queue.enqueuePage(page.nextOffset, limit, job.data.lockToken);
         await checkpoint.set(page.nextOffset);
       }
       return { processed: page.albums.length, nextOffset: page.nextOffset };
@@ -73,7 +88,8 @@ async function bootstrap(): Promise<void> {
     CATALOG_ALBUM_QUEUE,
     async (job) => {
       // Per-album error isolation (judgment-day issue #7): a single malformed
-      // record (Prisma validation error) is logged and skipped instead of
+      // record (Prisma validation error), a P2002 unique-constraint conflict,
+      // or a P2003 foreign-key violation is logged and skipped instead of
       // failing the whole job; any other error (e.g. a lost DB connection)
       // still propagates so BullMQ's retry/backoff applies to it.
       try {
@@ -85,6 +101,23 @@ async function bootstrap(): Promise<void> {
           );
           return;
         }
+        if (isUniqueConstraintViolation(err)) {
+          const field = extractUniqueConstraintField(err);
+          logger.warn(
+            `Skipping album ${job.data.album.spotifyId} due to a unique ` +
+              `constraint conflict${field ? ` on "${field}"` : ""}: ${err.message}`,
+          );
+          return;
+        }
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === FOREIGN_KEY_VIOLATION
+        ) {
+          logger.warn(
+            `Skipping album ${job.data.album.spotifyId} due to a foreign key violation: ${err.message}`,
+          );
+          return;
+        }
         throw err;
       }
     },
@@ -93,10 +126,41 @@ async function bootstrap(): Promise<void> {
 
   pageWorker.on("failed", (job, err) => {
     logger.error(`Page job ${job?.id} failed: ${err.message}`);
+    // Permanent-failure lock release (judgment-day issue #5): if the page job
+    // has exhausted all configured retry attempts (sustained outage, revoked
+    // credentials), the running lock would otherwise stay held for the full
+    // TTL, blocking recovery via the CLI or admin endpoint during that window.
+    void releaseLockOnPermanentFailure(job);
   });
   albumWorker.on("failed", (job, err) => {
     logger.error(`Album job ${job?.id} failed: ${err.message}`);
   });
+
+  async function releaseLockOnPermanentFailure(
+    job: Job<PageJobData> | undefined,
+  ): Promise<void> {
+    if (!job || !job.data.lockToken) {
+      return;
+    }
+    const attemptsMade = job.attemptsMade ?? 0;
+    const maxAttempts = job.opts?.attempts ?? 1;
+    if (attemptsMade < maxAttempts) {
+      // Retries remain — a later attempt may still finish the run normally.
+      return;
+    }
+    try {
+      await checkpoint.releaseRunningLock(job.data.lockToken);
+      logger.warn(
+        `Page job ${job.id} exhausted all ${maxAttempts} attempts — released the running lock so a new run can start.`,
+      );
+    } catch (releaseErr) {
+      logger.error(
+        `Failed to release the running lock after page job ${job.id}'s permanent failure: ${
+          releaseErr instanceof Error ? releaseErr.message : String(releaseErr)
+        }`,
+      );
+    }
+  }
 
   logger.log("Catalog seed workers running (page + album). Ctrl-C to stop.");
 

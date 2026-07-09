@@ -1,11 +1,28 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
+import {
+  extractUniqueConstraintField,
+  isUniqueConstraintViolation,
+} from "../prisma/prisma-error.util.js";
 import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";
 import type { CatalogCheckpointStore } from "./spotify-checkpoint.store.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
+
+/** Prisma error code for a foreign-key constraint violation. */
+const FOREIGN_KEY_VIOLATION = "P2003";
+
+/**
+ * Sentinel token returned by {@link CatalogImportService.tryAcquireRunningLock}
+ * when the given checkpoint doesn't implement the running-lock guard at all
+ * (in-memory test fakes — see {@link CatalogCheckpointStore}'s optional
+ * methods). Any non-null string works as a "no real lock" placeholder here
+ * since {@link CatalogImportService.releaseRunningLock} only forwards it when
+ * the checkpoint actually supports `releaseRunningLock`.
+ */
+const NO_LOCK_SUPPORT_TOKEN = "no-lock-support";
 
 export interface ImportPageResult {
   /** How many albums this page upserted. */
@@ -114,9 +131,13 @@ export class CatalogImportService {
    * the BullMQ page worker — knows whether to continue.
    *
    * A single malformed record (a Prisma validation error from a bad/missing
-   * field shape) is logged and skipped rather than aborting the rest of the
-   * page (judgment-day issue #7); any other error (e.g. a lost DB connection)
-   * still propagates so it isn't silently swallowed.
+   * field shape), a P2002 unique-constraint conflict, or a P2003 foreign-key
+   * violation is logged and skipped rather than aborting the rest of the page
+   * (judgment-day issue #7) — otherwise, on the CLI `runImport` path, a single
+   * poison-pill album would abort the WHOLE run, and since the checkpoint only
+   * advances on page completion, it would be retried at the identical offset
+   * forever. Any other error (e.g. a lost DB connection) still propagates so
+   * it isn't silently swallowed.
    */
   async importPage(
     offset: number,
@@ -130,6 +151,23 @@ export class CatalogImportService {
         if (err instanceof Prisma.PrismaClientValidationError) {
           this.logger.warn(
             `Skipping malformed album ${album.spotifyId}: ${err.message}`,
+          );
+          continue;
+        }
+        if (isUniqueConstraintViolation(err)) {
+          const field = extractUniqueConstraintField(err);
+          this.logger.warn(
+            `Skipping album ${album.spotifyId} due to a unique constraint ` +
+              `conflict${field ? ` on "${field}"` : ""}: ${err.message}`,
+          );
+          continue;
+        }
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === FOREIGN_KEY_VIOLATION
+        ) {
+          this.logger.warn(
+            `Skipping album ${album.spotifyId} due to a foreign key violation: ${err.message}`,
           );
           continue;
         }
@@ -156,8 +194,8 @@ export class CatalogImportService {
     const limit = options.limit ?? SPOTIFY_PAGE_LIMIT;
     const checkpoint = options.checkpoint ?? this.checkpointStore;
 
-    const acquired = await this.tryAcquireRunningLock(checkpoint);
-    if (!acquired) {
+    const lockToken = await this.tryAcquireRunningLock(checkpoint);
+    if (!lockToken) {
       throw new Error(
         "Catalog import is already in progress — refusing to start a concurrent run.",
       );
@@ -189,7 +227,7 @@ export class CatalogImportService {
       );
       return { processed, pages };
     } finally {
-      await this.releaseRunningLock(checkpoint);
+      await this.releaseRunningLock(checkpoint, lockToken);
     }
   }
 
@@ -198,22 +236,30 @@ export class CatalogImportService {
    * supports it (real {@link SpotifyCheckpointStore} instances do; in-memory
    * test fakes may omit it since single-run unit tests never race two
    * imports — see the optional methods on {@link CatalogCheckpointStore}).
+   * Returns the ownership token to thread through to {@link releaseRunningLock}
+   * (judgment-day issue #2), or {@link NO_LOCK_SUPPORT_TOKEN} when the
+   * checkpoint doesn't implement the guard at all.
    */
   private async tryAcquireRunningLock(
     checkpoint: CatalogCheckpointStore,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     if (typeof checkpoint.tryAcquireRunningLock !== "function") {
-      return true;
+      return NO_LOCK_SUPPORT_TOKEN;
     }
     return checkpoint.tryAcquireRunningLock();
   }
 
-  /** Releases the marker acquired by {@link tryAcquireRunningLock}, if supported. */
+  /**
+   * Releases the marker acquired by {@link tryAcquireRunningLock}, if
+   * supported, passing back the SAME ownership token so the store only
+   * releases the lock this run actually holds (judgment-day issue #2).
+   */
   private async releaseRunningLock(
     checkpoint: CatalogCheckpointStore,
+    token: string,
   ): Promise<void> {
     if (typeof checkpoint.releaseRunningLock === "function") {
-      await checkpoint.releaseRunningLock();
+      await checkpoint.releaseRunningLock(token);
     }
   }
 }

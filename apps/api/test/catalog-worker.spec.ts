@@ -37,17 +37,21 @@ vi.mock("../src/catalog-import/catalog-redis.js", () => ({
 const workerInstances: Array<{
   queueName: string;
   processor: (job: FakeJob<unknown>) => Promise<unknown>;
+  handlers: Record<string, (...args: unknown[]) => unknown>;
 }> = [];
 
 vi.mock("bullmq", () => {
   class FakeWorker {
+    handlers: Record<string, (...args: unknown[]) => unknown> = {};
+
     constructor(
       queueName: string,
       processor: (job: FakeJob<unknown>) => Promise<unknown>,
     ) {
-      workerInstances.push({ queueName, processor });
+      workerInstances.push({ queueName, processor, handlers: this.handlers });
     }
-    on(): this {
+    on(event: string, handler: (...args: unknown[]) => unknown): this {
+      this.handlers[event] = handler;
       return this;
     }
     async close(): Promise<void> {}
@@ -150,22 +154,43 @@ describe("catalog-worker bootstrap", () => {
     const albums = [album("a1"), album("a2")];
     fakeSpotify.getAlbumPage.mockResolvedValue({ albums, nextOffset: 50 });
 
-    const result = await pageProcessor({ data: { offset: 0, limit: 50 } });
+    const result = await pageProcessor({
+      data: { offset: 0, limit: 50, lockToken: "run-token" },
+    });
 
     expect(fakeQueue.enqueueAlbums).toHaveBeenCalledWith(albums);
-    expect(fakeQueue.enqueuePage).toHaveBeenCalledWith(50, 50);
+    // The lock token rides along to the next page job (judgment-day issue #2).
+    expect(fakeQueue.enqueuePage).toHaveBeenCalledWith(50, 50, "run-token");
     expect(callOrder).toEqual(["enqueueAlbums", "enqueuePage", "checkpoint.set"]);
     expect(result).toEqual({ processed: 2, nextOffset: 50 });
   });
 
-  it("clears the checkpoint and releases the running lock on the final page (no next-page enqueue)", async () => {
+  it("uses an explicit `limit: 0` as-is instead of falling back to the default (judgment-day issue #11)", async () => {
+    fakeSpotify.getAlbumPage.mockResolvedValue({ albums: [], nextOffset: null });
+
+    await pageProcessor({ data: { offset: 0, limit: 0 } });
+
+    // `??`, not `||`: an explicit 0 must NOT be silently replaced.
+    expect(fakeSpotify.getAlbumPage).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("clears the checkpoint and releases the running lock (with its token) on the final page (no next-page enqueue)", async () => {
+    fakeSpotify.getAlbumPage.mockResolvedValue({ albums: [], nextOffset: null });
+
+    await pageProcessor({ data: { offset: 950, limit: 50, lockToken: "run-token" } });
+
+    expect(fakeCheckpoint.clear).toHaveBeenCalled();
+    expect(fakeCheckpoint.releaseRunningLock).toHaveBeenCalledWith("run-token");
+    expect(fakeQueue.enqueuePage).not.toHaveBeenCalled();
+  });
+
+  it("skips releasing the running lock on the final page when no lock token was carried (e.g. lock-less test fakes)", async () => {
     fakeSpotify.getAlbumPage.mockResolvedValue({ albums: [], nextOffset: null });
 
     await pageProcessor({ data: { offset: 950, limit: 50 } });
 
     expect(fakeCheckpoint.clear).toHaveBeenCalled();
-    expect(fakeCheckpoint.releaseRunningLock).toHaveBeenCalled();
-    expect(fakeQueue.enqueuePage).not.toHaveBeenCalled();
+    expect(fakeCheckpoint.releaseRunningLock).not.toHaveBeenCalled();
   });
 
   it("album worker skips a malformed record (Prisma validation error) instead of failing the job", async () => {
@@ -178,11 +203,79 @@ describe("catalog-worker bootstrap", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("album worker skips a P2002 unique-constraint conflict instead of failing the job (judgment-day issue #7)", async () => {
+    fakeService.upsertAlbum.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("duplicate", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+
+    await expect(
+      albumProcessor({ data: { album: album("dup") } }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("album worker skips a P2003 foreign-key violation instead of failing the job (judgment-day issue #7)", async () => {
+    fakeService.upsertAlbum.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("fk violation", {
+        code: "P2003",
+        clientVersion: "test",
+      }),
+    );
+
+    await expect(
+      albumProcessor({ data: { album: album("orphan") } }),
+    ).resolves.toBeUndefined();
+  });
+
   it("album worker rethrows a systemic error instead of swallowing it", async () => {
     fakeService.upsertAlbum.mockRejectedValue(new Error("connection lost"));
 
     await expect(
       albumProcessor({ data: { album: album("x") } }),
     ).rejects.toThrow(/connection lost/);
+  });
+
+  describe("page worker permanent-failure lock release (judgment-day issue #5)", () => {
+    let pageFailedHandler: (
+      job: { id?: string; data: { lockToken?: string }; attemptsMade: number; opts: { attempts?: number } } | undefined,
+      err: Error,
+    ) => unknown;
+
+    beforeAll(() => {
+      const pageWorkerInstance = workerInstances.find(
+        (w) => w.queueName === CATALOG_PAGE_QUEUE,
+      )!;
+      pageFailedHandler = pageWorkerInstance.handlers.failed as typeof pageFailedHandler;
+    });
+
+    it("releases the running lock once retries are exhausted", async () => {
+      const job = {
+        id: "spotify-page:0",
+        data: { lockToken: "run-token" },
+        attemptsMade: 5,
+        opts: { attempts: 5 },
+      };
+
+      pageFailedHandler(job, new Error("sustained outage"));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(fakeCheckpoint.releaseRunningLock).toHaveBeenCalledWith("run-token");
+    });
+
+    it("does NOT release the lock while retries remain", async () => {
+      const job = {
+        id: "spotify-page:0",
+        data: { lockToken: "run-token" },
+        attemptsMade: 2,
+        opts: { attempts: 5 },
+      };
+
+      pageFailedHandler(job, new Error("transient blip"));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(fakeCheckpoint.releaseRunningLock).not.toHaveBeenCalled();
+    });
   });
 });

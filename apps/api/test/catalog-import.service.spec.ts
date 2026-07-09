@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { Prisma } from "@coda/db";
 import { CatalogImportService } from "../src/catalog-import/catalog-import.service.js";
 import {
   albumJobId,
@@ -225,6 +226,88 @@ describe("CatalogImportService", () => {
     expect(fakePrisma.artists.size).toBe(4);
     expect(fakePrisma.counts().albumCreates).toBe(5); // unchanged — no new rows
     expect(fakePrisma.counts().albumUpdates).toBe(5); // second pass updated each
+  });
+
+  it("importPage skips a P2002 unique-constraint conflict on a single album instead of aborting the whole page (judgment-day issue #7)", async () => {
+    const [okAlbum, conflictingAlbum] = catalog;
+    const client = {
+      async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+        return fn(client);
+      },
+      artist: {
+        async upsert() {
+          return { id: "artist-1" };
+        },
+      },
+      album: {
+        async upsert(args: { where: { spotifyId: string } }) {
+          if (args.where.spotifyId === conflictingAlbum.spotifyId) {
+            throw new Prisma.PrismaClientKnownRequestError("duplicate", {
+              code: "P2002",
+              clientVersion: "test",
+            });
+          }
+          return { id: `album-${args.where.spotifyId}` };
+        },
+      },
+    };
+    const prisma = { client } as unknown as PrismaService;
+    const spotify: SpotifyClient = {
+      async getAlbumPage(): Promise<NormalizedAlbumPage> {
+        return { albums: [okAlbum, conflictingAlbum], nextOffset: null };
+      },
+    } as unknown as SpotifyClient;
+
+    const service = new CatalogImportService(
+      prisma,
+      spotify,
+      createFakeCheckpoint().store,
+    );
+
+    const result = await service.importPage(0, 2);
+
+    expect(result).toEqual({ processed: 2, nextOffset: null });
+  });
+
+  it("importPage skips a P2003 foreign-key violation on a single album instead of aborting the whole page (judgment-day issue #7)", async () => {
+    const [okAlbum, orphanAlbum] = catalog;
+    const client = {
+      async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+        return fn(client);
+      },
+      artist: {
+        async upsert() {
+          return { id: "artist-1" };
+        },
+      },
+      album: {
+        async upsert(args: { where: { spotifyId: string } }) {
+          if (args.where.spotifyId === orphanAlbum.spotifyId) {
+            throw new Prisma.PrismaClientKnownRequestError("fk violation", {
+              code: "P2003",
+              clientVersion: "test",
+            });
+          }
+          return { id: `album-${args.where.spotifyId}` };
+        },
+      },
+    };
+    const prisma = { client } as unknown as PrismaService;
+    const spotify: SpotifyClient = {
+      async getAlbumPage(): Promise<NormalizedAlbumPage> {
+        return { albums: [okAlbum, orphanAlbum], nextOffset: null };
+      },
+    } as unknown as SpotifyClient;
+
+    const service = new CatalogImportService(
+      prisma,
+      spotify,
+      createFakeCheckpoint().store,
+    );
+
+    const result = await service.importPage(0, 2);
+
+    expect(result).toEqual({ processed: 2, nextOffset: null });
   });
 
   it("derives deterministic, dedup-safe job ids for pages and albums", () => {
