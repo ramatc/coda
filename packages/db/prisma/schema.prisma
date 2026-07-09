@@ -70,6 +70,19 @@ model User {
 
 model Profile {
   userId      String  @id @map("user_id") @db.Uuid
+  // Canonicalized to lowercase by both the Clerk webhook sync
+  // (clerk-webhook.service.ts) and the profile-edit flow (profile.service.ts)
+  // so "Admin"/"admin"/"ADMIN" cannot become distinct `/u/[username]` profiles.
+  // Open question (Fase 1, PR3 round 3): there is no backfill migration for
+  // pre-existing mixed-case rows, because as of this PR the `profiles` table
+  // has never held real data outside tests (no seed script, no live/shared
+  // DB in this sandbox — verified by the absence of any `prisma/seed*` file
+  // and the fact PR2 only ever wrote the un-normalized Clerk-id fallback). If
+  // this migration set is ever applied to a non-empty `profiles` table with
+  // pre-existing mixed-case usernames, add a one-off migration that runs
+  // `UPDATE profiles SET username = LOWER(username) WHERE username != LOWER(username)`,
+  // guarded to skip/report rows that would collide with an existing lowercase
+  // username rather than silently merging them.
   username    String  @unique
   displayName String  @map("display_name")
   bio         String? @db.Text

@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { AppModule } from "./app.module.js";
+import { buildCorsOptions } from "./cors.config.js";
 
 const DEFAULT_PORT = 4000;
 
@@ -11,6 +12,11 @@ async function bootstrap(): Promise<void> {
   // signature over the exact bytes Clerk signed.
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const config = app.get(ConfigService);
+
+  // CORS options are built in `./cors.config.js` (not inlined here) so they
+  // can be unit-tested directly — see `cors.config.spec.ts`.
+  app.enableCors(buildCorsOptions(config));
+
   const port = Number(config.get("API_PORT")) || DEFAULT_PORT;
   await app.listen(port);
   console.log(`[api] listening on http://localhost:${port}`);

@@ -30,11 +30,14 @@ interface GuardedRequest {
 @Injectable()
 export class ClerkGuard implements CanActivate {
   private readonly logger = new Logger(ClerkGuard.name);
+  private readonly authorizedParties: string[] | undefined;
 
   constructor(
     private readonly reflector: Reflector,
     private readonly config: ConfigService,
-  ) {}
+  ) {
+    this.authorizedParties = this.computeAuthorizedParties();
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -54,7 +57,7 @@ export class ClerkGuard implements CanActivate {
     try {
       const payload = await verifyToken(token, {
         secretKey: this.config.get<string>("CLERK_SECRET_KEY"),
-        authorizedParties: this.getAuthorizedParties(),
+        authorizedParties: this.authorizedParties,
       });
       request.user = payload;
       return true;
@@ -72,10 +75,29 @@ export class ClerkGuard implements CanActivate {
    * *different* frontend on the same Clerk instance would also pass. Reuses
    * `APP_URL` (the web app's own origin, already documented in the repo's env
    * vars) rather than introducing a redundant config key.
+   *
+   * Computed ONCE in the constructor (rather than per-request inside
+   * `canActivate()`) so the missing-`APP_URL` warning below logs once at
+   * guard instantiation — mirroring `buildCorsOptions` in `cors.config.ts` —
+   * instead of flooding logs on every guarded request.
    */
-  private getAuthorizedParties(): string[] | undefined {
+  private computeAuthorizedParties(): string[] | undefined {
     const appUrl = this.config.get<string>("APP_URL");
-    return appUrl ? [appUrl] : undefined;
+    if (!appUrl) {
+      // Fails OPEN (skips the azp check) rather than closed: a missing
+      // `APP_URL` here is an env misconfiguration, and failing closed would
+      // turn it into a full API outage (every request rejected) rather than
+      // the narrower risk it actually is — a token minted for a different
+      // frontend on the same Clerk instance also being accepted. `verifyToken`
+      // above still enforces signature + expiry regardless, so this only
+      // widens the *origin* check, not authentication itself. Logged so the
+      // gap is visible instead of silent.
+      this.logger.warn(
+        "APP_URL is not configured — authorizedParties check is disabled, any valid Clerk session token will be accepted regardless of origin",
+      );
+      return undefined;
+    }
+    return [appUrl];
   }
 
   private extractBearerToken(request: GuardedRequest): string | undefined {
