@@ -17,6 +17,11 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/u(.*)");
   });
 
+  it("protects the onboarding and home routes (PR4)", () => {
+    expect(protectedRoutePatterns).toContain("/onboarding(.*)");
+    expect(protectedRoutePatterns).toContain("/home(.*)");
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");
