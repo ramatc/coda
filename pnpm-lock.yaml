@@ -41,6 +41,9 @@ importers:
       '@coda/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@coda/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@nestjs/common':
         specifier: ^11.1.6
         version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)

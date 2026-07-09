@@ -1,3 +1,5 @@
+import { MAX_ALBUMS, MAX_ARTISTS, MIN_ARTISTS, MIN_GENRES } from "@coda/types";
+
 /**
  * Onboarding capture rules and the fixed genre taxonomy.
  *
@@ -10,16 +12,24 @@
  *
  * Artists and albums, by contrast, are searched from the (catalog-imported)
  * `Artist`/`Album` tables and cannot be served from a fixed list.
+ *
+ * The capture bounds themselves (`MIN_GENRES`/`MIN_ARTISTS`/`MAX_ARTISTS`/
+ * `MAX_ALBUMS`) live in `@coda/types` so the API and the web wizard share a
+ * single source of truth — re-exported here so existing call sites in this
+ * module keep importing from `./onboarding.constants.js`.
  */
+export { MIN_GENRES, MIN_ARTISTS, MAX_ARTISTS, MAX_ALBUMS };
 
-/** Minimum genres a user MUST select to complete onboarding (spec: at least 3). */
-export const MIN_GENRES = 3;
-
-/** Minimum favorite artists a user MUST select (spec: at least 1). */
-export const MIN_ARTISTS = 1;
-
-/** Maximum favorite albums a user MAY select (spec: up to 4, optional). */
-export const MAX_ALBUMS = 4;
+/**
+ * Matches a canonical UUID (any RFC 4122 version). `artistIds`/`albumIds` are
+ * validated against this BEFORE they reach a Prisma query — an id shaped like
+ * this but unknown to the catalog still surfaces as a clean 400 via
+ * {@link OnboardingService.assertAllExist}, while a malformed id (not a UUID at
+ * all) is rejected here rather than reaching Postgres, which would otherwise
+ * reject it with a raw "invalid input syntax for type uuid" error.
+ */
+export const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A genre in the fixed onboarding taxonomy. */
 export interface GenreSeed {

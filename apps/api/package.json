@@ -18,6 +18,7 @@
     "@aws-sdk/s3-request-presigner": "^3.658.0",
     "@clerk/backend": "^3.11.1",
     "@coda/db": "workspace:*",
+    "@coda/types": "workspace:*",
     "@nestjs/common": "^11.1.6",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.1.6",
