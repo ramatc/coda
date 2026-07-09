@@ -375,11 +375,42 @@ describe("ClerkWebhookService", () => {
     expect(users.size).toBe(0);
   });
 
+  /**
+   * Builds a P2002 error using the REAL shape produced by this project's
+   * Prisma 7 client, which always runs on the `@prisma/adapter-pg` driver
+   * adapter: `err.meta.target` is never populated. Instead,
+   * `@prisma/adapter-pg`'s `mapDriverError` builds
+   * `{ kind: "UniqueConstraintViolation", constraint: { fields: [...] } }` for
+   * Postgres error code `23505`, `@prisma/driver-adapter-utils`'s
+   * `DriverAdapterError` stores that payload verbatim on `.cause`, and the
+   * generated client re-throws it as `PrismaClientKnownRequestError` with
+   * `meta: { driverAdapterError: <that error> } }` — confirmed by reading the
+   * installed `@prisma/adapter-pg`/`@prisma/driver-adapter-utils` packages and
+   * `packages/db/src/generated/client/runtime/client.js`.
+   */
+  function p2002WithFields(
+    message: string,
+    fields: string[] | undefined,
+  ): Prisma.PrismaClientKnownRequestError {
+    return new Prisma.PrismaClientKnownRequestError(message, {
+      code: "P2002",
+      clientVersion: "test",
+      meta: {
+        driverAdapterError: {
+          cause: {
+            kind: "UniqueConstraintViolation",
+            constraint: fields !== undefined ? { fields } : undefined,
+          },
+        },
+      },
+    });
+  }
+
   it("attributes a P2002 conflict on Profile.username to the username field, not email", async () => {
     client.profile.upsert = () => {
-      throw new Prisma.PrismaClientKnownRequestError(
+      throw p2002WithFields(
         "Unique constraint failed on the fields: (`username`)",
-        { code: "P2002", clientVersion: "test", meta: { target: ["username"] } },
+        ["username"],
       );
     };
 
@@ -398,9 +429,9 @@ describe("ClerkWebhookService", () => {
 
   it("attributes a P2002 conflict on User.email to the email field", async () => {
     client.user.upsert = () => {
-      throw new Prisma.PrismaClientKnownRequestError(
+      throw p2002WithFields(
         "Unique constraint failed on the fields: (`email`)",
-        { code: "P2002", clientVersion: "test", meta: { target: ["email"] } },
+        ["email"],
       );
     };
 
@@ -414,6 +445,52 @@ describe("ClerkWebhookService", () => {
       ),
     ).rejects.toThrow(
       new ConflictException("Email dup@coda.dev is already in use by another account"),
+    );
+  });
+
+  it("does not mislabel a P2002 conflict on an unrecognized field as an email conflict", async () => {
+    client.user.upsert = () => {
+      throw p2002WithFields(
+        "Unique constraint failed on the fields: (`clerk_user_id`)",
+        ["clerk_user_id"],
+      );
+    };
+
+    await expect(
+      service.handleEvent(
+        userCreatedEvent({
+          clerkId: "user_14",
+          email: "unrelated@coda.dev",
+          username: "unrelated",
+        }),
+      ),
+    ).rejects.toThrow(
+      new ConflictException(
+        "This account could not be synced because of a conflicting field",
+      ),
+    );
+  });
+
+  it("does not mislabel a P2002 with a missing constraint as an email conflict", async () => {
+    client.user.upsert = () => {
+      throw p2002WithFields(
+        "Unique constraint failed",
+        undefined,
+      );
+    };
+
+    await expect(
+      service.handleEvent(
+        userCreatedEvent({
+          clerkId: "user_15",
+          email: "unrelated2@coda.dev",
+          username: "unrelated2",
+        }),
+      ),
+    ).rejects.toThrow(
+      new ConflictException(
+        "This account could not be synced because of a conflicting field",
+      ),
     );
   });
 

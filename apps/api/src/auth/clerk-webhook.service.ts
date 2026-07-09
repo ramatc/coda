@@ -12,6 +12,42 @@ import { PrismaService } from "../prisma/prisma.service.js";
 const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
 
 /**
+ * Extracts the conflicting column name from a P2002 error thrown by this
+ * project's Prisma 7 client, which always runs on the `@prisma/adapter-pg`
+ * driver adapter and therefore never populates `err.meta.target`.
+ *
+ * The real shape (verified against the installed
+ * `@prisma/adapter-pg`/`@prisma/driver-adapter-utils` packages and the
+ * generated client at `packages/db/src/generated/client/runtime/client.js`):
+ * `@prisma/adapter-pg`'s `mapDriverError` builds
+ * `{ kind: "UniqueConstraintViolation", constraint: { fields: [...] } }` for
+ * Postgres error code `23505`; `@prisma/driver-adapter-utils`'s
+ * `DriverAdapterError` stores that payload verbatim on `.cause`; the
+ * generated client re-throws it as `PrismaClientKnownRequestError` with
+ * `meta: { driverAdapterError: <that error> } }`.
+ */
+function extractUniqueConstraintField(
+  err: Prisma.PrismaClientKnownRequestError,
+): string | undefined {
+  const driverAdapterError = err.meta?.driverAdapterError;
+  if (typeof driverAdapterError !== "object" || driverAdapterError === null) {
+    return undefined;
+  }
+  const cause = (driverAdapterError as { cause?: unknown }).cause;
+  if (typeof cause !== "object" || cause === null) {
+    return undefined;
+  }
+  const constraint = (cause as { constraint?: unknown }).constraint;
+  if (typeof constraint !== "object" || constraint === null) {
+    return undefined;
+  }
+  const fields = (constraint as { fields?: unknown }).fields;
+  return Array.isArray(fields) && typeof fields[0] === "string"
+    ? fields[0]
+    : undefined;
+}
+
+/**
  * Syncs Clerk user lifecycle events into local `User` + `Profile` records
  * (Decision #2). Keeps local rows authoritative for FKs before a user's first
  * API call.
@@ -81,8 +117,7 @@ export class ClerkWebhookService {
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === UNIQUE_CONSTRAINT_VIOLATION
       ) {
-        const target = err.meta?.target;
-        const conflictField = Array.isArray(target) ? target[0] : target;
+        const conflictField = extractUniqueConstraintField(err);
 
         if (conflictField === "username") {
           this.logger.error(
@@ -94,12 +129,22 @@ export class ClerkWebhookService {
           );
         }
 
+        if (conflictField === "email") {
+          this.logger.error(
+            `Clerk user ${clerkUserId} (event ${eventType}) could not be synced: ` +
+              `email ${email} is already owned by a different local User`,
+          );
+          throw new ConflictException(
+            `Email ${email} is already in use by another account`,
+          );
+        }
+
         this.logger.error(
           `Clerk user ${clerkUserId} (event ${eventType}) could not be synced: ` +
-            `email ${email} is already owned by a different local User`,
+            `unique constraint conflict on field "${conflictField ?? "unknown"}"`,
         );
         throw new ConflictException(
-          `Email ${email} is already in use by another account`,
+          "This account could not be synced because of a conflicting field",
         );
       }
       throw err;
