@@ -44,19 +44,25 @@ export async function completeOnboarding(
     return { ok: true };
   }
 
-  // Any non-2xx response (400 validation, 409 conflict, etc.) may carry a
-  // Nest exception body with a specific `message` — read it generically
-  // rather than special-casing one status code, so a 409's conflict-field
-  // message (e.g. from `extractUniqueConstraintField`) isn't discarded in
-  // favor of the generic fallback below.
-  const body = (await response.json().catch(() => null)) as
-    | { message?: string | string[] }
-    | null;
-  const message = Array.isArray(body?.message)
-    ? body?.message.join(" ")
-    : body?.message;
-  if (message) {
-    return { ok: false, error: message };
+  // Any 4xx (client-error) response — 400 validation, 409 conflict, etc. —
+  // may carry a Nest exception body with a specific `message`; read it
+  // generically rather than special-casing one status code, so a 409's
+  // conflict-field message (e.g. from `extractUniqueConstraintField`) isn't
+  // discarded in favor of the generic fallback below. 5xx responses (and
+  // anything else) have no global exception filter in the API, so an
+  // uncaught error surfaces as Nest's default `{message: "Internal server
+  // error"}` — that literal string must NOT reach the user; keep the
+  // friendly fallback for those instead.
+  if (response.status >= 400 && response.status < 500) {
+    const body = (await response.json().catch(() => null)) as
+      | { message?: string | string[] }
+      | null;
+    const message = Array.isArray(body?.message)
+      ? body?.message.join(" ")
+      : body?.message;
+    if (message) {
+      return { ok: false, error: message };
+    }
   }
 
   return { ok: false, error: "Could not save your onboarding. Please retry." };
