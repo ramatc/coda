@@ -168,8 +168,8 @@ export class OnboardingService {
     const userId = await this.resolveUserId(clerkUserId);
 
     const genreSlugs = this.parseGenreSlugs(input.genreSlugs);
-    const artistIds = this.parseIdList(input.artistIds, "artistIds");
-    const albumIds = this.parseIdList(input.albumIds, "albumIds");
+    const artistIds = this.parseIdList(input.artistIds, "artistIds", MAX_ARTISTS);
+    const albumIds = this.parseIdList(input.albumIds, "albumIds", MAX_ALBUMS);
 
     if (genreSlugs.length < MIN_GENRES) {
       throw new BadRequestException(
@@ -300,9 +300,17 @@ export class OnboardingService {
    * service otherwise guarantees for a stale/forged id (see
    * {@link assertAllExist}).
    */
-  private parseIdList(value: unknown, field: string): string[] {
+  private parseIdList(value: unknown, field: string, max: number): string[] {
     if (value === undefined || value === null) {
       return [];
+    }
+    // Reject an oversized array before the per-element trim/regex work below
+    // runs on every element — no point paying that cost on input that will be
+    // rejected anyway. `complete()` still re-checks the (de-duplicated) count
+    // against the same bound below, so this is purely an early-exit fast
+    // path, not a behavior change.
+    if (Array.isArray(value) && value.length > max) {
+      throw new BadRequestException(`${field} must contain at most ${max} ids.`);
     }
     const ids = [...new Set(this.parseStringArray(value, field))];
     for (const id of ids) {
