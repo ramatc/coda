@@ -13,6 +13,10 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/dashboard(.*)");
   });
 
+  it("protects the profile routes at /u/[username]", () => {
+    expect(protectedRoutePatterns).toContain("/u(.*)");
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");
