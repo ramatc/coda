@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_ALBUMS,
+  MAX_ARTISTS,
+  MIN_ARTISTS,
+  MIN_GENRES,
   emailSchema,
   healthStatusSchema,
   paginationParamsSchema,
@@ -25,5 +29,15 @@ describe("@coda/types shared schemas", () => {
       status: "ok",
       uptime: 1.5,
     });
+  });
+
+  it("exposes consistent onboarding capture bounds", () => {
+    // Single source of truth shared by @coda/api and @coda/web — a
+    // regression here would silently desync server enforcement from the
+    // client's step-gating UI.
+    expect(MIN_GENRES).toBe(3);
+    expect(MIN_ARTISTS).toBe(1);
+    expect(MAX_ARTISTS).toBeGreaterThanOrEqual(MIN_ARTISTS);
+    expect(MAX_ALBUMS).toBe(4);
   });
 });
