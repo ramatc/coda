@@ -32,6 +32,16 @@ const DEFAULT_SEED_QUERY = "year:1900-2025";
 const TOKEN_EXPIRY_SAFETY_SECONDS = 60;
 
 /**
+ * Spotify's documented HTTP status for an out-of-range `/v1/search` query
+ * parameter (including `offset` past the cap) — its generic
+ * invalid-query-param response. Used to distinguish the offset-cap CLEAN stop
+ * from a real error (401 expired/revoked token, 429 rate limit, transient
+ * 5xx) occurring at the same pagination depth (judgment-day issue #4): only
+ * THIS status is treated as "reached the cap", never any other non-OK status.
+ */
+const SPOTIFY_OFFSET_CAP_STATUS = 400;
+
+/**
  * Shared placeholder artist for artist-less albums (judgment-day issue #10):
  * a single fixed id so every such album resolves to ONE canonical
  * "Unknown Artist" row instead of a distinct phantom row per album.
@@ -85,11 +95,19 @@ export class SpotifyClient {
    *
    * Spotify enforces a hard cap on `/v1/search`'s `offset` + `limit`
    * ({@link SPOTIFY_SEARCH_MAX_OFFSET}) regardless of `total` — once pagination
-   * would cross it, Spotify answers with a non-OK response. That's treated
-   * here as a CLEAN, expected stop (not an error): this bounds the practical
+   * would cross it, Spotify answers with a {@link SPOTIFY_OFFSET_CAP_STATUS}
+   * response. That specific status, at/past the cap boundary, is treated here
+   * as a CLEAN, expected stop (not an error): this bounds the practical
    * per-query import size to ~1000 results, so reaching the ~100k album goal
    * needs multiple distinct seed queries partitioning the catalog (out of
    * scope for this PR — see {@link SPOTIFY_SEARCH_MAX_OFFSET}).
+   *
+   * Any OTHER non-OK status past the cap boundary (a 401 expired/revoked
+   * token, a 429 rate limit, a transient 5xx) still throws as a real error
+   * (judgment-day issue #4) — treating every non-OK response past the cap as
+   * a clean stop would silently reinterpret those as "import finished", and
+   * both call sites treat `nextOffset: null` as done and clear the checkpoint,
+   * wiping the resume state on what was actually a transient/auth failure.
    */
   async getAlbumPage(
     offset: number,
@@ -106,7 +124,16 @@ export class SpotifyClient {
       headers: { authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
-      if (offset + limit > SPOTIFY_SEARCH_MAX_OFFSET) {
+      // `>=`, not strict `>` (judgment-day issue #12): this also covers the
+      // exact boundary (`offset + limit === SPOTIFY_SEARCH_MAX_OFFSET`), since
+      // a non-OK response landing exactly on the boundary is far more likely
+      // to be Spotify's cap rejection than an unrelated error that just
+      // happens to occur at that precise offset. This arithmetic check is
+      // only a PRE-FILTER for whether to check the status code below — the
+      // status code (not the arithmetic) is what actually decides clean-stop
+      // vs. real error (judgment-day issue #4).
+      const pastOffsetCapBoundary = offset + limit >= SPOTIFY_SEARCH_MAX_OFFSET;
+      if (pastOffsetCapBoundary && response.status === SPOTIFY_OFFSET_CAP_STATUS) {
         this.logger.log(
           `Reached Spotify's /v1/search offset cap at offset=${offset} ` +
             `(limit=${limit}) — stopping the import cleanly rather than ` +

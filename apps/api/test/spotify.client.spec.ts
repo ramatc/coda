@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
 import { SpotifyClient } from "../src/catalog-import/spotify.client.js";
+import { SPOTIFY_SEARCH_MAX_OFFSET } from "../src/catalog-import/catalog-import.constants.js";
 
 const CONFIG: Record<string, string> = {
   SPOTIFY_CLIENT_ID: "test_client_id",
@@ -164,5 +165,100 @@ describe("SpotifyClient", () => {
 
     const client = makeClient();
     await expect(client.getAlbumPage(0, 2)).rejects.toThrow(/429/);
+  });
+
+  it("memoizes concurrent token refreshes into a single in-flight request (judgment-day issue #3)", async () => {
+    let resolveTokenFetch!: (response: Response) => void;
+    const pendingTokenFetch = new Promise<Response>((resolve) => {
+      resolveTokenFetch = resolve;
+    });
+    fetchMock.mockImplementationOnce(() => pendingTokenFetch);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(albumPageBody(null)))
+      .mockResolvedValueOnce(jsonResponse(albumPageBody(null)));
+
+    const client = makeClient();
+    // Two concurrent callers both hit the cache miss before the token refresh
+    // resolves — they must share the SAME in-flight request rather than each
+    // firing an independent one (thundering herd).
+    const call1 = client.getAlbumPage(0, 2);
+    const call2 = client.getAlbumPage(2, 2);
+
+    // Let both `getAccessToken()` calls run past the cache-miss check and
+    // register against the shared `pendingTokenRequest` before it resolves.
+    await Promise.resolve();
+    await Promise.resolve();
+    resolveTokenFetch(jsonResponse(TOKEN_BODY));
+
+    await Promise.all([call1, call2]);
+
+    const tokenCalls = fetchMock.mock.calls.filter((c) =>
+      String(c[0]).includes("/api/token"),
+    );
+    expect(tokenCalls).toHaveLength(1);
+  });
+
+  it("treats a 400 at/past the offset cap as a clean stop, not an error (judgment-day issue #4)", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(TOKEN_BODY))
+      .mockResolvedValueOnce(jsonResponse({}, false, 400));
+
+    const client = makeClient();
+    const offset = SPOTIFY_SEARCH_MAX_OFFSET - 10;
+    const page = await client.getAlbumPage(offset, 50);
+
+    expect(page).toEqual({ albums: [], nextOffset: null });
+  });
+
+  it("still throws for a 429 past the offset cap instead of masking it as a clean stop (judgment-day issue #4)", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(TOKEN_BODY))
+      .mockResolvedValueOnce(jsonResponse({}, false, 429));
+
+    const client = makeClient();
+    const offset = SPOTIFY_SEARCH_MAX_OFFSET - 10;
+    await expect(client.getAlbumPage(offset, 50)).rejects.toThrow(/429/);
+  });
+
+  it("still throws for a transient 500 past the offset cap instead of masking it as a clean stop (judgment-day issue #4)", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(TOKEN_BODY))
+      .mockResolvedValueOnce(jsonResponse({}, false, 500));
+
+    const client = makeClient();
+    const offset = SPOTIFY_SEARCH_MAX_OFFSET - 10;
+    await expect(client.getAlbumPage(offset, 50)).rejects.toThrow(/500/);
+  });
+
+  it("falls back to offset+limit arithmetic when `next`'s offset param is missing/malformed (judgment-day issue #9)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(TOKEN_BODY)).mockResolvedValueOnce(
+      jsonResponse({
+        albums: {
+          total: 10,
+          limit: 2,
+          offset: 0,
+          // No `offset` query param on `next` ⇒ unparseable, so `getAlbumPage`
+          // must fall back to `page.offset + page.limit` instead.
+          next: "https://api.spotify.com/v1/search?q=year",
+          items: [
+            {
+              id: "spotify_alb_1",
+              name: "OK Computer",
+              artists: [{ id: "spotify_art_1", name: "Radiohead" }],
+            },
+            {
+              id: "spotify_alb_2",
+              name: "In Rainbows",
+              artists: [{ id: "spotify_art_1", name: "Radiohead" }],
+            },
+          ],
+        },
+      }),
+    );
+
+    const client = makeClient();
+    const page = await client.getAlbumPage(0, 2);
+
+    expect(page.nextOffset).toBe(2);
   });
 });
