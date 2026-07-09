@@ -27,6 +27,7 @@ function createFakePrisma(): {
   service: PrismaService;
   users: Map<string, UserRow>;
   profiles: Map<string, ProfileRow>;
+  client: { profile: { upsert: (...args: never[]) => unknown } };
 } {
   const users = new Map<string, UserRow>();
   const profiles = new Map<string, ProfileRow>();
@@ -34,7 +35,24 @@ function createFakePrisma(): {
 
   const client = {
     async $transaction<T>(fn: (tx: typeof client) => Promise<T>): Promise<T> {
-      return fn(client);
+      // Snapshot-and-restore models real Postgres rollback semantics: if the
+      // callback throws partway through, mutations already applied to these
+      // Maps are undone rather than silently left committed.
+      const usersSnapshot = new Map(users);
+      const profilesSnapshot = new Map(profiles);
+      try {
+        return await fn(client);
+      } catch (err) {
+        users.clear();
+        for (const [key, value] of usersSnapshot) {
+          users.set(key, value);
+        }
+        profiles.clear();
+        for (const [key, value] of profilesSnapshot) {
+          profiles.set(key, value);
+        }
+        throw err;
+      }
     },
     user: {
       async upsert(args: {
@@ -100,6 +118,7 @@ function createFakePrisma(): {
     service: { client } as unknown as PrismaService,
     users,
     profiles,
+    client,
   };
 }
 
@@ -130,11 +149,13 @@ describe("ClerkWebhookService", () => {
   let service: ClerkWebhookService;
   let users: Map<string, UserRow>;
   let profiles: Map<string, ProfileRow>;
+  let client: { profile: { upsert: (...args: never[]) => unknown } };
 
   beforeEach(() => {
     const fake = createFakePrisma();
     users = fake.users;
     profiles = fake.profiles;
+    client = fake.client;
     service = new ClerkWebhookService(fake.service);
   });
 
@@ -202,5 +223,23 @@ describe("ClerkWebhookService", () => {
     // Repeated delivery must not throw.
     await expect(service.handleEvent(deleteEvent)).resolves.toBeUndefined();
     expect(users.size).toBe(0);
+  });
+
+  it("rolls back the User row when a later step in the transaction throws", async () => {
+    client.profile.upsert = () => {
+      throw new Error("simulated failure after user.upsert committed");
+    };
+
+    await expect(
+      service.handleEvent(
+        userCreatedEvent({ clerkId: "user_4", email: "atomic@coda.dev" }),
+      ),
+    ).rejects.toThrow("simulated failure");
+
+    // The fake's $transaction must undo the User row it already wrote,
+    // matching real Postgres transaction semantics — otherwise this fake
+    // proves nothing about atomicity.
+    expect(users.has("user_4")).toBe(false);
+    expect(profiles.size).toBe(0);
   });
 });
