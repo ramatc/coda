@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import { Prisma } from "@coda/db";
 import { ProfileService } from "../src/profile/profile.service.js";
@@ -130,6 +130,7 @@ function fakeConfig(): ConfigService {
 
 describe("ProfileService", () => {
   let service: ProfileService;
+  let prismaService: PrismaService;
   let users: Map<string, UserRow>;
   let profiles: Map<string, ProfileRow>;
 
@@ -154,6 +155,7 @@ describe("ProfileService", () => {
     const fake = createFakePrisma();
     users = fake.users;
     profiles = fake.profiles;
+    prismaService = fake.service;
     service = new ProfileService(fake.service, fakeConfig());
   });
 
@@ -172,13 +174,27 @@ describe("ProfileService", () => {
     );
   });
 
-  it("looks a profile up by username and exposes the owner's Clerk id", async () => {
+  it("looks a profile up by username and flags it as the caller's own profile", async () => {
     seedProfile();
 
-    const result = await service.getByUsername("ada");
+    const ownResult = await service.getByUsername("ada", "clerk_1");
+    expect(ownResult.username).toBe("ada");
+    expect(ownResult.isOwnProfile).toBe(true);
+    expect(ownResult).not.toHaveProperty("clerkUserId");
+
+    const otherResult = await service.getByUsername("ada", "clerk_2");
+    expect(otherResult.isOwnProfile).toBe(false);
+
+    const anonymousResult = await service.getByUsername("ada");
+    expect(anonymousResult.isOwnProfile).toBe(false);
+  });
+
+  it("looks a profile up case-insensitively", async () => {
+    seedProfile();
+
+    const result = await service.getByUsername("ADA");
 
     expect(result.username).toBe("ada");
-    expect(result.clerkUserId).toBe("clerk_1");
   });
 
   it("edits username and bio", async () => {
@@ -246,5 +262,52 @@ describe("ProfileService", () => {
       service.updateOwnProfile("clerk_1", { username: "no spaces!" }),
     ).rejects.toBeTruthy();
     expect(profiles.get("local_1")?.username).toBe("ada");
+  });
+
+  it("canonicalizes a mixed-case username to lowercase", async () => {
+    seedProfile();
+
+    const result = await service.updateOwnProfile("clerk_1", {
+      username: "Ada_Lovelace",
+    });
+
+    expect(result.username).toBe("ada_lovelace");
+    expect(profiles.get("local_1")?.username).toBe("ada_lovelace");
+  });
+
+  it("clears avatarUrl when set to null", async () => {
+    seedProfile({ avatarUrl: "https://cdn.coda.test/avatars/avatars/local_1/old" });
+
+    const result = await service.updateOwnProfile("clerk_1", { avatarUrl: null });
+
+    expect(result.avatarUrl).toBeNull();
+    expect(profiles.get("local_1")?.avatarUrl).toBeNull();
+  });
+
+  it("rejects an avatarUrl on a look-alike origin (not just a string-prefix match)", async () => {
+    seedProfile({ avatarUrl: null });
+
+    await expect(
+      service.updateOwnProfile("clerk_1", {
+        // Prefix-matches "https://cdn.coda.test" as a raw string, but is really
+        // a different origin (`cdn.coda.test.evil.com`).
+        avatarUrl: "https://cdn.coda.test.evil.com/avatars/x.png",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(profiles.get("local_1")?.avatarUrl).toBeNull();
+  });
+
+  it("fails closed when R2_PUBLIC_BASE is not configured", async () => {
+    seedProfile({ avatarUrl: null });
+    const unconfigured = new ProfileService(
+      prismaService,
+      { get: () => undefined } as unknown as ConfigService,
+    );
+
+    await expect(
+      unconfigured.updateOwnProfile("clerk_1", {
+        avatarUrl: "https://cdn.coda.test/avatars/avatars/local_1/new",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

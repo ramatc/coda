@@ -28,9 +28,13 @@ export interface ProfileResponse {
   isPrivate: boolean;
 }
 
-/** A profile viewed by username, carrying the owner's Clerk id for ownership checks. */
+/**
+ * A profile viewed by username. Exposes only a caller-scoped `isOwnProfile`
+ * boolean rather than the owner's raw `clerkUserId` — any authenticated caller
+ * could otherwise harvest another user's internal Clerk id from this endpoint.
+ */
 export interface PublicProfileResponse extends ProfileResponse {
-  clerkUserId: string;
+  isOwnProfile: boolean;
 }
 
 export interface UpdateProfileInput {
@@ -77,15 +81,21 @@ export class ProfileService {
     return this.toResponse(user.profile);
   }
 
-  async getByUsername(username: string): Promise<PublicProfileResponse> {
+  async getByUsername(
+    username: string,
+    callerClerkUserId?: string,
+  ): Promise<PublicProfileResponse> {
     const profile = await this.prisma.client.profile.findUnique({
-      where: { username },
+      where: { username: this.canonicalizeUsername(username) },
       include: { user: { select: { clerkUserId: true } } },
     });
     if (!profile) {
       throw new NotFoundException(`No profile found for username ${username}`);
     }
-    return { ...this.toResponse(profile), clerkUserId: profile.user.clerkUserId };
+    return {
+      ...this.toResponse(profile),
+      isOwnProfile: callerClerkUserId != null && callerClerkUserId === profile.user.clerkUserId,
+    };
   }
 
   async updateOwnProfile(
@@ -142,7 +152,7 @@ export class ProfileService {
     if (typeof value !== "string") {
       throw new BadRequestException("username must be a string.");
     }
-    const username = value.trim();
+    const username = this.canonicalizeUsername(value.trim());
     if (
       username.length < USERNAME_MIN_LENGTH ||
       username.length > USERNAME_MAX_LENGTH ||
@@ -153,6 +163,15 @@ export class ProfileService {
       );
     }
     return username;
+  }
+
+  /**
+   * Canonicalizes a username to lowercase so "admin", "Admin" and "ADMIN"
+   * cannot be registered as distinct profiles (impersonation/squatting risk)
+   * and the public `/u/[username]` URL has one unambiguous casing.
+   */
+  private canonicalizeUsername(username: string): string {
+    return username.toLowerCase();
   }
 
   private parseDisplayName(value: unknown): string {
@@ -182,9 +201,12 @@ export class ProfileService {
     return bio.length === 0 ? null : bio;
   }
 
-  private parseAvatarUrl(value: unknown): string {
+  private parseAvatarUrl(value: unknown): string | null {
+    if (value === null) {
+      return null;
+    }
     if (typeof value !== "string" || value.trim().length === 0) {
-      throw new BadRequestException("avatarUrl must be a non-empty string.");
+      throw new BadRequestException("avatarUrl must be a non-empty string or null.");
     }
     const avatarUrl = value.trim();
     let parsed: URL;
@@ -196,10 +218,25 @@ export class ProfileService {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new BadRequestException("avatarUrl must be an http(s) URL.");
     }
-    // When a public base is configured, only accept URLs we could have minted —
-    // stops a client from persisting an arbitrary off-site URL as their avatar.
+    // Only accept URLs we could have minted ourselves — stops a client from
+    // persisting an arbitrary off-site URL as their avatar. Fails CLOSED: a
+    // missing/misconfigured `R2_PUBLIC_BASE` rejects every avatarUrl rather than
+    // silently skipping the check.
     const publicBase = this.config.get<string>("R2_PUBLIC_BASE");
-    if (publicBase && !avatarUrl.startsWith(publicBase.replace(/\/+$/, ""))) {
+    if (!publicBase) {
+      throw new BadRequestException("Avatar storage is not configured (R2_PUBLIC_BASE).");
+    }
+    let publicBaseUrl: URL;
+    try {
+      publicBaseUrl = new URL(publicBase);
+    } catch {
+      throw new BadRequestException("Avatar storage is misconfigured (R2_PUBLIC_BASE).");
+    }
+    const basePath = publicBaseUrl.pathname.replace(/\/+$/, "");
+    const isSameOrigin = parsed.origin === publicBaseUrl.origin;
+    const isUnderBasePath =
+      basePath === "" || parsed.pathname === basePath || parsed.pathname.startsWith(`${basePath}/`);
+    if (!isSameOrigin || !isUnderBasePath) {
       throw new BadRequestException(
         "avatarUrl must point to the configured avatar storage.",
       );

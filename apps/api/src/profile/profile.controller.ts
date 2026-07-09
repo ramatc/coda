@@ -62,7 +62,8 @@ export class ProfileController {
   @Get(":username")
   getByUsername(
     @Param("username") username: string,
+    @CurrentUser("sub") clerkUserId: string,
   ): Promise<PublicProfileResponse> {
-    return this.profiles.getByUsername(username);
+    return this.profiles.getByUsername(username, clerkUserId);
   }
 }

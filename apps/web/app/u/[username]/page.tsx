@@ -5,7 +5,7 @@ import { ProfileView, type ProfileDto } from "./profile-view";
 import { AvatarUpload } from "./avatar-upload";
 
 interface PublicProfileDto extends ProfileDto {
-  clerkUserId: string;
+  isOwnProfile: boolean;
 }
 
 interface ProfilePageProps {
@@ -20,7 +20,7 @@ interface ProfilePageProps {
  */
 export default async function ProfilePage({ params }: ProfilePageProps) {
   const { username } = await params;
-  const { userId, getToken } = await auth();
+  const { getToken } = await auth();
   const token = await getToken();
 
   const response = await fetch(
@@ -39,7 +39,7 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
   }
 
   const profile = (await response.json()) as PublicProfileDto;
-  const isOwnProfile = userId != null && userId === profile.clerkUserId;
+  const isOwnProfile = profile.isOwnProfile;
 
   return (
     <ProfileView profile={profile} isOwnProfile={isOwnProfile}>
