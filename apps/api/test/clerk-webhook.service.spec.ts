@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebhookEvent } from "@clerk/backend";
+import { ConflictException, Logger, UnprocessableEntityException } from "@nestjs/common";
+import { Prisma } from "@coda/db";
 import { ClerkWebhookService } from "../src/auth/clerk-webhook.service.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
 
@@ -27,7 +29,10 @@ function createFakePrisma(): {
   service: PrismaService;
   users: Map<string, UserRow>;
   profiles: Map<string, ProfileRow>;
-  client: { profile: { upsert: (...args: never[]) => unknown } };
+  client: {
+    profile: { upsert: (...args: never[]) => unknown };
+    user: { upsert: (...args: never[]) => unknown };
+  };
 } {
   const users = new Map<string, UserRow>();
   const profiles = new Map<string, ProfileRow>();
@@ -37,9 +42,16 @@ function createFakePrisma(): {
     async $transaction<T>(fn: (tx: typeof client) => Promise<T>): Promise<T> {
       // Snapshot-and-restore models real Postgres rollback semantics: if the
       // callback throws partway through, mutations already applied to these
-      // Maps are undone rather than silently left committed.
-      const usersSnapshot = new Map(users);
-      const profilesSnapshot = new Map(profiles);
+      // Maps are undone rather than silently left committed. Rows are
+      // deep-cloned (not just the Map) because update branches mutate row
+      // objects in place — a shallow `new Map(users)` would still share the
+      // same row references and "roll back" nothing.
+      const usersSnapshot = new Map(
+        [...users].map(([key, value]) => [key, { ...value }]),
+      );
+      const profilesSnapshot = new Map(
+        [...profiles].map(([key, value]) => [key, { ...value }]),
+      );
       try {
         return await fn(client);
       } catch (err) {
@@ -94,11 +106,16 @@ function createFakePrisma(): {
           displayName: string;
           avatarUrl: string | null;
         };
-        update: { displayName: string; avatarUrl: string | null };
+        // Mirrors the real call site (`clerk-webhook.service.ts`), which only
+        // ever passes `{ avatarUrl }` on update — `displayName` is
+        // intentionally omitted so it's never touched by an update. Do NOT
+        // add a `displayName` field here without also updating this comment
+        // and the real service, otherwise this fake diverges from Prisma's
+        // partial-update semantics (unspecified columns stay untouched).
+        update: { avatarUrl: string | null };
       }): Promise<ProfileRow> {
         const existing = profiles.get(args.where.userId);
         if (existing) {
-          existing.displayName = args.update.displayName;
           existing.avatarUrl = args.update.avatarUrl;
           return existing;
         }
@@ -145,11 +162,53 @@ function userCreatedEvent(overrides: {
   } as unknown as WebhookEvent;
 }
 
+function userUpdatedEvent(overrides: {
+  clerkId: string;
+  email: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  avatarUrl?: string;
+}): WebhookEvent {
+  return {
+    type: "user.updated",
+    data: {
+      id: overrides.clerkId,
+      username: overrides.username ?? null,
+      first_name: overrides.firstName ?? null,
+      last_name: overrides.lastName ?? null,
+      image_url: overrides.avatarUrl ?? "",
+      primary_email_address_id: "idn_primary",
+      email_addresses: [
+        { id: "idn_primary", email_address: overrides.email },
+      ],
+    },
+  } as unknown as WebhookEvent;
+}
+
+function userEventWithNoEmail(clerkId: string): WebhookEvent {
+  return {
+    type: "user.created",
+    data: {
+      id: clerkId,
+      username: null,
+      first_name: null,
+      last_name: null,
+      image_url: "",
+      primary_email_address_id: null,
+      email_addresses: [],
+    },
+  } as unknown as WebhookEvent;
+}
+
 describe("ClerkWebhookService", () => {
   let service: ClerkWebhookService;
   let users: Map<string, UserRow>;
   let profiles: Map<string, ProfileRow>;
-  let client: { profile: { upsert: (...args: never[]) => unknown } };
+  let client: {
+    profile: { upsert: (...args: never[]) => unknown };
+    user: { upsert: (...args: never[]) => unknown };
+  };
 
   beforeEach(() => {
     const fake = createFakePrisma();
@@ -241,5 +300,138 @@ describe("ClerkWebhookService", () => {
     // proves nothing about atomicity.
     expect(users.has("user_4")).toBe(false);
     expect(profiles.size).toBe(0);
+  });
+
+  it("rolls back an in-place update (not just an insert) when a later step throws", async () => {
+    await service.handleEvent(
+      userCreatedEvent({
+        clerkId: "user_9",
+        email: "original@coda.dev",
+        username: "orig",
+      }),
+    );
+    expect(users.get("user_9")?.email).toBe("original@coda.dev");
+
+    client.profile.upsert = () => {
+      throw new Error("simulated failure after user.upsert update committed");
+    };
+
+    await expect(
+      service.handleEvent(
+        userUpdatedEvent({
+          clerkId: "user_9",
+          email: "changed@coda.dev",
+          username: "orig",
+        }),
+      ),
+    ).rejects.toThrow("simulated failure");
+
+    // The row must be reverted to its pre-update field values, not left
+    // holding the in-flight mutation from the failed transaction — a
+    // shallow Map snapshot would pass this test with the wrong (mutated)
+    // value still present because it shares the same row reference.
+    expect(users.get("user_9")?.email).toBe("original@coda.dev");
+  });
+
+  it("preserves displayName on user.updated but still syncs avatarUrl", async () => {
+    await service.handleEvent(
+      userCreatedEvent({
+        clerkId: "user_10",
+        email: "grace@coda.dev",
+        username: "grace",
+        firstName: "Grace",
+        lastName: "Hopper",
+      }),
+    );
+    const user = users.get("user_10")!;
+    expect(profiles.get(user.id)?.displayName).toBe("Grace Hopper");
+    expect(profiles.get(user.id)?.avatarUrl).toBeNull();
+
+    await service.handleEvent(
+      userUpdatedEvent({
+        clerkId: "user_10",
+        email: "grace@coda.dev",
+        username: "grace",
+        firstName: "Changed",
+        lastName: "Name",
+        avatarUrl: "https://img.example.com/grace.png",
+      }),
+    );
+
+    const profile = profiles.get(user.id);
+    // displayName is Clerk-authoritative only at creation time (see
+    // clerk-webhook.service.ts) — a later user.updated with different
+    // first/last name must NOT overwrite it.
+    expect(profile?.displayName).toBe("Grace Hopper");
+    // avatarUrl, by contrast, is always kept in sync with Clerk.
+    expect(profile?.avatarUrl).toBe("https://img.example.com/grace.png");
+  });
+
+  it("rejects with UnprocessableEntityException when the Clerk user has no email address", async () => {
+    await expect(
+      service.handleEvent(userEventWithNoEmail("user_11")),
+    ).rejects.toThrow(UnprocessableEntityException);
+
+    expect(users.size).toBe(0);
+  });
+
+  it("attributes a P2002 conflict on Profile.username to the username field, not email", async () => {
+    client.profile.upsert = () => {
+      throw new Prisma.PrismaClientKnownRequestError(
+        "Unique constraint failed on the fields: (`username`)",
+        { code: "P2002", clientVersion: "test", meta: { target: ["username"] } },
+      );
+    };
+
+    await expect(
+      service.handleEvent(
+        userCreatedEvent({
+          clerkId: "user_12",
+          email: "conflict@coda.dev",
+          username: "taken",
+        }),
+      ),
+    ).rejects.toThrow(
+      new ConflictException("Username taken is already in use by another account"),
+    );
+  });
+
+  it("attributes a P2002 conflict on User.email to the email field", async () => {
+    client.user.upsert = () => {
+      throw new Prisma.PrismaClientKnownRequestError(
+        "Unique constraint failed on the fields: (`email`)",
+        { code: "P2002", clientVersion: "test", meta: { target: ["email"] } },
+      );
+    };
+
+    await expect(
+      service.handleEvent(
+        userCreatedEvent({
+          clerkId: "user_13",
+          email: "dup@coda.dev",
+          username: "dup",
+        }),
+      ),
+    ).rejects.toThrow(
+      new ConflictException("Email dup@coda.dev is already in use by another account"),
+    );
+  });
+
+  it("logs a warning and does not throw when user.deleted has no id", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+
+    const deleteEvent = {
+      type: "user.deleted",
+      data: { id: "", deleted: true },
+    } as unknown as WebhookEvent;
+
+    await expect(service.handleEvent(deleteEvent)).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Ignoring user.deleted event with no user id",
+    );
+
+    warnSpy.mockRestore();
   });
 });

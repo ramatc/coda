@@ -81,6 +81,19 @@ export class ClerkWebhookService {
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === UNIQUE_CONSTRAINT_VIOLATION
       ) {
+        const target = err.meta?.target;
+        const conflictField = Array.isArray(target) ? target[0] : target;
+
+        if (conflictField === "username") {
+          this.logger.error(
+            `Clerk user ${clerkUserId} (event ${eventType}) could not be synced: ` +
+              `username ${username} is already owned by a different local Profile`,
+          );
+          throw new ConflictException(
+            `Username ${username} is already in use by another account`,
+          );
+        }
+
         this.logger.error(
           `Clerk user ${clerkUserId} (event ${eventType}) could not be synced: ` +
             `email ${email} is already owned by a different local User`,
