@@ -11,7 +11,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "start": "node dist/main.js",
-    "dev": "tsx watch src/main.ts"
+    "dev": "tsx watch src/main.ts",
+    "seed:catalog": "tsx src/catalog-import/seed.script.ts",
+    "worker:catalog": "tsx src/catalog-import/catalog-worker.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.658.0",
@@ -24,6 +26,8 @@
     "@nestjs/core": "^11.1.6",
     "@nestjs/platform-express": "^11.1.6",
     "@prisma/client-runtime-utils": "^7.0.0",
+    "bullmq": "^5.34.0",
+    "ioredis": "5.10.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
