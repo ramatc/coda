@@ -42,4 +42,14 @@ describe("OnboardingController", () => {
     await controller.searchArtists("radiohead");
     expect(searchArtists).toHaveBeenCalledWith("radiohead");
   });
+
+  it("falls back to an empty string when the array's first element is not a string", async () => {
+    await controller.searchArtists([42, "x"]);
+    expect(searchArtists).toHaveBeenCalledWith("");
+  });
+
+  it("falls back to an empty string for an empty array", async () => {
+    await controller.searchArtists([]);
+    expect(searchArtists).toHaveBeenCalledWith("");
+  });
 });
