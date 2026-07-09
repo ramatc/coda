@@ -5,6 +5,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { Public } from "../auth/public.decorator.js";
 
 export interface HealthResponse {
   status: "ok";
@@ -16,6 +17,10 @@ export interface ReadinessResponse {
   database: "up";
 }
 
+// Health/readiness probes MUST stay reachable by orchestrators and load
+// balancers without a Clerk JWT, so the whole controller opts out of the global
+// guard.
+@Public()
 @Controller("health")
 export class HealthController {
   private readonly logger = new Logger(HealthController.name);
