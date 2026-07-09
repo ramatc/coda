@@ -1,6 +1,7 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getApiBaseUrl } from "../../../lib/api-client";
+import { fetchOnboardingStatus, resolveOnboardingRedirect } from "../../../lib/onboarding";
 import { ProfileView, type ProfileDto } from "./profile-view";
 import { AvatarUpload } from "./avatar-upload";
 
@@ -22,6 +23,12 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
   const { username } = await params;
   const { getToken } = await auth();
   const token = await getToken();
+
+  const status = await fetchOnboardingStatus(token);
+  const redirectTo = resolveOnboardingRedirect(status, `/u/${username}`);
+  if (redirectTo) {
+    redirect(redirectTo);
+  }
 
   const response = await fetch(
     `${getApiBaseUrl()}/profile/${encodeURIComponent(username)}`,

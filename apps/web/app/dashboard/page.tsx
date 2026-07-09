@@ -1,13 +1,24 @@
+import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
+import { fetchOnboardingStatus, resolveOnboardingRedirect } from "../../lib/onboarding";
 
 /**
  * Placeholder PROTECTED route. The middleware redirects unauthenticated
  * visitors to sign-in before this renders, so reaching it means a session
- * exists. Fase 0 only proves the wiring — it shows the Clerk `userId` and a
- * banner, with no real dashboard UI.
+ * exists. Also enforces the onboarding gate (same as `/home`) so a signed-in
+ * but unonboarded user cannot reach this page directly and skip the flow.
+ * Fase 0 only proves the wiring — it shows the Clerk `userId` and a banner,
+ * with no real dashboard UI.
  */
 export default async function DashboardPage() {
-  const { userId } = await auth();
+  const { userId, getToken } = await auth();
+  const token = await getToken();
+
+  const status = await fetchOnboardingStatus(token);
+  const redirectTo = resolveOnboardingRedirect(status, "/dashboard");
+  if (redirectTo) {
+    redirect(redirectTo);
+  }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-4 px-6">

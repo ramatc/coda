@@ -7,7 +7,15 @@
 
 /**
  * Route patterns treated as protected. Fase 0 protected only the dashboard;
- * Fase 1 (PR3) adds the profile pages at `/u/[username]` — viewing or editing a
- * profile requires a signed-in session.
+ * Fase 1 (PR3) adds the profile pages at `/u/[username]`, and PR4 adds the
+ * onboarding flow (`/onboarding`) plus the app home (`/home`) — all require a
+ * signed-in session. `/home` additionally runs the onboarding-complete gate
+ * server-side (see `lib/onboarding.ts`), redirecting unonboarded users to
+ * `/onboarding`.
  */
-export const protectedRoutePatterns = ["/dashboard(.*)", "/u(.*)"] as const;
+export const protectedRoutePatterns = [
+  "/dashboard(.*)",
+  "/u(.*)",
+  "/onboarding(.*)",
+  "/home(.*)",
+] as const;

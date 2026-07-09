@@ -32,3 +32,17 @@ export const healthStatusSchema = z.object({
   uptime: z.number().nonnegative(),
 });
 export type HealthStatus = z.infer<typeof healthStatusSchema>;
+
+/**
+ * Onboarding capture rules, shared between `@coda/api` (server-side
+ * enforcement) and `@coda/web` (client-side step gating) so the two never
+ * drift out of sync.
+ */
+/** Minimum genres a user MUST select to complete onboarding. */
+export const MIN_GENRES = 3;
+/** Minimum favorite artists a user MUST select. */
+export const MIN_ARTISTS = 1;
+/** Maximum favorite artists a user MAY select. */
+export const MAX_ARTISTS = 20;
+/** Maximum favorite albums a user MAY select (optional). */
+export const MAX_ALBUMS = 4;
