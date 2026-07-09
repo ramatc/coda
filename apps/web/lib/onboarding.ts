@@ -1,4 +1,4 @@
-import { MAX_ALBUMS, MIN_ARTISTS, MIN_GENRES } from "@coda/types";
+import { MAX_ALBUMS, MAX_ARTISTS, MIN_ARTISTS, MIN_GENRES } from "@coda/types";
 import { getApiBaseUrl } from "./api-client";
 
 /** Onboarding progress as returned by the API's `GET /onboarding/status`. */
@@ -35,7 +35,7 @@ export interface AlbumOption {
  * `@coda/types` (single source of truth shared with the API) so existing
  * call sites in this module keep importing from `lib/onboarding`.
  */
-export { MIN_GENRES, MIN_ARTISTS, MAX_ALBUMS };
+export { MIN_GENRES, MIN_ARTISTS, MAX_ARTISTS, MAX_ALBUMS };
 
 /** Where the onboarding gate sends an incomplete user. */
 export const ONBOARDING_PATH = "/onboarding";
@@ -77,6 +77,7 @@ export function isOnboardingSubmittable(
   return (
     genreCount >= MIN_GENRES &&
     artistCount >= MIN_ARTISTS &&
+    artistCount <= MAX_ARTISTS &&
     albumCount <= MAX_ALBUMS
   );
 }

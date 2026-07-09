@@ -99,4 +99,9 @@ describe("isOnboardingSubmittable", () => {
     expect(isOnboardingSubmittable(3, 1, 4)).toBe(true);
     expect(isOnboardingSubmittable(3, 1, 5)).toBe(false);
   });
+
+  it("allows up to MAX_ARTISTS artists but not more", () => {
+    expect(isOnboardingSubmittable(3, 20, 0)).toBe(true);
+    expect(isOnboardingSubmittable(3, 21, 0)).toBe(false);
+  });
 });

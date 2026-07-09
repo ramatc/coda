@@ -8,6 +8,7 @@ import { getApiBaseUrl } from "../../lib/api-client";
 import {
   HOME_PATH,
   MAX_ALBUMS,
+  MAX_ARTISTS,
   MIN_ARTISTS,
   MIN_GENRES,
   isOnboardingSubmittable,
@@ -116,32 +117,41 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
     const state = searchStateRef.current[kind];
     const requestSeq = ++state.seq;
 
-    const token = await getToken();
-    const res = await fetch(
-      `${getApiBaseUrl()}/onboarding/${kind}?q=${encodeURIComponent(q)}`,
-      { headers: { Authorization: `Bearer ${token ?? ""}` } },
-    );
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `${getApiBaseUrl()}/onboarding/${kind}?q=${encodeURIComponent(q)}`,
+        { headers: { Authorization: `Bearer ${token ?? ""}` } },
+      );
 
-    if (requestSeq !== state.seq) {
-      // A newer search has started since this request was issued — discard
-      // this now-stale response.
-      return;
-    }
-    if (!res.ok) {
-      return;
-    }
-    if (kind === "artists") {
-      setArtistResults((await res.json()) as ArtistOption[]);
-    } else {
-      setAlbumResults((await res.json()) as AlbumOption[]);
+      if (requestSeq !== state.seq) {
+        // A newer search has started since this request was issued — discard
+        // this now-stale response.
+        return;
+      }
+      if (!res.ok) {
+        return;
+      }
+      if (kind === "artists") {
+        setArtistResults((await res.json()) as ArtistOption[]);
+      } else {
+        setAlbumResults((await res.json()) as AlbumOption[]);
+      }
+    } catch {
+      // Network failure or a rejected getToken(): fail safe by keeping
+      // whatever results are already on screen rather than throwing an
+      // unhandled promise rejection (same fail-safe posture as fetchGenres).
     }
   }
 
   function toggleArtist(artist: ArtistOption) {
     setSelectedArtists((prev) => {
       const next = new Map(prev);
-      if (next.has(artist.id)) next.delete(artist.id);
-      else next.set(artist.id, artist);
+      if (next.has(artist.id)) {
+        next.delete(artist.id);
+      } else if (next.size < MAX_ARTISTS) {
+        next.set(artist.id, artist);
+      }
       return next;
     });
   }
