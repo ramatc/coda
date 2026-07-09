@@ -1,8 +1,13 @@
-import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  type OnModuleDestroy,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
-import { createBullConnection } from "./catalog-redis.js";
+import { createBullProducerConnection } from "./catalog-redis.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import {
   ALBUM_JOB_NAME,
@@ -20,6 +25,14 @@ import type { NormalizedAlbum } from "./spotify.types.js";
 export interface PageJobData {
   offset: number;
   limit: number;
+  /**
+   * Running-lock ownership token (judgment-day issue #2), threaded through
+   * every page job of a run so whichever job ends the run — a clean finish or
+   * a permanent failure (see `catalog-worker.ts`'s `pageWorker.on("failed", ...)`)
+   * — releases the SAME lock this run's `enqueueSeed()` acquired, rather than
+   * an unconditional `DEL` that could delete a different run's lock.
+   */
+  lockToken?: string;
 }
 
 /** Data carried by a per-album job (the album to upsert / later enrich). */
@@ -61,29 +74,48 @@ export class CatalogQueue implements OnModuleDestroy {
    * seed request) over the same checkpoint; see
    * {@link SpotifyCheckpointStore.tryAcquireRunningLock} for the guard's scope
    * and limitations.
+   *
+   * The lock is deliberately NOT released on success — it stays held until
+   * the actual import completes (via the worker's clean-finish/permanent-
+   * failure paths, or `CatalogImportService.runImport`'s `finally`). It is
+   * only released here if the enqueue-seed step itself throws (e.g. a
+   * transient Redis/BullMQ blip) — before the real import has even started —
+   * so a partial failure at this step can't leak the lock for the full TTL
+   * and block every subsequent trigger (judgment-day issue #1).
    */
   async enqueueSeed(limit: number): Promise<{ offset: number }> {
-    const acquired = await this.checkpointStore.tryAcquireRunningLock();
-    if (!acquired) {
-      throw new Error(
+    const token = await this.checkpointStore.tryAcquireRunningLock();
+    if (!token) {
+      throw new ConflictException(
         "Catalog import is already in progress — refusing to start a concurrent run.",
       );
     }
-    const offset = (await this.checkpointStore.get()) ?? 0;
-    await this.enqueuePage(offset, limit);
-    this.logger.log(`Enqueued Spotify seed starting at offset ${offset}`);
-    return { offset };
+    try {
+      const offset = (await this.checkpointStore.get()) ?? 0;
+      await this.enqueuePage(offset, limit, token);
+      this.logger.log(`Enqueued Spotify seed starting at offset ${offset}`);
+      return { offset };
+    } catch (err) {
+      await this.checkpointStore.releaseRunningLock(token);
+      throw err;
+    }
   }
 
   /**
    * Enqueues a page job with a deterministic id (dedupes a re-derived page),
    * with retry/backoff and bounded cleanup so a transient failure doesn't
-   * permanently drop the page (judgment-day issue #1).
+   * permanently drop the page (judgment-day issue #1). `lockToken`, when
+   * given, rides along in the job data so the page worker can release the
+   * SAME running-lock this run acquired once the run ends.
    */
-  async enqueuePage(offset: number, limit: number): Promise<void> {
+  async enqueuePage(
+    offset: number,
+    limit: number,
+    lockToken?: string,
+  ): Promise<void> {
     await this.getPageQueue().add(
       PAGE_JOB_NAME,
-      { offset, limit },
+      { offset, limit, lockToken },
       { ...CATALOG_JOB_OPTIONS, jobId: pageJobId(offset) },
     );
   }
@@ -131,7 +163,10 @@ export class CatalogQueue implements OnModuleDestroy {
 
   private getConnection(): Redis {
     if (!this.connection) {
-      this.connection = createBullConnection(
+      // Bounded-retry producer connection (judgment-day issue #6) — NOT the
+      // Worker-only `createBullConnection` default, since this connection is
+      // reachable synchronously from the admin HTTP request path.
+      this.connection = createBullProducerConnection(
         this.config.get<string>(REDIS_URL_ENV),
       );
     }

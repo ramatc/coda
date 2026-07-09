@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Redis } from "ioredis";
@@ -8,6 +9,21 @@ import {
   DEFAULT_REDIS_URL,
   REDIS_URL_ENV,
 } from "./catalog-import.constants.js";
+
+/**
+ * Atomic "release iff still the owner" Lua script (judgment-day issue #2) run
+ * via `EVAL`: a plain `GET` followed by a separate `DEL` would have a TOCTOU
+ * gap between the two commands where a different run could acquire the lock
+ * in between, so the compare-and-delete must happen as a single Redis
+ * operation. `KEYS[1]` is the lock key, `ARGV[1]` is the caller's token.
+ */
+const RELEASE_LOCK_IF_OWNER_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+else
+  return 0
+end
+`;
 
 /**
  * Minimal cursor store the resumable importer depends on. Abstracted behind an
@@ -28,10 +44,16 @@ export interface CatalogCheckpointStore {
    * {@link SpotifyCheckpointStore.tryAcquireRunningLock}). Optional so
    * in-memory test fakes — which never exercise two concurrent runs — don't
    * need to implement it.
+   *
+   * Returns a unique ownership token on success (or `null` if the lock is
+   * already held) so the caller can prove ownership when releasing it
+   * (judgment-day issue #2) — an unconditional `DEL` in `releaseRunningLock`
+   * would otherwise let a run whose TTL already expired (and was replaced by a
+   * newer run's lock) delete that NEWER run's lock instead of its own.
    */
-  tryAcquireRunningLock?(): Promise<boolean>;
-  /** Releases the marker acquired by `tryAcquireRunningLock`. */
-  releaseRunningLock?(): Promise<void>;
+  tryAcquireRunningLock?(): Promise<string | null>;
+  /** Releases the marker acquired by `tryAcquireRunningLock`, iff `token` still owns it. */
+  releaseRunningLock?(token: string): Promise<void>;
 }
 
 /**
@@ -82,21 +104,44 @@ export class SpotifyCheckpointStore
    * an unbounded duration, so a proper lock would need heartbeat renewal
    * handed off between jobs — disproportionate complexity for this PR. The
    * TTL is the safety net for a crashed run that never releases the marker.
+   *
+   * The lock's VALUE is a unique per-acquisition token (judgment-day issue
+   * #2), not a constant — so a caller who eventually calls
+   * {@link releaseRunningLock} can prove it still owns the CURRENT lock. This
+   * matters because the TTL is a safety net, not a guarantee: if run A's lock
+   * expires while it's still legitimately running, and run B then acquires a
+   * new lock, an unconditional `DEL` from A's eventual (redundant) release
+   * would delete B's lock — letting a third run C start concurrently with B
+   * and defeat the mutex entirely.
    */
-  async tryAcquireRunningLock(): Promise<boolean> {
+  async tryAcquireRunningLock(): Promise<string | null> {
+    const token = randomUUID();
     const result = await this.client().set(
       CHECKPOINT_RUNNING_LOCK_KEY,
-      "1",
+      token,
       "PX",
       CHECKPOINT_RUNNING_LOCK_TTL_MS,
       "NX",
     );
-    return result === "OK";
+    return result === "OK" ? token : null;
   }
 
-  /** Releases the marker acquired by {@link tryAcquireRunningLock}. */
-  async releaseRunningLock(): Promise<void> {
-    await this.client().del(CHECKPOINT_RUNNING_LOCK_KEY);
+  /**
+   * Releases the marker acquired by {@link tryAcquireRunningLock}, but ONLY if
+   * `token` still matches the lock's current value — otherwise this is a
+   * would-be release of a lock this caller no longer (or never did) own, and
+   * is a no-op. The get-and-conditional-delete must be a single atomic Redis
+   * operation (a Lua script via `EVAL`): a plain `GET` followed by a separate
+   * `DEL` would itself have a TOCTOU gap where a third party could acquire the
+   * lock between the two commands.
+   */
+  async releaseRunningLock(token: string): Promise<void> {
+    await this.client().eval(
+      RELEASE_LOCK_IF_OWNER_SCRIPT,
+      1,
+      CHECKPOINT_RUNNING_LOCK_KEY,
+      token,
+    );
   }
 
   async onModuleDestroy(): Promise<void> {
