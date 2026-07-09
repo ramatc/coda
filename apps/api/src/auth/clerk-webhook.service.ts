@@ -5,47 +5,11 @@ import {
   UnprocessableEntityException,
 } from "@nestjs/common";
 import type { UserJSON, WebhookEvent } from "@clerk/backend";
-import { Prisma } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
-
-/** Prisma error code for a unique-constraint violation (`User.email`). */
-const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
-
-/**
- * Extracts the conflicting column name from a P2002 error thrown by this
- * project's Prisma 7 client, which always runs on the `@prisma/adapter-pg`
- * driver adapter and therefore never populates `err.meta.target`.
- *
- * The real shape (verified against the installed
- * `@prisma/adapter-pg`/`@prisma/driver-adapter-utils` packages and the
- * generated client at `packages/db/src/generated/client/runtime/client.js`):
- * `@prisma/adapter-pg`'s `mapDriverError` builds
- * `{ kind: "UniqueConstraintViolation", constraint: { fields: [...] } }` for
- * Postgres error code `23505`; `@prisma/driver-adapter-utils`'s
- * `DriverAdapterError` stores that payload verbatim on `.cause`; the
- * generated client re-throws it as `PrismaClientKnownRequestError` with
- * `meta: { driverAdapterError: <that error> } }`.
- */
-function extractUniqueConstraintField(
-  err: Prisma.PrismaClientKnownRequestError,
-): string | undefined {
-  const driverAdapterError = err.meta?.driverAdapterError;
-  if (typeof driverAdapterError !== "object" || driverAdapterError === null) {
-    return undefined;
-  }
-  const cause = (driverAdapterError as { cause?: unknown }).cause;
-  if (typeof cause !== "object" || cause === null) {
-    return undefined;
-  }
-  const constraint = (cause as { constraint?: unknown }).constraint;
-  if (typeof constraint !== "object" || constraint === null) {
-    return undefined;
-  }
-  const fields = (constraint as { fields?: unknown }).fields;
-  return Array.isArray(fields) && typeof fields[0] === "string"
-    ? fields[0]
-    : undefined;
-}
+import {
+  extractUniqueConstraintField,
+  isUniqueConstraintViolation,
+} from "../prisma/prisma-error.util.js";
 
 /**
  * Syncs Clerk user lifecycle events into local `User` + `Profile` records
@@ -113,10 +77,7 @@ export class ClerkWebhookService {
         });
       });
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === UNIQUE_CONSTRAINT_VIOLATION
-      ) {
+      if (isUniqueConstraintViolation(err)) {
         const conflictField = extractUniqueConstraintField(err);
 
         if (conflictField === "username") {
