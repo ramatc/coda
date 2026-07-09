@@ -48,6 +48,13 @@ describe("AvatarService", () => {
     expect(url.searchParams.get("X-Amz-Algorithm")).toBe("AWS4-HMAC-SHA256");
     expect(url.searchParams.get("X-Amz-Signature")).toBeTruthy();
     expect(url.searchParams.get("X-Amz-Expires")).toBe("60");
+    // The declared MIME type must be bound into the signature (not just
+    // hoisted to a query param) — otherwise a client could PUT with a
+    // different Content-Type than what it declared/was validated at presign
+    // time, and R2 would store+serve it under the attacker-chosen type.
+    const signedHeaders = url.searchParams.get("X-Amz-SignedHeaders");
+    expect(signedHeaders).toContain("content-type");
+    expect(signedHeaders).toContain("content-length");
     // Public URL the client will persist via PATCH /profile.
     expect(result.publicUrl).toBe(
       `https://cdn.coda.test/avatars/${result.key}`,

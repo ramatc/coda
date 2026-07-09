@@ -68,6 +68,15 @@ export class AvatarService {
 
     const uploadUrl = await getSignedUrl(this.getClient(), command, {
       expiresIn: AVATAR_UPLOAD_URL_TTL_SECONDS,
+      // @aws-sdk/s3-request-presigner unconditionally treats `content-type` as
+      // unsignable for S3 presigned URLs (its internal `prepareRequest` always
+      // adds it to `unsignableHeaders`), which drops it from `SignedHeaders`
+      // entirely — R2 then accepts ANY client-supplied Content-Type on the PUT,
+      // decoupled from what was declared/validated at presign time. Explicitly
+      // forcing it into `signableHeaders` overrides that default and binds the
+      // declared MIME type into the signature, so a PUT with a different
+      // Content-Type is rejected with a signature mismatch.
+      signableHeaders: new Set(["content-type"]),
     });
 
     return {
