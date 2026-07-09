@@ -75,7 +75,21 @@ export class ClerkGuard implements CanActivate {
    */
   private getAuthorizedParties(): string[] | undefined {
     const appUrl = this.config.get<string>("APP_URL");
-    return appUrl ? [appUrl] : undefined;
+    if (!appUrl) {
+      // Fails OPEN (skips the azp check) rather than closed: a missing
+      // `APP_URL` here is an env misconfiguration, and failing closed would
+      // turn it into a full API outage (every request rejected) rather than
+      // the narrower risk it actually is — a token minted for a different
+      // frontend on the same Clerk instance also being accepted. `verifyToken`
+      // above still enforces signature + expiry regardless, so this only
+      // widens the *origin* check, not authentication itself. Logged so the
+      // gap is visible instead of silent.
+      this.logger.warn(
+        "APP_URL is not configured — authorizedParties check is disabled, any valid Clerk session token will be accepted regardless of origin",
+      );
+      return undefined;
+    }
+    return [appUrl];
   }
 
   private extractBearerToken(request: GuardedRequest): string | undefined {
