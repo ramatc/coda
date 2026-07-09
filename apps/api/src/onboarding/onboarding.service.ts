@@ -178,7 +178,7 @@ export class OnboardingService {
     }
     if (artistIds.length < MIN_ARTISTS) {
       throw new BadRequestException(
-        `Select at least ${MIN_ARTISTS} favorite artist to complete onboarding.`,
+        `Select at least ${MIN_ARTISTS} favorite artist(s) to complete onboarding.`,
       );
     }
     if (artistIds.length > MAX_ARTISTS) {
