@@ -1,7 +1,44 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from "@nestjs/common";
+import { Prisma } from "@coda/db";
 import { OnboardingService } from "../src/onboarding/onboarding.service.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
+
+/** UUID-shaped fixture ids: `artistIds`/`albumIds` are now validated as UUIDs
+ * before ever reaching the (fake) Prisma client. */
+const ARTIST_1_ID = "11111111-1111-4111-8111-111111111111";
+const ARTIST_2_ID = "22222222-2222-4222-8222-222222222222";
+const ALBUM_1_ID = "33333333-3333-4333-8333-333333333333";
+const ALBUM_2_ID = "44444444-4444-4444-8444-444444444444";
+const ARTIST_GHOST_ID = "99999999-9999-4999-8999-999999999999";
+
+/**
+ * P2002 built with the REAL `@prisma/adapter-pg` driver-adapter error shape
+ * (fields live on `meta.driverAdapterError.cause.constraint.fields`, NOT the
+ * classic `meta.target` this client never populates — Decision #14, reused
+ * from `profile.service.spec.ts` / `clerk-webhook.service.spec.ts`).
+ */
+function artistFavoriteConflict(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    "Unique constraint failed on the fields: (`userId`,`artistId`)",
+    {
+      code: "P2002",
+      clientVersion: "test",
+      meta: {
+        driverAdapterError: {
+          cause: {
+            kind: "UniqueConstraintViolation",
+            constraint: { fields: ["userId", "artistId"] },
+          },
+        },
+      },
+    },
+  );
+}
 
 /**
  * In-memory Prisma stand-in honouring the exact query shapes OnboardingService
@@ -36,6 +73,9 @@ function createFakePrisma(): {
   genrePrefs: Map<string, { userId: string; genreId: string }>;
   artistFavs: Map<string, { userId: string; artistId: string; rank: number }>;
   albumFavs: Map<string, { userId: string; albumId: string; rank: number }>;
+  /** Test-only trigger: makes the NEXT `userArtistFavorite.createMany` throw a
+   * P2002, simulating a concurrent/overlapping submission racing this one. */
+  triggerArtistConflictOnce: () => void;
 } {
   const users = new Map<string, string>();
   const artists = new Map<string, Ref>();
@@ -51,6 +91,7 @@ function createFakePrisma(): {
     { userId: string; albumId: string; rank: number }
   >();
   let genreSeq = 0;
+  let forceArtistConflict = false;
 
   const client = {
     async $transaction<T>(fn: (tx: typeof client) => Promise<T>): Promise<T> {
@@ -179,6 +220,10 @@ function createFakePrisma(): {
       async createMany(args: {
         data: { userId: string; artistId: string; rank: number }[];
       }): Promise<{ count: number }> {
+        if (forceArtistConflict) {
+          forceArtistConflict = false;
+          throw artistFavoriteConflict();
+        }
         for (const row of args.data) {
           artistFavs.set(`${row.userId}:${row.artistId}`, row);
         }
@@ -223,6 +268,9 @@ function createFakePrisma(): {
     genrePrefs,
     artistFavs,
     albumFavs,
+    triggerArtistConflictOnce: () => {
+      forceArtistConflict = true;
+    },
   };
 }
 
@@ -233,9 +281,9 @@ describe("OnboardingService", () => {
   beforeEach(() => {
     fake = createFakePrisma();
     fake.users.set("clerk_1", "local_1");
-    fake.artists.set("artist_1", { id: "artist_1", name: "Radiohead" });
-    fake.artists.set("artist_2", { id: "artist_2", name: "Portishead" });
-    fake.albums.set("album_1", { id: "album_1", title: "OK Computer" });
+    fake.artists.set(ARTIST_1_ID, { id: ARTIST_1_ID, name: "Radiohead" });
+    fake.artists.set(ARTIST_2_ID, { id: ARTIST_2_ID, name: "Portishead" });
+    fake.albums.set(ALBUM_1_ID, { id: ALBUM_1_ID, title: "OK Computer" });
     service = new OnboardingService(fake.service);
   });
 
@@ -258,7 +306,7 @@ describe("OnboardingService", () => {
   it("persists sufficient selections and marks onboarding complete", async () => {
     const status = await service.complete("clerk_1", {
       genreSlugs: ["rock", "jazz", "electronic"],
-      artistIds: ["artist_1"],
+      artistIds: [ARTIST_1_ID],
     });
 
     expect(status.complete).toBe(true);
@@ -271,12 +319,12 @@ describe("OnboardingService", () => {
   });
 
   it("accepts up to 4 optional albums", async () => {
-    fake.albums.set("album_2", { id: "album_2", title: "In Rainbows" });
+    fake.albums.set(ALBUM_2_ID, { id: ALBUM_2_ID, title: "In Rainbows" });
 
     const status = await service.complete("clerk_1", {
       genreSlugs: ["rock", "jazz", "electronic"],
-      artistIds: ["artist_1"],
-      albumIds: ["album_1", "album_2"],
+      artistIds: [ARTIST_1_ID],
+      albumIds: [ALBUM_1_ID, ALBUM_2_ID],
     });
 
     expect(status.albumCount).toBe(2);
@@ -286,7 +334,7 @@ describe("OnboardingService", () => {
     await expect(
       service.complete("clerk_1", {
         genreSlugs: ["rock", "jazz"],
-        artistIds: ["artist_1"],
+        artistIds: [ARTIST_1_ID],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
@@ -310,8 +358,27 @@ describe("OnboardingService", () => {
     await expect(
       service.complete("clerk_1", {
         genreSlugs: ["rock", "jazz", "electronic"],
-        artistIds: ["artist_1"],
-        albumIds: ["a1", "a2", "a3", "a4", "a5"],
+        artistIds: [ARTIST_1_ID],
+        albumIds: [
+          "10000000-0000-4000-8000-000000000001",
+          "10000000-0000-4000-8000-000000000002",
+          "10000000-0000-4000-8000-000000000003",
+          "10000000-0000-4000-8000-000000000004",
+          "10000000-0000-4000-8000-000000000005",
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("rejects more than MAX_ARTISTS favorite artists", async () => {
+    const tooManyArtistIds = Array.from(
+      { length: 21 },
+      (_, i) => `20000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    await expect(
+      service.complete("clerk_1", {
+        genreSlugs: ["rock", "jazz", "electronic"],
+        artistIds: tooManyArtistIds,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -320,7 +387,7 @@ describe("OnboardingService", () => {
     await expect(
       service.complete("clerk_1", {
         genreSlugs: ["rock", "jazz", "not-a-genre"],
-        artistIds: ["artist_1"],
+        artistIds: [ARTIST_1_ID],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -329,21 +396,55 @@ describe("OnboardingService", () => {
     await expect(
       service.complete("clerk_1", {
         genreSlugs: ["rock", "jazz", "electronic"],
-        artistIds: ["artist_ghost"],
+        artistIds: [ARTIST_GHOST_ID],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     // Nothing persisted — the transaction rolled back the genre upserts too.
     expect(fake.genrePrefs.size).toBe(0);
   });
 
+  it("rejects a malformed (non-UUID) artist id before querying the catalog", async () => {
+    await expect(
+      service.complete("clerk_1", {
+        genreSlugs: ["rock", "jazz", "electronic"],
+        artistIds: ["not-a-uuid"],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(fake.genrePrefs.size).toBe(0);
+  });
+
+  it("rejects a malformed (non-UUID) album id before querying the catalog", async () => {
+    await expect(
+      service.complete("clerk_1", {
+        genreSlugs: ["rock", "jazz", "electronic"],
+        artistIds: [ARTIST_1_ID],
+        albumIds: ["also-not-a-uuid"],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(fake.genrePrefs.size).toBe(0);
+  });
+
+  it("returns a clean, retryable conflict on a concurrent P2002 instead of a raw 500", async () => {
+    fake.triggerArtistConflictOnce();
+    await expect(
+      service.complete("clerk_1", {
+        genreSlugs: ["rock", "jazz", "electronic"],
+        artistIds: [ARTIST_1_ID],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    // The transaction rolled back — nothing partially persisted.
+    expect(fake.genrePrefs.size).toBe(0);
+    expect(fake.artistFavs.size).toBe(0);
+  });
+
   it("is idempotent: re-submitting replaces prior selections", async () => {
     await service.complete("clerk_1", {
       genreSlugs: ["rock", "jazz", "electronic"],
-      artistIds: ["artist_1"],
+      artistIds: [ARTIST_1_ID],
     });
     const status = await service.complete("clerk_1", {
       genreSlugs: ["pop", "metal", "folk"],
-      artistIds: ["artist_1", "artist_2"],
+      artistIds: [ARTIST_1_ID, ARTIST_2_ID],
     });
 
     expect(status.genreCount).toBe(3);
@@ -355,7 +456,7 @@ describe("OnboardingService", () => {
     await expect(
       service.complete("clerk_1", {
         genreSlugs: ["rock", "rock", "rock"],
-        artistIds: ["artist_1"],
+        artistIds: [ARTIST_1_ID],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });

@@ -1,16 +1,23 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import {
+  extractUniqueConstraintField,
+  isUniqueConstraintViolation,
+} from "../prisma/prisma-error.util.js";
+import {
   GENRE_CATALOG,
   GENRE_CATALOG_BY_SLUG,
   MAX_ALBUMS,
+  MAX_ARTISTS,
   MIN_ARTISTS,
   MIN_GENRES,
   SEARCH_RESULT_LIMIT,
+  UUID_PATTERN,
   type GenreSeed,
 } from "./onboarding.constants.js";
 
@@ -115,6 +122,16 @@ export class OnboardingService {
   /** The current user's onboarding progress (drives the `/onboarding` gate). */
   async getStatus(clerkUserId: string): Promise<OnboardingStatus> {
     const userId = await this.resolveUserId(clerkUserId);
+    return this.getStatusByUserId(userId);
+  }
+
+  /**
+   * Same as {@link getStatus}, but takes an already-resolved local `User.id`
+   * so callers that have already paid for the `resolveUserId` lookup (e.g.
+   * {@link complete}) don't re-resolve the user from `clerkUserId` a second
+   * time.
+   */
+  private async getStatusByUserId(userId: string): Promise<OnboardingStatus> {
     const [genreCount, artistCount, albumCount] = await Promise.all([
       this.prisma.client.userGenrePreference.count({ where: { userId } }),
       this.prisma.client.userArtistFavorite.count({ where: { userId } }),
@@ -132,13 +149,17 @@ export class OnboardingService {
    * Persists the user's onboarding selections and returns the resulting status.
    *
    * Validation (spec): at least {@link MIN_GENRES} genres and {@link MIN_ARTISTS}
-   * artist are REQUIRED; up to {@link MAX_ALBUMS} albums are OPTIONAL. A failing
-   * count throws `BadRequestException` and writes nothing.
+   * (up to {@link MAX_ARTISTS}) artists are REQUIRED; up to {@link MAX_ALBUMS}
+   * albums are OPTIONAL. A failing count throws `BadRequestException` and
+   * writes nothing.
    *
    * The whole write runs in one transaction and is idempotent/re-runnable:
    * prior preferences for the user are cleared and rewritten, so submitting the
    * form twice (or editing selections) yields a clean "set my preferences"
-   * result rather than duplicate-key errors on the composite PKs.
+   * result rather than duplicate-key errors on the composite PKs. A P2002 from
+   * a concurrent/overlapping submission (composite PKs on the preference
+   * tables) is caught and surfaced as a clean, retryable `ConflictException`
+   * rather than an unhandled 500.
    */
   async complete(
     clerkUserId: string,
@@ -160,75 +181,92 @@ export class OnboardingService {
         `Select at least ${MIN_ARTISTS} favorite artist to complete onboarding.`,
       );
     }
+    if (artistIds.length > MAX_ARTISTS) {
+      throw new BadRequestException(
+        `Select at most ${MAX_ARTISTS} favorite artists.`,
+      );
+    }
     if (albumIds.length > MAX_ALBUMS) {
       throw new BadRequestException(
         `Select at most ${MAX_ALBUMS} favorite albums.`,
       );
     }
 
-    await this.prisma.client.$transaction(async (tx) => {
-      // Genres come from the fixed taxonomy: upsert each by its unique slug so
-      // the FK resolves even on an empty catalog. Validated against the catalog
-      // above, so `name` is always known.
-      const genreIds: string[] = [];
-      for (const slug of genreSlugs) {
-        const seed = GENRE_CATALOG_BY_SLUG.get(slug) as GenreSeed;
-        const genre = await tx.genre.upsert({
-          where: { slug },
-          create: { slug, name: seed.name },
-          update: {},
-          select: { id: true },
-        });
-        genreIds.push(genre.id);
-      }
+    try {
+      await this.prisma.client.$transaction(async (tx) => {
+        // Genres come from the fixed taxonomy: upsert each by its unique slug so
+        // the FK resolves even on an empty catalog. Validated against the catalog
+        // above, so `name` is always known.
+        const genreIds: string[] = [];
+        for (const slug of genreSlugs) {
+          const seed = GENRE_CATALOG_BY_SLUG.get(slug) as GenreSeed;
+          const genre = await tx.genre.upsert({
+            where: { slug },
+            create: { slug, name: seed.name },
+            update: {},
+            select: { id: true },
+          });
+          genreIds.push(genre.id);
+        }
 
-      // Artists/albums must reference real catalog rows. Verify existence before
-      // writing so a stale or forged id surfaces as a 400, not an FK crash.
-      await this.assertAllExist(
-        tx.artist.findMany({
-          where: { id: { in: artistIds } },
-          select: { id: true },
-        }),
-        artistIds,
-        "artist",
-      );
-      if (albumIds.length > 0) {
+        // Artists/albums must reference real catalog rows. Verify existence before
+        // writing so a stale or forged id surfaces as a 400, not an FK crash.
         await this.assertAllExist(
-          tx.album.findMany({
-            where: { id: { in: albumIds } },
+          tx.artist.findMany({
+            where: { id: { in: artistIds } },
             select: { id: true },
           }),
-          albumIds,
-          "album",
+          artistIds,
+          "artist",
         );
-      }
+        if (albumIds.length > 0) {
+          await this.assertAllExist(
+            tx.album.findMany({
+              where: { id: { in: albumIds } },
+              select: { id: true },
+            }),
+            albumIds,
+            "album",
+          );
+        }
 
-      await tx.userGenrePreference.deleteMany({ where: { userId } });
-      await tx.userArtistFavorite.deleteMany({ where: { userId } });
-      await tx.userAlbumFavorite.deleteMany({ where: { userId } });
+        await tx.userGenrePreference.deleteMany({ where: { userId } });
+        await tx.userArtistFavorite.deleteMany({ where: { userId } });
+        await tx.userAlbumFavorite.deleteMany({ where: { userId } });
 
-      await tx.userGenrePreference.createMany({
-        data: genreIds.map((genreId) => ({ userId, genreId })),
-      });
-      await tx.userArtistFavorite.createMany({
-        data: artistIds.map((artistId, index) => ({
-          userId,
-          artistId,
-          rank: index + 1,
-        })),
-      });
-      if (albumIds.length > 0) {
-        await tx.userAlbumFavorite.createMany({
-          data: albumIds.map((albumId, index) => ({
+        await tx.userGenrePreference.createMany({
+          data: genreIds.map((genreId) => ({ userId, genreId })),
+        });
+        await tx.userArtistFavorite.createMany({
+          data: artistIds.map((artistId, index) => ({
             userId,
-            albumId,
+            artistId,
             rank: index + 1,
           })),
         });
+        if (albumIds.length > 0) {
+          await tx.userAlbumFavorite.createMany({
+            data: albumIds.map((albumId, index) => ({
+              userId,
+              albumId,
+              rank: index + 1,
+            })),
+          });
+        }
+      });
+    } catch (err) {
+      if (isUniqueConstraintViolation(err)) {
+        const field = extractUniqueConstraintField(err);
+        throw new ConflictException(
+          field
+            ? `Your onboarding preferences conflicted on ${field} with a concurrent update. Please retry.`
+            : "Your onboarding preferences conflicted with a concurrent update. Please retry.",
+        );
       }
-    });
+      throw err;
+    }
 
-    return this.getStatus(clerkUserId);
+    return this.getStatusByUserId(userId);
   }
 
   /** Resolves the local `User.id` for a Clerk user id, or throws 404. */
@@ -254,11 +292,25 @@ export class OnboardingService {
     return unique;
   }
 
+  /**
+   * Parses `artistIds`/`albumIds` and validates each entry is UUID-shaped
+   * BEFORE it is used in a Prisma query. Without this, a malformed id (not a
+   * UUID at all) reaches Postgres and is rejected with a raw "invalid input
+   * syntax for type uuid" error — an unhandled 500, not the clean 400 this
+   * service otherwise guarantees for a stale/forged id (see
+   * {@link assertAllExist}).
+   */
   private parseIdList(value: unknown, field: string): string[] {
     if (value === undefined || value === null) {
       return [];
     }
-    return [...new Set(this.parseStringArray(value, field))];
+    const ids = [...new Set(this.parseStringArray(value, field))];
+    for (const id of ids) {
+      if (!UUID_PATTERN.test(id)) {
+        throw new BadRequestException(`${field} must contain valid ids.`);
+      }
+    }
+    return ids;
   }
 
   private parseStringArray(value: unknown, field: string): string[] {
