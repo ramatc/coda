@@ -1,3 +1,4 @@
+import { MAX_ALBUMS, MIN_ARTISTS, MIN_GENRES } from "@coda/types";
 import { getApiBaseUrl } from "./api-client";
 
 /** Onboarding progress as returned by the API's `GET /onboarding/status`. */
@@ -29,10 +30,12 @@ export interface AlbumOption {
   primaryArtistName: string;
 }
 
-/** Capture minimums mirrored from the API for client-side step gating. */
-export const MIN_GENRES = 3;
-export const MIN_ARTISTS = 1;
-export const MAX_ALBUMS = 4;
+/**
+ * Capture minimums used for client-side step gating, re-exported from
+ * `@coda/types` (single source of truth shared with the API) so existing
+ * call sites in this module keep importing from `lib/onboarding`.
+ */
+export { MIN_GENRES, MIN_ARTISTS, MAX_ALBUMS };
 
 /** Where the onboarding gate sends an incomplete user. */
 export const ONBOARDING_PATH = "/onboarding";
@@ -53,7 +56,9 @@ export function resolveOnboardingRedirect(
   status: Pick<OnboardingStatus, "complete">,
   currentPath: string,
 ): string | null {
-  const onOnboarding = currentPath.startsWith(ONBOARDING_PATH);
+  const onOnboarding =
+    currentPath === ONBOARDING_PATH ||
+    currentPath.startsWith(`${ONBOARDING_PATH}/`);
   if (!status.complete && !onOnboarding) {
     return ONBOARDING_PATH;
   }
@@ -104,14 +109,23 @@ export async function fetchOnboardingStatus(
   }
 }
 
-/** Fetches the fixed genre taxonomy for the picker. */
+/**
+ * Fetches the fixed genre taxonomy for the picker. A network failure or
+ * non-OK response fails safe to an empty list (same pattern as
+ * {@link fetchOnboardingStatus}) rather than throwing during `/onboarding`
+ * render.
+ */
 export async function fetchGenres(token: string | null): Promise<GenreOption[]> {
-  const response = await fetch(`${getApiBaseUrl()}/onboarding/genres`, {
-    headers: { Authorization: `Bearer ${token ?? ""}` },
-    cache: "no-store",
-  });
-  if (!response.ok) {
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/onboarding/genres`, {
+      headers: { Authorization: `Bearer ${token ?? ""}` },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as GenreOption[];
+  } catch {
     return [];
   }
-  return (await response.json()) as GenreOption[];
 }

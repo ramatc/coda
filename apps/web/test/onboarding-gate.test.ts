@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   HOME_PATH,
   ONBOARDING_PATH,
+  fetchGenres,
   isOnboardingSubmittable,
   resolveOnboardingRedirect,
 } from "../lib/onboarding";
@@ -33,6 +34,57 @@ describe("resolveOnboardingRedirect", () => {
     expect(resolveOnboardingRedirect({ complete: true }, "/onboarding")).toBe(
       HOME_PATH,
     );
+  });
+
+  it("does not false-match a route that merely starts with the onboarding path", () => {
+    // `/onboardingsurvey` is a different route, not `/onboarding` itself — a
+    // naive `startsWith` prefix check would incorrectly treat this as "on
+    // onboarding" and let an unonboarded user through.
+    expect(
+      resolveOnboardingRedirect({ complete: false }, "/onboardingsurvey"),
+    ).toBe(ONBOARDING_PATH);
+  });
+
+  it("still matches a nested onboarding sub-route", () => {
+    expect(
+      resolveOnboardingRedirect({ complete: false }, "/onboarding/step-2"),
+    ).toBeNull();
+  });
+
+  it("redirects an unonboarded user off /dashboard to /onboarding", () => {
+    expect(resolveOnboardingRedirect({ complete: false }, "/dashboard")).toBe(
+      ONBOARDING_PATH,
+    );
+  });
+
+  it("redirects an unonboarded user off /u/[username] to /onboarding", () => {
+    expect(
+      resolveOnboardingRedirect({ complete: false }, "/u/someone"),
+    ).toBe(ONBOARDING_PATH);
+  });
+});
+
+describe("fetchGenres", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fails safe to an empty list on a network error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("network down")),
+    );
+
+    await expect(fetchGenres(null)).resolves.toEqual([]);
+  });
+
+  it("fails safe to an empty list on a non-OK response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false } as Response),
+    );
+
+    await expect(fetchGenres("token")).resolves.toEqual([]);
   });
 });
 
