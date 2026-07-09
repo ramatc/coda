@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   HOME_PATH,
+  MAX_ARTISTS,
   ONBOARDING_PATH,
   fetchGenres,
   isOnboardingSubmittable,
@@ -101,7 +102,7 @@ describe("isOnboardingSubmittable", () => {
   });
 
   it("allows up to MAX_ARTISTS artists but not more", () => {
-    expect(isOnboardingSubmittable(3, 20, 0)).toBe(true);
-    expect(isOnboardingSubmittable(3, 21, 0)).toBe(false);
+    expect(isOnboardingSubmittable(3, MAX_ARTISTS, 0)).toBe(true);
+    expect(isOnboardingSubmittable(3, MAX_ARTISTS + 1, 0)).toBe(false);
   });
 });
