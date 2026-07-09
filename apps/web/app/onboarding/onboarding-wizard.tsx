@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { buttonVariants, cn } from "@coda/ui";
@@ -67,6 +67,20 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
     artists: { timer: null, seq: 0 },
     albums: { timer: null, seq: 0 },
   });
+
+  // Clears any pending debounced search timers on unmount so a stray
+  // `setTimeout` never fires `setArtistResults`/`setAlbumResults` after the
+  // user has navigated away from `/onboarding`. The ref object itself is
+  // never reassigned, only mutated in place, so capturing it here (rather
+  // than re-reading `searchStateRef.current` inside the cleanup) still sees
+  // the latest timer ids at unmount time.
+  useEffect(() => {
+    const state = searchStateRef.current;
+    return () => {
+      if (state.artists.timer) clearTimeout(state.artists.timer);
+      if (state.albums.timer) clearTimeout(state.albums.timer);
+    };
+  }, []);
 
   const submittable = isOnboardingSubmittable(
     selectedGenres.size,
@@ -292,12 +306,16 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
             />
             <ResultList
               empty="No artists yet — the catalog is still importing."
-              items={artistResults.map((a) => ({
-                id: a.id,
-                label: a.name,
-                active: selectedArtists.has(a.id),
-                onToggle: () => toggleArtist(a),
-              }))}
+              items={artistResults.map((a) => {
+                const active = selectedArtists.has(a.id);
+                return {
+                  id: a.id,
+                  label: a.name,
+                  active,
+                  atCap: !active && selectedArtists.size >= MAX_ARTISTS,
+                  onToggle: () => toggleArtist(a),
+                };
+              })}
             />
             <div className="flex gap-3">
               <button
@@ -342,12 +360,16 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
             />
             <ResultList
               empty="No albums yet — the catalog is still importing."
-              items={albumResults.map((a) => ({
-                id: a.id,
-                label: `${a.title} — ${a.primaryArtistName}`,
-                active: selectedAlbums.has(a.id),
-                onToggle: () => toggleAlbum(a),
-              }))}
+              items={albumResults.map((a) => {
+                const active = selectedAlbums.has(a.id);
+                return {
+                  id: a.id,
+                  label: `${a.title} — ${a.primaryArtistName}`,
+                  active,
+                  atCap: !active && selectedAlbums.size >= MAX_ALBUMS,
+                  onToggle: () => toggleAlbum(a),
+                };
+              })}
             />
             <div className="flex gap-3">
               <button
@@ -379,7 +401,19 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
 
 interface ResultListProps {
   empty: string;
-  items: { id: string; label: string; active: boolean; onToggle: () => void }[];
+  items: {
+    id: string;
+    label: string;
+    active: boolean;
+    /**
+     * True when this item is not selected and the relevant cap
+     * ({@link MAX_ARTISTS}/{@link MAX_ALBUMS}) has already been reached, so
+     * toggling it on would be a no-op. Selected items are always clickable
+     * (to allow deselect) regardless of this flag.
+     */
+    atCap: boolean;
+    onToggle: () => void;
+  }[];
 }
 
 /** Small presentational list of toggleable search results. */
@@ -394,15 +428,22 @@ function ResultList({ empty, items }: ResultListProps) {
           <button
             type="button"
             aria-pressed={item.active}
+            disabled={item.atCap}
             onClick={item.onToggle}
             className={cn(
               "w-full rounded-card border px-3 py-2 text-left text-sm",
               item.active
                 ? "border-brand-600 bg-brand-50"
                 : "border-brand-200 bg-white",
+              item.atCap && "pointer-events-none opacity-50",
             )}
           >
             {item.label}
+            {item.atCap ? (
+              <span className="ml-2 text-xs italic opacity-70">
+                max reached
+              </span>
+            ) : null}
           </button>
         </li>
       ))}
