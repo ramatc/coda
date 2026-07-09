@@ -1,6 +1,15 @@
-import { Injectable, Logger } from "@nestjs/common";
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  UnprocessableEntityException,
+} from "@nestjs/common";
 import type { UserJSON, WebhookEvent } from "@clerk/backend";
+import { Prisma } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
+
+/** Prisma error code for a unique-constraint violation (`User.email`). */
+const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
 
 /**
  * Syncs Clerk user lifecycle events into local `User` + `Profile` records
@@ -23,11 +32,13 @@ export class ClerkWebhookService {
     switch (event.type) {
       case "user.created":
       case "user.updated":
-        await this.syncUser(event.data);
+        await this.syncUser(event.data, event.type);
         break;
       case "user.deleted":
         if (event.data.id) {
           await this.deleteUser(event.data.id);
+        } else {
+          this.logger.warn("Ignoring user.deleted event with no user id");
         }
         break;
       default:
@@ -35,31 +46,51 @@ export class ClerkWebhookService {
     }
   }
 
-  private async syncUser(data: UserJSON): Promise<void> {
+  private async syncUser(data: UserJSON, eventType: string): Promise<void> {
     const clerkUserId = data.id;
-    const email = this.resolvePrimaryEmail(data);
+    const email = this.resolvePrimaryEmail(data, eventType);
     // Profile.username is unique + NOT NULL. Fall back to the Clerk user id
     // (globally unique) when the user has no username yet; the real username is
     // owned by the profile-edit flow (PR3), so updates never overwrite it here.
+    // displayName gets the same treatment: it's only Clerk-authoritative at
+    // creation time, so it's never touched by an `update` either — otherwise a
+    // user's local customization (once PR3 ships) would be silently clobbered
+    // by the next Clerk webhook replay.
     const username = data.username ?? clerkUserId;
     const displayName =
       [data.first_name, data.last_name].filter(Boolean).join(" ").trim() ||
       username;
     const avatarUrl = data.image_url || null;
 
-    await this.prisma.client.$transaction(async (tx) => {
-      const user = await tx.user.upsert({
-        where: { clerkUserId },
-        create: { clerkUserId, email },
-        update: { email },
-      });
+    try {
+      await this.prisma.client.$transaction(async (tx) => {
+        const user = await tx.user.upsert({
+          where: { clerkUserId },
+          create: { clerkUserId, email },
+          update: { email },
+        });
 
-      await tx.profile.upsert({
-        where: { userId: user.id },
-        create: { userId: user.id, username, displayName, avatarUrl },
-        update: { displayName, avatarUrl },
+        await tx.profile.upsert({
+          where: { userId: user.id },
+          create: { userId: user.id, username, displayName, avatarUrl },
+          update: { avatarUrl },
+        });
       });
-    });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === UNIQUE_CONSTRAINT_VIOLATION
+      ) {
+        this.logger.error(
+          `Clerk user ${clerkUserId} (event ${eventType}) could not be synced: ` +
+            `email ${email} is already owned by a different local User`,
+        );
+        throw new ConflictException(
+          `Email ${email} is already in use by another account`,
+        );
+      }
+      throw err;
+    }
 
     this.logger.log(`Synced Clerk user ${clerkUserId}`);
   }
@@ -74,14 +105,20 @@ export class ClerkWebhookService {
     );
   }
 
-  private resolvePrimaryEmail(data: UserJSON): string {
+  private resolvePrimaryEmail(data: UserJSON, eventType: string): string {
     const primary = data.email_addresses.find(
       (address) => address.id === data.primary_email_address_id,
     );
     const email =
       primary?.email_address ?? data.email_addresses[0]?.email_address;
     if (!email) {
-      throw new Error(`Clerk user ${data.id} has no email address to sync`);
+      this.logger.error(
+        `Clerk user ${data.id} (event ${eventType}) has no email address to ` +
+          "sync — likely a phone-only sign-up config",
+      );
+      throw new UnprocessableEntityException(
+        `Clerk user ${data.id} has no email address to sync`,
+      );
     }
     return email;
   }
