@@ -54,6 +54,7 @@ export class ClerkGuard implements CanActivate {
     try {
       const payload = await verifyToken(token, {
         secretKey: this.config.get<string>("CLERK_SECRET_KEY"),
+        authorizedParties: this.getAuthorizedParties(),
       });
       request.user = payload;
       return true;
@@ -63,6 +64,18 @@ export class ClerkGuard implements CanActivate {
       );
       throw new UnauthorizedException("Invalid or expired token");
     }
+  }
+
+  /**
+   * Origins allowed as the token's `azp` claim. Without this, `verifyToken`
+   * only checks the signature/expiry, so a valid token minted for a
+   * *different* frontend on the same Clerk instance would also pass. Reuses
+   * `APP_URL` (the web app's own origin, already documented in the repo's env
+   * vars) rather than introducing a redundant config key.
+   */
+  private getAuthorizedParties(): string[] | undefined {
+    const appUrl = this.config.get<string>("APP_URL");
+    return appUrl ? [appUrl] : undefined;
   }
 
   private extractBearerToken(request: GuardedRequest): string | undefined {
