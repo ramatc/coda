@@ -44,17 +44,19 @@ export async function completeOnboarding(
     return { ok: true };
   }
 
-  if (response.status === 400) {
-    const body = (await response.json().catch(() => null)) as
-      | { message?: string | string[] }
-      | null;
-    const message = Array.isArray(body?.message)
-      ? body?.message.join(" ")
-      : body?.message;
-    return {
-      ok: false,
-      error: message ?? "Please review your selections and try again.",
-    };
+  // Any non-2xx response (400 validation, 409 conflict, etc.) may carry a
+  // Nest exception body with a specific `message` — read it generically
+  // rather than special-casing one status code, so a 409's conflict-field
+  // message (e.g. from `extractUniqueConstraintField`) isn't discarded in
+  // favor of the generic fallback below.
+  const body = (await response.json().catch(() => null)) as
+    | { message?: string | string[] }
+    | null;
+  const message = Array.isArray(body?.message)
+    ? body?.message.join(" ")
+    : body?.message;
+  if (message) {
+    return { ok: false, error: message };
   }
 
   return { ok: false, error: "Could not save your onboarding. Please retry." };
