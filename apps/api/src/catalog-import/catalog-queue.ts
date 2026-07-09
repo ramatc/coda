@@ -7,6 +7,7 @@ import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import {
   ALBUM_JOB_NAME,
   CATALOG_ALBUM_QUEUE,
+  CATALOG_JOB_OPTIONS,
   CATALOG_PAGE_QUEUE,
   PAGE_JOB_NAME,
   REDIS_URL_ENV,
@@ -54,33 +55,69 @@ export class CatalogQueue implements OnModuleDestroy {
    * after an interruption picks up where it left off rather than restarting from
    * zero. The deterministic page job id keeps a concurrent double-trigger from
    * enqueuing the same page twice.
+   *
+   * Also acquires the shared running-lock marker (judgment-day issue #6) so a
+   * second trigger can't race the in-process `seed:catalog` pager (or another
+   * seed request) over the same checkpoint; see
+   * {@link SpotifyCheckpointStore.tryAcquireRunningLock} for the guard's scope
+   * and limitations.
    */
   async enqueueSeed(limit: number): Promise<{ offset: number }> {
+    const acquired = await this.checkpointStore.tryAcquireRunningLock();
+    if (!acquired) {
+      throw new Error(
+        "Catalog import is already in progress — refusing to start a concurrent run.",
+      );
+    }
     const offset = (await this.checkpointStore.get()) ?? 0;
     await this.enqueuePage(offset, limit);
     this.logger.log(`Enqueued Spotify seed starting at offset ${offset}`);
     return { offset };
   }
 
-  /** Enqueues a page job with a deterministic id (dedupes a re-derived page). */
+  /**
+   * Enqueues a page job with a deterministic id (dedupes a re-derived page),
+   * with retry/backoff and bounded cleanup so a transient failure doesn't
+   * permanently drop the page (judgment-day issue #1).
+   */
   async enqueuePage(offset: number, limit: number): Promise<void> {
     await this.getPageQueue().add(
       PAGE_JOB_NAME,
       { offset, limit },
-      { jobId: pageJobId(offset) },
+      { ...CATALOG_JOB_OPTIONS, jobId: pageJobId(offset) },
     );
   }
 
   /**
    * Enqueues a per-album job with the deterministic `album:{spotifyId}` id, so
    * BullMQ dedupes the same album at the queue level (natural dedup, Decision
-   * #5) — the page worker calls this once per album on a fetched page.
+   * #5), with the same retry/backoff/cleanup policy as page jobs
+   * (judgment-day issue #1).
    */
   async enqueueAlbum(album: NormalizedAlbum): Promise<void> {
     await this.getAlbumQueue().add(
       ALBUM_JOB_NAME,
       { album },
-      { jobId: albumJobId(album.spotifyId) },
+      { ...CATALOG_JOB_OPTIONS, jobId: albumJobId(album.spotifyId) },
+    );
+  }
+
+  /**
+   * Enqueues many per-album jobs in a single BullMQ round-trip (`addBulk`)
+   * instead of one `add()` per album (judgment-day issue #4) — the page
+   * worker's per-page fan-out is up to `SPOTIFY_PAGE_LIMIT` albums, which would
+   * otherwise be that many sequential Redis round-trips.
+   */
+  async enqueueAlbums(albums: NormalizedAlbum[]): Promise<void> {
+    if (albums.length === 0) {
+      return;
+    }
+    await this.getAlbumQueue().addBulk(
+      albums.map((album) => ({
+        name: ALBUM_JOB_NAME,
+        data: { album },
+        opts: { ...CATALOG_JOB_OPTIONS, jobId: albumJobId(album.spotifyId) },
+      })),
     );
   }
 

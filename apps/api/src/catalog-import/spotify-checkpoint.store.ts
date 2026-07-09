@@ -3,6 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import { Redis } from "ioredis";
 import {
   CHECKPOINT_KEY,
+  CHECKPOINT_RUNNING_LOCK_KEY,
+  CHECKPOINT_RUNNING_LOCK_TTL_MS,
   DEFAULT_REDIS_URL,
   REDIS_URL_ENV,
 } from "./catalog-import.constants.js";
@@ -20,6 +22,16 @@ export interface CatalogCheckpointStore {
   set(offset: number): Promise<void>;
   /** Clears the checkpoint (called once an import runs to completion). */
   clear(): Promise<void>;
+  /**
+   * Optional distributed "run in progress" guard (judgment-day issue #6): a
+   * best-effort SET-NX marker, not a renewing lock (see
+   * {@link SpotifyCheckpointStore.tryAcquireRunningLock}). Optional so
+   * in-memory test fakes — which never exercise two concurrent runs — don't
+   * need to implement it.
+   */
+  tryAcquireRunningLock?(): Promise<boolean>;
+  /** Releases the marker acquired by `tryAcquireRunningLock`. */
+  releaseRunningLock?(): Promise<void>;
 }
 
 /**
@@ -60,6 +72,33 @@ export class SpotifyCheckpointStore
     await this.client().del(CHECKPOINT_KEY);
   }
 
+  /**
+   * Best-effort mutual exclusion between the in-process `seed:catalog` pager
+   * and the BullMQ page-worker pipeline (judgment-day issue #6): both read/
+   * write {@link CHECKPOINT_KEY} with no other coordination, so running both
+   * concurrently can stomp each other's progress. A single Redis `SET NX PX`
+   * marker with a TTL was chosen over a full renewing distributed lock: the
+   * BullMQ pipeline's "run" spans many independent async job invocations over
+   * an unbounded duration, so a proper lock would need heartbeat renewal
+   * handed off between jobs — disproportionate complexity for this PR. The
+   * TTL is the safety net for a crashed run that never releases the marker.
+   */
+  async tryAcquireRunningLock(): Promise<boolean> {
+    const result = await this.client().set(
+      CHECKPOINT_RUNNING_LOCK_KEY,
+      "1",
+      "PX",
+      CHECKPOINT_RUNNING_LOCK_TTL_MS,
+      "NX",
+    );
+    return result === "OK";
+  }
+
+  /** Releases the marker acquired by {@link tryAcquireRunningLock}. */
+  async releaseRunningLock(): Promise<void> {
+    await this.client().del(CHECKPOINT_RUNNING_LOCK_KEY);
+  }
+
   async onModuleDestroy(): Promise<void> {
     if (this.redis) {
       await this.redis.quit();
@@ -69,9 +108,16 @@ export class SpotifyCheckpointStore
   private client(): Redis {
     if (!this.redis) {
       const url = this.config.get<string>(REDIS_URL_ENV) ?? DEFAULT_REDIS_URL;
+      // `maxRetriesPerRequest: null` is a BullMQ-Worker-only requirement (see
+      // `createBullConnection`): this client only ever issues plain get/set/del
+      // commands, so it must NOT inherit that setting — combined with ioredis's
+      // default indefinite reconnect strategy, `null` here would make every
+      // command hang forever during a Redis outage (including the admin HTTP
+      // endpoint, which calls `get()` synchronously in the request path).
+      // A bounded value fails a request fast instead (judgment-day issue #5).
       this.redis = new Redis(url, {
         lazyConnect: true,
-        maxRetriesPerRequest: null,
+        maxRetriesPerRequest: 5,
       });
       this.redis.on("error", (err) => {
         this.logger.error(`Redis checkpoint connection error: ${err.message}`);

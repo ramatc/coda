@@ -18,6 +18,8 @@
  * DID run twice it would update-in-place rather than insert a duplicate row.
  */
 
+import type { JobsOptions } from "bullmq";
+
 /** Env var: Spotify app client id (client-credentials OAuth). */
 export const SPOTIFY_CLIENT_ID_ENV = "SPOTIFY_CLIENT_ID";
 /** Env var: Spotify app client secret (client-credentials OAuth). */
@@ -49,10 +51,57 @@ export const ALBUM_JOB_NAME = "spotify-album";
 export const CHECKPOINT_KEY = "catalog-import:spotify:offset";
 
 /**
+ * Redis key marking "an import is currently running" (judgment-day issue #6):
+ * a best-effort mutual-exclusion marker shared by the in-process `seed:catalog`
+ * pager and the BullMQ page-worker pipeline, both of which read/write
+ * {@link CHECKPOINT_KEY} with no other coordination.
+ */
+export const CHECKPOINT_RUNNING_LOCK_KEY = "catalog-import:spotify:running-lock";
+
+/**
+ * TTL for {@link CHECKPOINT_RUNNING_LOCK_KEY}. This is a best-effort guard, not
+ * a renewed/heartbeat lock: a run that's still legitimately in progress past
+ * this window would let a second run start, and a crashed run's marker
+ * self-expires after this window rather than blocking forever. A full
+ * renewing distributed lock was judged disproportionate to this PR's scope —
+ * see the comment on `CatalogImportService.runImport`.
+ */
+export const CHECKPOINT_RUNNING_LOCK_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+/**
  * Albums fetched per Spotify page. Spotify's browse/search endpoints cap `limit`
  * at 50, so this is both the page size and the API max.
  */
 export const SPOTIFY_PAGE_LIMIT = 50;
+
+/**
+ * Spotify's documented hard cap on `/v1/search`'s `offset` + `limit`: once
+ * pagination would cross this cap, Spotify returns a non-OK response
+ * regardless of `total` (see {@link SpotifyClient.getAlbumPage}). This bounds
+ * the practical per-query import size to ~1000 results — reaching the ~100k
+ * album goal requires partitioning the catalog across multiple distinct seed
+ * queries, which is out of scope for this PR (see the doc-note on the pager).
+ */
+export const SPOTIFY_SEARCH_MAX_OFFSET = 1000;
+
+/**
+ * Shared BullMQ retry/cleanup policy for both page and per-album jobs.
+ * Without `attempts`/`backoff`, BullMQ defaults to `attempts: 1` — any
+ * transient failure (Spotify 429/5xx, a DB hiccup, a malformed record)
+ * permanently drops that job, and because job ids are deterministic, a failed
+ * job also silently blocks any future re-enqueue attempt with the same id
+ * (BullMQ treats adding a job with an already-used id as a no-op). Bounded
+ * `removeOnComplete`/`removeOnFail` keeps Redis from growing unbounded while
+ * still leaving a retries-exhausted failed job inspectable/re-triggerable
+ * instead of vanishing (`removeOnFail: true` would delete it outright and
+ * defeat this fix).
+ */
+export const CATALOG_JOB_OPTIONS: JobsOptions = {
+  attempts: 5,
+  backoff: { type: "exponential", delay: 2000 },
+  removeOnComplete: { count: 1000 },
+  removeOnFail: { count: 5000 },
+};
 
 /**
  * Deterministic per-album job id (`album:{spotifyId}`). Passing this as BullMQ's
