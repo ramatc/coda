@@ -264,6 +264,31 @@ describe("ClerkWebhookService", () => {
     expect(profile?.displayName).toBe("user_2");
   });
 
+  it("lowercases a mixed-case Clerk username for the username column but preserves its casing in displayName", async () => {
+    await service.handleEvent(
+      userCreatedEvent({ clerkId: "user_16", email: "mixed@coda.dev", username: "AdaLovelace" }),
+    );
+
+    const user = users.get("user_16");
+    const profile = profiles.get(user!.id);
+    // The lookup/URL key must be canonicalized...
+    expect(profile?.username).toBe("adalovelace");
+    // ...but the human-facing displayName fallback must NOT be case-mangled
+    // (Round 2 introduced this as an unintended regression).
+    expect(profile?.displayName).toBe("AdaLovelace");
+  });
+
+  it("falls back to the RAW (un-lowercased) Clerk id for displayName when there is no username", async () => {
+    await service.handleEvent(
+      userCreatedEvent({ clerkId: "User_Mixed_2", email: "mixedid@coda.dev" }),
+    );
+
+    const user = users.get("User_Mixed_2");
+    const profile = profiles.get(user!.id);
+    expect(profile?.username).toBe("user_mixed_2");
+    expect(profile?.displayName).toBe("User_Mixed_2");
+  });
+
   it("deletes the local user on user.deleted and is a no-op when repeated", async () => {
     await service.handleEvent(
       userCreatedEvent({ clerkId: "user_3", email: "gone@coda.dev" }),

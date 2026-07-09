@@ -56,13 +56,18 @@ export class ClerkWebhookService {
     // creation time, so it's never touched by an `update` either — otherwise a
     // user's local customization (once PR3 ships) would be silently clobbered
     // by the next Clerk webhook replay.
-    // Lowercased for the same reason profile.service.ts canonicalizes
-    // usernames on the profile-edit path: two Clerk usernames differing only
-    // in case must not become distinct public `/u/[username]` profiles.
-    const username = (data.username ?? clerkUserId).toLowerCase();
+    // `username` (the lookup/URL key) is lowercased for the same reason
+    // profile.service.ts canonicalizes usernames on the profile-edit path: two
+    // Clerk usernames differing only in case must not become distinct public
+    // `/u/[username]` profiles. `displayName` is a human-facing string, not a
+    // lookup key, so its fallback must use the RAW (un-lowercased) value —
+    // case-normalizing it would be a cosmetic regression with no security
+    // benefit.
+    const rawUsername = data.username ?? clerkUserId;
+    const username = rawUsername.toLowerCase();
     const displayName =
       [data.first_name, data.last_name].filter(Boolean).join(" ").trim() ||
-      username;
+      rawUsername;
     const avatarUrl = data.image_url || null;
 
     try {
