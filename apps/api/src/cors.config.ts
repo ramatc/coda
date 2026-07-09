@@ -21,7 +21,7 @@ export interface CorsConfig {
  * directly from the browser with a Clerk-issued Bearer token (never cookies —
  * see `apps/web/lib/api-client.ts` + `useAuth().getToken()`), so
  * `credentials: true` is unnecessary here. Scoped to the same `APP_URL`
- * origin already used by `ClerkGuard#getAuthorizedParties` (Decision #13)
+ * origin already used by `ClerkGuard#computeAuthorizedParties` (Decision #13)
  * rather than introducing a second config key for the same value.
  */
 export function buildCorsOptions(config: ConfigService): CorsConfig {
