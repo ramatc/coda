@@ -4,6 +4,7 @@ import {
   SPOTIFY_CLIENT_ID_ENV,
   SPOTIFY_CLIENT_SECRET_ENV,
   SPOTIFY_PAGE_LIMIT,
+  SPOTIFY_SEARCH_MAX_OFFSET,
 } from "./catalog-import.constants.js";
 import type {
   NormalizedAlbum,
@@ -30,6 +31,13 @@ const DEFAULT_SEED_QUERY = "year:1900-2025";
  */
 const TOKEN_EXPIRY_SAFETY_SECONDS = 60;
 
+/**
+ * Shared placeholder artist for artist-less albums (judgment-day issue #10):
+ * a single fixed id so every such album resolves to ONE canonical
+ * "Unknown Artist" row instead of a distinct phantom row per album.
+ */
+const UNKNOWN_ARTIST_SPOTIFY_ID = "unknown";
+
 interface CachedToken {
   accessToken: string;
   /** Epoch millis after which the token must be refreshed. */
@@ -55,6 +63,12 @@ export class SpotifyClient {
   private readonly apiBaseUrl: string;
   private readonly seedQuery: string;
   private cachedToken: CachedToken | undefined;
+  /**
+   * In-flight token-refresh promise (judgment-day issue #3): memoized so
+   * concurrent callers on this shared DI singleton await the SAME refresh
+   * instead of each firing an independent request (thundering herd).
+   */
+  private pendingTokenRequest: Promise<string> | undefined;
 
   constructor(private readonly config: ConfigService) {
     this.accountsBaseUrl =
@@ -68,6 +82,14 @@ export class SpotifyClient {
   /**
    * Fetches one page of albums and normalizes it. `nextOffset` is `null` on the
    * final page (Spotify's `next` is null), signalling the pager to stop.
+   *
+   * Spotify enforces a hard cap on `/v1/search`'s `offset` + `limit`
+   * ({@link SPOTIFY_SEARCH_MAX_OFFSET}) regardless of `total` — once pagination
+   * would cross it, Spotify answers with a non-OK response. That's treated
+   * here as a CLEAN, expected stop (not an error): this bounds the practical
+   * per-query import size to ~1000 results, so reaching the ~100k album goal
+   * needs multiple distinct seed queries partitioning the catalog (out of
+   * scope for this PR — see {@link SPOTIFY_SEARCH_MAX_OFFSET}).
    */
   async getAlbumPage(
     offset: number,
@@ -84,6 +106,14 @@ export class SpotifyClient {
       headers: { authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
+      if (offset + limit > SPOTIFY_SEARCH_MAX_OFFSET) {
+        this.logger.log(
+          `Reached Spotify's /v1/search offset cap at offset=${offset} ` +
+            `(limit=${limit}) — stopping the import cleanly rather than ` +
+            `treating this as an error.`,
+        );
+        return { albums: [], nextOffset: null };
+      }
       throw new Error(
         `Spotify album search failed: ${response.status} ${response.statusText}`,
       );
@@ -101,12 +131,29 @@ export class SpotifyClient {
   /**
    * Returns a valid app access token, refreshing via the client-credentials
    * grant when the cache is empty or within the safety window of expiry.
+   *
+   * Memoizes the in-flight refresh so concurrent callers await the same
+   * promise instead of each firing an independent token request (judgment-day
+   * issue #3) — not reachable via the current sequential page→album wiring,
+   * but `SpotifyClient` is a shared DI singleton and a future concurrent
+   * caller would otherwise trigger a thundering herd of refreshes.
    */
   private async getAccessToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.cachedToken.expiresAtMs) {
       return this.cachedToken.accessToken;
     }
+    if (this.pendingTokenRequest) {
+      return this.pendingTokenRequest;
+    }
 
+    this.pendingTokenRequest = this.refreshAccessToken().finally(() => {
+      this.pendingTokenRequest = undefined;
+    });
+    return this.pendingTokenRequest;
+  }
+
+  /** Performs the actual client-credentials token refresh (see {@link getAccessToken}). */
+  private async refreshAccessToken(): Promise<string> {
     const clientId = this.requireConfig(SPOTIFY_CLIENT_ID_ENV);
     const clientSecret = this.requireConfig(SPOTIFY_CLIENT_SECRET_ENV);
     // HTTP Basic with base64(clientId:clientSecret) is the client-credentials
@@ -145,13 +192,32 @@ export class SpotifyClient {
     if (page.next === null) {
       return null;
     }
-    const nextOffset = page.offset + page.limit;
     // Guard against a non-null `next` that still runs past `total` (or an empty
     // page), which would otherwise loop forever fetching empty tail pages.
-    if (page.items.length === 0 || nextOffset >= page.total) {
+    if (page.items.length === 0) {
       return null;
     }
-    return nextOffset;
+    // Parse the offset Spotify's own `next` URL actually reports rather than
+    // recomputing it (judgment-day issue #9): arithmetic (`offset + limit`)
+    // only matches reality because the pager always requests a fixed `limit`
+    // — it would silently diverge if Spotify's pagination ever returned a
+    // different count. Fall back to arithmetic only if `next` is unparseable.
+    const nextOffset = this.parseNextOffset(page.next) ?? page.offset + page.limit;
+    return nextOffset >= page.total ? null : nextOffset;
+  }
+
+  /** Parses the `offset` query param from Spotify's `next` URL, if present and valid. */
+  private parseNextOffset(next: string): number | null {
+    try {
+      const offsetParam = new URL(next).searchParams.get("offset");
+      if (offsetParam === null) {
+        return null;
+      }
+      const offset = Number.parseInt(offsetParam, 10);
+      return Number.isNaN(offset) ? null : offset;
+    } catch {
+      return null;
+    }
   }
 
   private normalizeAlbum(album: SpotifyAlbum): NormalizedAlbum {
@@ -166,7 +232,7 @@ export class SpotifyClient {
           imageUrl: primary.images?.[0]?.url ?? null,
         }
       : {
-          spotifyId: `unknown:${album.id}`,
+          spotifyId: UNKNOWN_ARTIST_SPOTIFY_ID,
           name: "Unknown Artist",
           imageUrl: null,
         };
