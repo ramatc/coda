@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { buttonVariants, cn } from "@coda/ui";
@@ -19,6 +19,10 @@ import { completeOnboarding } from "./actions";
 
 type Step = "genres" | "artists" | "albums";
 type Status = "idle" | "submitting" | "error";
+type SearchKind = "artists" | "albums";
+
+/** Debounce delay for the artist/album search inputs, in milliseconds. */
+const SEARCH_DEBOUNCE_MS = 300;
 
 interface OnboardingWizardProps {
   genres: GenreOption[];
@@ -53,6 +57,16 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
   const [albumQuery, setAlbumQuery] = useState("");
   const [albumResults, setAlbumResults] = useState<AlbumOption[]>([]);
 
+  // Per-kind debounce timer + request sequence number, so a slower earlier
+  // response can never overwrite a faster later one, and every keystroke
+  // doesn't fire its own request.
+  const searchStateRef = useRef<
+    Record<SearchKind, { timer: ReturnType<typeof setTimeout> | null; seq: number }>
+  >({
+    artists: { timer: null, seq: 0 },
+    albums: { timer: null, seq: 0 },
+  });
+
   const submittable = isOnboardingSubmittable(
     selectedGenres.size,
     selectedArtists.size,
@@ -71,21 +85,48 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
     });
   }
 
-  async function search(
-    kind: "artists" | "albums",
-    query: string,
-  ): Promise<void> {
+  /**
+   * Debounces the search-as-you-type input and discards out-of-order
+   * responses: each call bumps a per-kind sequence number, and a response is
+   * only applied if it is still the most recent request for that kind by the
+   * time it resolves (a slower earlier response can otherwise land after a
+   * faster later one and overwrite the current results with stale data).
+   */
+  function search(kind: SearchKind, query: string): void {
+    const state = searchStateRef.current[kind];
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+
     const q = query.trim();
     if (q.length === 0) {
+      state.seq += 1;
       if (kind === "artists") setArtistResults([]);
       else setAlbumResults([]);
       return;
     }
+
+    state.timer = setTimeout(() => {
+      void runSearch(kind, q);
+    }, SEARCH_DEBOUNCE_MS);
+  }
+
+  async function runSearch(kind: SearchKind, q: string): Promise<void> {
+    const state = searchStateRef.current[kind];
+    const requestSeq = ++state.seq;
+
     const token = await getToken();
     const res = await fetch(
       `${getApiBaseUrl()}/onboarding/${kind}?q=${encodeURIComponent(q)}`,
       { headers: { Authorization: `Bearer ${token ?? ""}` } },
     );
+
+    if (requestSeq !== state.seq) {
+      // A newer search has started since this request was issued — discard
+      // this now-stale response.
+      return;
+    }
     if (!res.ok) {
       return;
     }
@@ -119,21 +160,35 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    // The genres/artists steps share this same `<form>` and have no
+    // `type="submit"` button of their own, so pressing Enter while typing in
+    // a search input would otherwise implicitly submit the form before the
+    // final step. Only the "albums" step (which owns the submit button) may
+    // actually submit.
+    if (!submittable || step !== "albums") {
+      return;
+    }
+
     setStatus("submitting");
     setError(null);
 
-    const result = await completeOnboarding({
-      genreSlugs: [...selectedGenres],
-      artistIds: [...selectedArtists.keys()],
-      albumIds: [...selectedAlbums.keys()],
-    });
+    try {
+      const result = await completeOnboarding({
+        genreSlugs: [...selectedGenres],
+        artistIds: [...selectedArtists.keys()],
+        albumIds: [...selectedAlbums.keys()],
+      });
 
-    if (result.ok) {
-      router.push(HOME_PATH);
-      return;
+      if (result.ok) {
+        router.push(HOME_PATH);
+        return;
+      }
+      setStatus("error");
+      setError(result.error);
+    } catch {
+      setStatus("error");
+      setError("Could not save your onboarding. Please retry.");
     }
-    setStatus("error");
-    setError(result.error);
   }
 
   return (
@@ -160,6 +215,12 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
           </li>
         ))}
       </ol>
+
+      {error ? (
+        <p className="text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      ) : null}
 
       <form onSubmit={onSubmit} className="flex flex-col gap-6">
         {step === "genres" ? (
@@ -214,7 +275,7 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
               value={artistQuery}
               onChange={(e) => {
                 setArtistQuery(e.target.value);
-                void search("artists", e.target.value);
+                search("artists", e.target.value);
               }}
               placeholder="Search artists…"
               className="rounded-card border border-brand-200 px-3 py-2"
@@ -264,7 +325,7 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
               value={albumQuery}
               onChange={(e) => {
                 setAlbumQuery(e.target.value);
-                void search("albums", e.target.value);
+                search("albums", e.target.value);
               }}
               placeholder="Search albums…"
               className="rounded-card border border-brand-200 px-3 py-2"
@@ -278,33 +339,26 @@ export function OnboardingWizard({ genres }: OnboardingWizardProps) {
                 onToggle: () => toggleAlbum(a),
               }))}
             />
-            <div className="flex flex-col gap-2">
-              {error ? (
-                <p className="text-sm text-red-600" role="alert">
-                  {error}
-                </p>
-              ) : null}
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setStep("artists")}
-                  className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
-                >
-                  Back
-                </button>
-                <button
-                  type="submit"
-                  disabled={!submittable || status === "submitting"}
-                  className={cn(
-                    buttonVariants(),
-                    "w-fit",
-                    (!submittable || status === "submitting") &&
-                      "pointer-events-none opacity-50",
-                  )}
-                >
-                  {status === "submitting" ? "Saving…" : "Finish"}
-                </button>
-              </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setStep("artists")}
+                className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+              >
+                Back
+              </button>
+              <button
+                type="submit"
+                disabled={!submittable || status === "submitting"}
+                className={cn(
+                  buttonVariants(),
+                  "w-fit",
+                  (!submittable || status === "submitting") &&
+                    "pointer-events-none opacity-50",
+                )}
+              >
+                {status === "submitting" ? "Saving…" : "Finish"}
+              </button>
             </div>
           </section>
         ) : null}

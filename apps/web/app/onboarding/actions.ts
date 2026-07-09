@@ -26,14 +26,19 @@ export async function completeOnboarding(
   const { getToken } = await auth();
   const token = await getToken();
 
-  const response = await fetch(`${getApiBaseUrl()}/onboarding/complete`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token ?? ""}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(args),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBaseUrl()}/onboarding/complete`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token ?? ""}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(args),
+    });
+  } catch {
+    return { ok: false, error: "Could not save your onboarding. Please retry." };
+  }
 
   if (response.ok) {
     return { ok: true };
