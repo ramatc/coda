@@ -157,27 +157,8 @@ export class CatalogQueue implements OnModuleDestroy {
   }
 
   /**
-   * Enqueues a per-album job with the deterministic `album:{spotifyId}` id, so
-   * BullMQ dedupes the same album at the queue level (natural dedup, Decision
-   * #5), with the same retry/backoff/cleanup policy as page jobs
-   * (judgment-day issue #1). Same stale-`failed`-job revival as
-   * {@link enqueuePage} (judgment-day issue #1, Round 3) — otherwise a
-   * permanently-failed album job would silently block any future re-enqueue
-   * of that same album.
-   */
-  async enqueueAlbum(album: NormalizedAlbum): Promise<void> {
-    const jobId = albumJobId(album.spotifyId);
-    await this.reviveFailedJob(this.getAlbumQueue(), jobId);
-    await this.getAlbumQueue().add(
-      ALBUM_JOB_NAME,
-      { album },
-      { ...CATALOG_JOB_OPTIONS, jobId },
-    );
-  }
-
-  /**
    * Single choke point for the stale-`failed`-job revival both {@link
-   * enqueuePage} and {@link enqueueAlbum} rely on (judgment-day issue #1,
+   * enqueuePage} and {@link enqueueAlbums} rely on (judgment-day issue #1,
    * Round 3). If a job with `jobId` already exists in Redis and is currently
    * `failed` (i.e. it exhausted `CATALOG_JOB_OPTIONS.attempts` and BullMQ
    * moved it to the failed set — kept around by `removeOnFail: { count: 5000
@@ -185,6 +166,24 @@ export class CatalogQueue implements OnModuleDestroy {
    * move it back to `waiting` instead of relying on `add()`'s id-based dedup,
    * which would otherwise return the existing dead job's id without
    * enqueuing a fresh attempt.
+   *
+   * Passes `resetAttemptsMade`/`resetAttemptsStarted` (judgment-day issue #1,
+   * Round 4): a permanently-failed job already has `attemptsMade` equal to
+   * `CATALOG_JOB_OPTIONS.attempts`. Without resetting it, BullMQ's own retry
+   * logic (`this.attemptsMade + 1 < this.opts.attempts`, see
+   * `bullmq/dist/cjs/classes/job.js`) treats the revived job as having ZERO
+   * attempts left — one bare try with no backoff before it's permanently
+   * failed again, defeating the point of manual retriggering during an
+   * ongoing transient issue.
+   *
+   * Wraps `retry()` in a try/catch (judgment-day issue #3, Round 4): if the
+   * job's state changed between `getState()` and `retry()` (e.g. a concurrent
+   * revival racing this one), BullMQ's `reprocessJob` Lua script throws
+   * because the job is no longer in the expected `failed` set. Treat that as
+   * a no-op and let the caller's own `add()`/`addBulk()` naturally dedup
+   * against whatever the concurrent process did, rather than letting the
+   * race fail an otherwise-successful caller (e.g. the page worker's
+   * "enqueue next page" call).
    */
   private async reviveFailedJob<T>(
     queue: Queue<T>,
@@ -195,8 +194,20 @@ export class CatalogQueue implements OnModuleDestroy {
       return;
     }
     const state = await existing.getState();
-    if (state === "failed") {
-      await existing.retry();
+    if (state !== "failed") {
+      return;
+    }
+    try {
+      await existing.retry("failed", {
+        resetAttemptsMade: true,
+        resetAttemptsStarted: true,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Revive of failed job ${jobId} raced a concurrent state change and was skipped — falling back to the normal enqueue path: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 
@@ -204,13 +215,28 @@ export class CatalogQueue implements OnModuleDestroy {
    * Enqueues many per-album jobs in a single BullMQ round-trip (`addBulk`)
    * instead of one `add()` per album (judgment-day issue #4) — the page
    * worker's per-page fan-out is up to `SPOTIFY_PAGE_LIMIT` albums, which would
-   * otherwise be that many sequential Redis round-trips.
+   * otherwise be that many sequential Redis round-trips. This is the ONLY
+   * production album-enqueue path (the page worker calls this, never a
+   * singular per-album `add()`).
+   *
+   * Revives any stale `failed` job under each album's deterministic id BEFORE
+   * building the bulk batch (judgment-day issue #2, Round 4): `addBulk`
+   * dedupes on Redis key EXISTENCE the same way `add()` does, so without this
+   * a permanently-failed album job that resurfaces later (a resumed run, an
+   * overlapping page, a re-seed) would silently no-op forever instead of
+   * getting a fresh attempt.
    */
   async enqueueAlbums(albums: NormalizedAlbum[]): Promise<void> {
     if (albums.length === 0) {
       return;
     }
-    await this.getAlbumQueue().addBulk(
+    const albumQueue = this.getAlbumQueue();
+    await Promise.all(
+      albums.map((album) =>
+        this.reviveFailedJob(albumQueue, albumJobId(album.spotifyId)),
+      ),
+    );
+    await albumQueue.addBulk(
       albums.map((album) => ({
         name: ALBUM_JOB_NAME,
         data: { album },

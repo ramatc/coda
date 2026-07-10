@@ -32,10 +32,21 @@ interface FakeAddedJob {
  * `"failed"` (simulating a job that exhausted all its retry attempts), and a
  * `retry()` that moves it back to `"waiting"` — the same transition BullMQ's
  * real `job.retry()` performs.
+ *
+ * Also tracks `attemptsMade` (judgment-day issue #1, Round 4): a real
+ * permanently-failed job has `attemptsMade === CATALOG_JOB_OPTIONS.attempts`,
+ * and BullMQ's `job.retry()` only resets it back to 0 when called with
+ * `{ resetAttemptsMade: true }` (see `bullmq/dist/cjs/classes/job.js`'s
+ * `retry()`). This mock mirrors that exact conditional so a regression
+ * (calling `retry()` with no options, or without `resetAttemptsMade`) is
+ * caught by a test instead of silently shipping.
  */
 class FakeJob {
   state: "waiting" | "failed" = "waiting";
   retryCount = 0;
+  attemptsMade = 0;
+  /** Set by a test to simulate a raced concurrent state change. */
+  throwOnNextRetry: Error | undefined;
 
   constructor(
     public readonly id: string,
@@ -46,9 +57,20 @@ class FakeJob {
     return this.state;
   }
 
-  async retry(): Promise<void> {
+  async retry(
+    _state: "failed" | "completed" = "failed",
+    opts: { resetAttemptsMade?: boolean; resetAttemptsStarted?: boolean } = {},
+  ): Promise<void> {
+    if (this.throwOnNextRetry) {
+      const err = this.throwOnNextRetry;
+      this.throwOnNextRetry = undefined;
+      throw err;
+    }
     this.state = "waiting";
     this.retryCount += 1;
+    if (opts.resetAttemptsMade) {
+      this.attemptsMade = 0;
+    }
     this.queue.retriedJobIds.push(this.id);
   }
 }
@@ -195,7 +217,7 @@ describe("CatalogQueue", () => {
   });
 
   it("enqueues a per-album job with the deterministic album job id and retry/backoff/cleanup policy", async () => {
-    await queue.enqueueAlbum(album("alb-1"));
+    await queue.enqueueAlbums([album("alb-1")]);
 
     const albumQueue = bullmq.__queueRegistry.get(CATALOG_ALBUM_QUEUE)!;
     expect(albumQueue.added).toHaveLength(1);
@@ -318,17 +340,54 @@ describe("CatalogQueue", () => {
       expect(pageQueue.retriedJobIds).toHaveLength(0);
     });
 
-    it("enqueueAlbum retries a job that's already in a failed state instead of silently no-op'ing", async () => {
-      await queue.enqueueAlbum(album("alb-1"));
+    it("enqueuePage revival resets attemptsMade so a revived job gets its full retry budget back (judgment-day issue #1, Round 4)", async () => {
+      await queue.enqueuePage(100, 50);
+      const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
+      const jobId = pageJobId(100);
+      const job = await pageQueue.getJob(jobId);
+      // Simulate a job that permanently failed after exhausting every
+      // configured attempt — a real BullMQ job in this state has
+      // `attemptsMade === CATALOG_JOB_OPTIONS.attempts` (5).
+      job!.state = "failed";
+      job!.attemptsMade = 5;
+
+      await queue.enqueuePage(100, 50);
+
+      expect(job!.attemptsMade).toBe(0);
+    });
+
+    it("enqueuePage revival tolerates a raced retry() throw and falls back to the normal enqueue path (judgment-day issue #3, Round 4)", async () => {
+      await queue.enqueuePage(100, 50);
+      const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
+      const jobId = pageJobId(100);
+      const job = await pageQueue.getJob(jobId);
+      job!.state = "failed";
+      // Simulate a concurrent revival winning the race: BullMQ's retry()
+      // throws when the job is no longer in the expected `failed` set.
+      job!.throwOnNextRetry = new Error("Job is not in the expected failed state");
+
+      await expect(queue.enqueuePage(100, 50)).resolves.toBeUndefined();
+      expect(pageQueue.retriedJobIds).not.toContain(jobId);
+    });
+
+    it("enqueueAlbums retries a job that's already in a failed state instead of silently no-op'ing", async () => {
+      await queue.enqueueAlbums([album("alb-1")]);
       const albumQueue = bullmq.__queueRegistry.get(CATALOG_ALBUM_QUEUE)!;
       const jobId = albumJobId("alb-1");
       const job = await albumQueue.getJob(jobId);
       job!.state = "failed";
+      job!.attemptsMade = 5;
 
-      await queue.enqueueAlbum(album("alb-1"));
+      // This is the ONLY production album-enqueue path (judgment-day issue
+      // #2, Round 4) — the page worker calls `enqueueAlbums` via `addBulk`,
+      // never a singular per-album `add()`. A permanently-failed album job
+      // resurfacing here (resumed run, overlapping page, re-seed) must be
+      // revived with its full attempt budget restored, not silently dropped.
+      await queue.enqueueAlbums([album("alb-1")]);
 
       expect(await job!.getState()).toBe("waiting");
       expect(albumQueue.retriedJobIds).toContain(jobId);
+      expect(job!.attemptsMade).toBe(0);
     });
   });
 });
