@@ -22,6 +22,16 @@ const SEARCH_LIMIT = 5;
 const MAX_GENRES = 5;
 
 /**
+ * Minimum MusicBrainz search relevance score (0-100) the top candidate must
+ * clear to be accepted as a match (judgment-day issue #2). Below this, a
+ * generic/ambiguous album title can resolve to an unrelated release-group;
+ * accepting it unconditionally would silently write a false-positive mbid as
+ * authoritative data. A below-threshold top candidate is treated the same as a
+ * genuinely empty result (`null`), never as an error.
+ */
+const MIN_MATCH_SCORE = 80;
+
+/**
  * Thin MusicBrainz Web Service v2 client for the catalog-enrichment leg (PR6).
  * Given a seeded album's title + primary-artist name, it resolves the album's
  * MusicBrainz release-group mbid, the artist mbid, and a handful of genres/tags.
@@ -95,7 +105,28 @@ export class MusicBrainzClient {
     if (!best?.id) {
       return null;
     }
-    return this.normalize(best);
+    if (best.score !== undefined && best.score < MIN_MATCH_SCORE) {
+      this.logger.warn(
+        `Rejecting low-confidence MusicBrainz match ${best.id} for "${title}" ` +
+          `(score ${best.score} < ${MIN_MATCH_SCORE}); treating as no-match`,
+      );
+      return null;
+    }
+    // A malformed/unexpected response shape (e.g. `artist-credit` present but
+    // not an array) must not escape as a plain TypeError — the enrich worker's
+    // per-item error isolation only recognizes Prisma-specific error types, so
+    // an uncaught shape error here would exhaust BullMQ's retry budget on a
+    // deterministically-failing job instead of being skipped benignly like a
+    // malformed Spotify record (judgment-day issue #7).
+    try {
+      return this.normalize(best);
+    } catch (err) {
+      this.logger.warn(
+        `Skipping malformed MusicBrainz release-group ${best.id}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   }
 
   /**
@@ -146,14 +177,28 @@ export class MusicBrainzClient {
 
     // Prefer curated `genres`; fall back to folksonomy `tags` when absent.
     const rawGenres = group.genres?.length ? group.genres : group.tags ?? [];
-    const genres: NormalizedGenre[] = rawGenres
-      .filter((g) => g.name.trim().length > 0)
-      .map((g) => ({
-        slug: this.slugify(g.name),
-        name: g.name,
-        weight: g.count && g.count > 0 ? g.count : 1,
-      }))
-      .filter((g) => g.slug.length > 0)
+    // Dedupe by slug BEFORE slicing to MAX_GENRES (judgment-day issue #8): two
+    // raw tags that collapse to the same slug (e.g. differing only in casing or
+    // punctuation) would otherwise consume two of the limited slots instead of
+    // one, and the later-processed duplicate could silently overwrite an
+    // earlier higher-weight entry in the upsert loop. Keep the max weight seen
+    // per slug.
+    const bySlug = new Map<string, NormalizedGenre>();
+    for (const g of rawGenres) {
+      if (g.name.trim().length === 0) {
+        continue;
+      }
+      const slug = this.slugify(g.name);
+      if (slug.length === 0) {
+        continue;
+      }
+      const weight = g.count && g.count > 0 ? g.count : 1;
+      const existing = bySlug.get(slug);
+      if (!existing || weight > existing.weight) {
+        bySlug.set(slug, { slug, name: g.name, weight });
+      }
+    }
+    const genres: NormalizedGenre[] = [...bySlug.values()]
       .sort((a, b) => b.weight - a.weight)
       .slice(0, MAX_GENRES);
 

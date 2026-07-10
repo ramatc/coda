@@ -110,6 +110,75 @@ describe("MusicBrainzClient", () => {
     expect(await makeClient().lookupAlbum("nope", "nobody")).toBeNull();
   });
 
+  // judgment-day issue #2: an unconditionally-accepted top candidate can be a
+  // low-confidence false positive for an ambiguous/generic title.
+  it("rejects a top candidate below the minimum relevance score, treating it as no-match", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        "release-groups": [{ id: "rg-low-confidence", score: 40 }],
+      }),
+    );
+
+    expect(await makeClient().lookupAlbum("Greatest Hits", "Various")).toBeNull();
+  });
+
+  it("accepts a top candidate exactly at the minimum score threshold", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        "release-groups": [{ id: "rg-borderline", score: 80, "artist-credit": [] }],
+      }),
+    );
+
+    const result = await makeClient().lookupAlbum("OK Computer", "Radiohead");
+
+    expect(result?.mbid).toBe("rg-borderline");
+  });
+
+  // judgment-day issue #7: a malformed response shape must not escape as a
+  // plain TypeError — the per-item error isolation only recognizes Prisma
+  // errors, so an uncaught shape error would exhaust BullMQ's retries on a
+  // deterministically-failing job instead of being skipped benignly.
+  it("treats a malformed artist-credit shape as a benign no-match instead of throwing", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        "release-groups": [
+          { id: "rg-malformed", score: 100, "artist-credit": "not-an-array" },
+        ],
+      }),
+    );
+
+    await expect(
+      makeClient().lookupAlbum("Weird Response", "Nobody"),
+    ).resolves.toBeNull();
+  });
+
+  // judgment-day issue #8: two raw tags collapsing to the same slug must not
+  // consume two of the limited MAX_GENRES slots, and the higher-weight entry
+  // must win rather than being silently overwritten by a later duplicate.
+  it("dedupes genres by slug (keeping the max weight) before slicing to the genre cap", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        "release-groups": [
+          {
+            id: "rg-dupe-genres",
+            score: 100,
+            "artist-credit": [],
+            genres: [
+              { name: "Art Rock", count: 3 },
+              { name: "art-rock", count: 9 },
+            ],
+          },
+        ],
+      }),
+    );
+
+    const result = await makeClient().lookupAlbum("Some Album", "Some Artist");
+
+    expect(result?.genres).toEqual([
+      { slug: "art-rock", name: "art-rock", weight: 9 },
+    ]);
+  });
+
   it("throws when the User-Agent is not configured (MusicBrainz requires one) and never hits the network", async () => {
     const client = new MusicBrainzClient(
       fakeConfig({ MUSICBRAINZ_USER_AGENT: "" }),
@@ -163,5 +232,49 @@ describe("MusicBrainzClient", () => {
     }
     // Concretely deterministic spacing from t=0.
     expect(callTimes).toEqual([0, 1100, 2200, 3300, 4400]);
+  });
+
+  // judgment-day issue #10: the burst test above uses a near-instant mocked
+  // `fetch`, so it can't distinguish "gate advances at request ACQUISITION"
+  // (the documented, correct design) from "gate advances at request
+  // COMPLETION" (a plausible incorrect alternative that would still pass that
+  // specific test, since near-instant requests make the two indistinguishable).
+  // Here each mocked `fetch` takes several fake-timer ticks to resolve — if the
+  // gate incorrectly advanced on completion, request spacing would include the
+  // slow response time; the correct acquisition-based gate keeps spacing at
+  // exactly the configured interval regardless.
+  it("spaces requests from ACQUISITION time, not completion time, even when a request is slow to resolve", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const RESPONSE_DELAY_MS = 3 * MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS;
+    const callTimes: number[] = [];
+    fetchMock.mockImplementation(async () => {
+      callTimes.push(Date.now());
+      // Slow response: several fake-timer ticks pass before this particular
+      // request resolves.
+      await new Promise((resolve) => setTimeout(resolve, RESPONSE_DELAY_MS));
+      return jsonResponse({ "release-groups": [] });
+    });
+
+    const client = makeClient();
+    const calls = Promise.all([
+      client.lookupAlbum("Album 1", "Artist 1"),
+      client.lookupAlbum("Album 2", "Artist 2"),
+      client.lookupAlbum("Album 3", "Artist 3"),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(3 * (RESPONSE_DELAY_MS + MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS));
+    await calls;
+
+    expect(callTimes).toHaveLength(3);
+    // Spaced by exactly the configured interval — NOT interval + the previous
+    // request's RESPONSE_DELAY_MS, which is what a completion-based gate would
+    // produce instead.
+    expect(callTimes).toEqual([
+      0,
+      MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS,
+      2 * MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS,
+    ]);
   });
 });
