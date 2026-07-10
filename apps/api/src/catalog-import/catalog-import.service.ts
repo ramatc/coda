@@ -10,6 +10,7 @@ import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { CatalogQueue } from "./catalog-queue.js";
 import {
+  ENQUEUE_FAILURE_ESCALATION_RATIO,
   MIN_SAMPLE_FOR_ESCALATION,
   SPOTIFY_PAGE_LIMIT,
 } from "./catalog-import.constants.js";
@@ -17,10 +18,24 @@ import type { CatalogCheckpointStore } from "./spotify-checkpoint.store.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
 
 export interface ImportPageResult {
-  /** How many albums this page upserted. */
+  /**
+   * How many albums this page FETCHED from Spotify — not how many were
+   * upserted or reached {@link enqueueEnrichment} (judgment-day issue #1,
+   * round 5): an album skipped at the upsert stage (P2002/P2003/malformed)
+   * still counts here even though it never reaches the enqueue attempt.
+   */
   processed: number;
   /** Offset of the next page, or `null` when this was the final page. */
   nextOffset: number | null;
+  /**
+   * How many albums on this page actually reached an `enqueueEnrichment`
+   * call attempt (judgment-day issue #1, round 5) — only albums that passed
+   * the upsert stage AND had a {@link CatalogQueue} injected. Always `0` when
+   * no queue is injected. This is the correct denominator for
+   * {@link enqueueFailures}, since {@link processed} also counts albums that
+   * were skipped before ever reaching the enqueue attempt.
+   */
+  enqueueAttempts: number;
   /**
    * How many `enqueueEnrichment` calls failed on this page (judgment-day
    * issue #1, round 3). Always `0` when no {@link CatalogQueue} is injected.
@@ -29,18 +44,30 @@ export interface ImportPageResult {
 }
 
 export interface RunImportResult {
-  /** Total albums upserted across every page of this run. */
+  /**
+   * Total albums FETCHED from Spotify across every page of this run — not
+   * how many were upserted or reached {@link enqueueEnrichment} (judgment-day
+   * issue #1, round 5); see {@link ImportPageResult.processed}.
+   */
   processed: number;
   /** How many pages were fetched. */
   pages: number;
   /**
+   * Total albums across every page of this run that actually reached an
+   * `enqueueEnrichment` call attempt (judgment-day issue #1, round 5) — the
+   * correct denominator for {@link enqueueFailures}. See
+   * {@link ImportPageResult.enqueueAttempts}.
+   */
+  enqueueAttempts: number;
+  /**
    * Total `enqueueEnrichment` failures across every page of this run
    * (judgment-day issue #1, round 3) — the aggregate signal an operator needs
    * to detect a total enrichment-queue outage that per-album WARN logs alone
-   * would bury. When this equals {@link processed} and `processed` meets the
-   * minimum sample-size floor (judgment-day issue #1, round 4), EVERY album
-   * this run failed to enqueue for enrichment, and {@link runImport} escalates
-   * that case to `logger.error`.
+   * would bury. When the failure ratio against {@link enqueueAttempts} meets
+   * {@link ENQUEUE_FAILURE_ESCALATION_RATIO} and `enqueueAttempts` meets the
+   * minimum sample-size floor (judgment-day issue #1, rounds 4-5), NEARLY
+   * EVERY album this run attempted failed to enqueue for enrichment, and
+   * {@link runImport} escalates that case to `logger.error`.
    */
   enqueueFailures: number;
 }
@@ -182,6 +209,7 @@ export class CatalogImportService {
     limit: number = SPOTIFY_PAGE_LIMIT,
   ): Promise<ImportPageResult> {
     const page = await this.spotify.getAlbumPage(offset, limit);
+    let enqueueAttempts = 0;
     let enqueueFailures = 0;
     for (const album of page.albums) {
       try {
@@ -215,6 +243,7 @@ export class CatalogImportService {
         // propagate uncaught and abort the rest of the run — the album already
         // persisted, so we log-and-continue rather than losing every remaining
         // album/page on a queue hiccup with no retry.
+        enqueueAttempts += 1;
         try {
           await this.queue.enqueueEnrichment(album.spotifyId);
         } catch (err) {
@@ -229,6 +258,7 @@ export class CatalogImportService {
     return {
       processed: page.albums.length,
       nextOffset: page.nextOffset,
+      enqueueAttempts,
       enqueueFailures,
     };
   }
@@ -245,17 +275,23 @@ export class CatalogImportService {
    * distributed lock preventing a concurrent run, and no automatic recovery
    * for a permanently-failed BullMQ job; an operator retries those manually.
    *
-   * Aggregates each page's {@link ImportPageResult.enqueueFailures} into a
-   * run-wide total (judgment-day issue #1, round 3): `importPage`'s per-album
-   * try/catch only logs a WARN per failure, which an operator not tailing logs
-   * would never see — so this method's final summary always reports the
-   * count, and when EVERY album in the run failed to enqueue (100% failure,
-   * the signature of a down/misconfigured enrich queue for the whole run
-   * rather than an isolated blip) AND `processed` meets
-   * {@link MIN_SAMPLE_FOR_ESCALATION} (judgment-day issue #1, round 4 — below
-   * that floor a single blip would satisfy the same 100% condition as a real
-   * outage), it escalates to `logger.error` with an explicit message instead
-   * of leaving the run looking like a clean success.
+   * Aggregates each page's {@link ImportPageResult.enqueueFailures} (against
+   * {@link ImportPageResult.enqueueAttempts} — the correct denominator, since
+   * `processed` also counts albums that were skipped before ever reaching an
+   * enqueue attempt; judgment-day issue #1, round 5) into a run-wide total
+   * (judgment-day issue #1, round 3): `importPage`'s per-album try/catch only
+   * logs a WARN per failure, which an operator not tailing logs would never
+   * see — so this method's final summary always reports the count, and when
+   * the failure ratio against `enqueueAttempts` meets or exceeds
+   * {@link ENQUEUE_FAILURE_ESCALATION_RATIO} (near-total failure, the
+   * signature of a down/misconfigured enrich queue for the whole run rather
+   * than an isolated blip; judgment-day issue #1, round 5 — strict equality
+   * to 100% previously missed a near-total outage like 9999/10000) AND
+   * `enqueueAttempts` meets {@link MIN_SAMPLE_FOR_ESCALATION} (judgment-day
+   * issue #1, round 4 — below that floor a single blip would satisfy the
+   * same near-100% condition as a real outage), it escalates to
+   * `logger.error` with an explicit message instead of leaving the run
+   * looking like a clean success.
    */
   async runImport(options: RunImportOptions = {}): Promise<RunImportResult> {
     const limit = options.limit ?? SPOTIFY_PAGE_LIMIT;
@@ -265,11 +301,13 @@ export class CatalogImportService {
 
     let processed = 0;
     let pages = 0;
+    let enqueueAttempts = 0;
     let enqueueFailures = 0;
     for (;;) {
       const result = await this.importPage(offset, limit);
       processed += result.processed;
       pages += 1;
+      enqueueAttempts += result.enqueueAttempts;
       enqueueFailures += result.enqueueFailures;
 
       if (result.nextOffset === null) {
@@ -288,21 +326,24 @@ export class CatalogImportService {
         `${enqueueFailures} enrichment enqueue failures`,
     );
     if (
-      processed >= MIN_SAMPLE_FOR_ESCALATION &&
-      enqueueFailures === processed
+      enqueueAttempts >= MIN_SAMPLE_FOR_ESCALATION &&
+      enqueueAttempts > 0 &&
+      enqueueFailures / enqueueAttempts >= ENQUEUE_FAILURE_ESCALATION_RATIO
     ) {
-      // Every single album this run failed to enqueue for enrichment, across
-      // at least MIN_SAMPLE_FOR_ESCALATION albums — almost certainly a down/
+      // Near-total (or total) enqueue failure across at least
+      // MIN_SAMPLE_FOR_ESCALATION attempts — almost certainly a down/
       // misconfigured enrich queue for the WHOLE run, not an isolated blip
       // (judgment-day issue #1, round 4: below that floor, "1 failure out of
-      // 1 processed" would trip this identically to a real outage). A plain
-      // WARN per album buries this; escalate so it can't be missed in the run
-      // summary.
+      // 1 attempt" would trip this identically to a real outage; round 5:
+      // a ratio threshold instead of exact-100% equality also catches a
+      // near-total outage like 9999/10000). A plain WARN per album buries
+      // this; escalate so it can't be missed in the run summary.
       this.logger.error(
-        `Enrichment enqueueing failed for ALL ${processed} albums this run — ` +
-          `likely a Redis/queue connectivity issue — check the enrich queue.`,
+        `Enrichment enqueueing failed for ${enqueueFailures} of ` +
+          `${enqueueAttempts} albums this run — likely a Redis/queue ` +
+          `connectivity issue — check the enrich queue.`,
       );
     }
-    return { processed, pages, enqueueFailures };
+    return { processed, pages, enqueueAttempts, enqueueFailures };
   }
 }
