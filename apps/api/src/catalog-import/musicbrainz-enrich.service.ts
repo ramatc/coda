@@ -6,7 +6,8 @@ import { MusicBrainzClient } from "./musicbrainz.client.js";
 export type EnrichResult =
   | { status: "enriched"; mbid: string; genres: number }
   | { status: "no-match" }
-  | { status: "album-missing" };
+  | { status: "album-missing" }
+  | { status: "already-enriched"; mbid: string };
 
 /**
  * Core of the MusicBrainz enrichment leg (PR6, design Decision #4). Queue-agnostic
@@ -35,9 +36,15 @@ export class MusicBrainzEnrichService {
    *
    * Idempotent: re-running writes the same `mbid`/genres in place (the album is
    * matched by its own id, so re-setting its existing mbid is a no-op, and
-   * genre links are upserted by composite key). Returns a benign `no-match`
-   * when MusicBrainz has no candidate, or `album-missing` when the album is no
-   * longer present (e.g. deleted between seed and enrich) — neither is an error.
+   * genre links are upserted by composite key, with stale links from a shrunk
+   * genre set removed). Returns a benign `no-match` when MusicBrainz has no
+   * candidate, `album-missing` when the album is no longer present (e.g.
+   * deleted between seed and enrich), or `already-enriched` when the album's
+   * `mbid` is already set — skipping the MusicBrainz network call entirely
+   * (judgment-day issue #3). This is a service-level defense-in-depth check on
+   * top of (not a replacement for) BullMQ's job-id dedup: it also protects
+   * direct/manual calls to this service and calls made after the dedup window
+   * has aged out. None of these three are errors.
    *
    * DB failures (including a P2002 when the resolved `mbid` is already claimed
    * by a different album/artist edition) PROPAGATE so the caller can isolate/
@@ -50,11 +57,15 @@ export class MusicBrainzEnrichService {
       select: {
         id: true,
         title: true,
+        mbid: true,
         primaryArtist: { select: { id: true, name: true } },
       },
     });
     if (!album) {
       return { status: "album-missing" };
+    }
+    if (album.mbid) {
+      return { status: "already-enriched", mbid: album.mbid };
     }
 
     const enrichment = await this.musicbrainz.lookupAlbum(
@@ -78,6 +89,7 @@ export class MusicBrainzEnrichService {
         });
       }
 
+      const currentGenreIds: string[] = [];
       for (const genre of enrichment.genres) {
         const row = await tx.genre.upsert({
           where: { slug: genre.slug },
@@ -85,12 +97,20 @@ export class MusicBrainzEnrichService {
           update: {},
           select: { id: true },
         });
+        currentGenreIds.push(row.id);
         await tx.albumGenre.upsert({
           where: { albumId_genreId: { albumId: album.id, genreId: row.id } },
           create: { albumId: album.id, genreId: row.id, weight: genre.weight },
           update: { weight: genre.weight },
         });
       }
+      // Remove stale AlbumGenre links left over from a prior enrichment whose
+      // genre set has since shrunk (judgment-day issue #5) — without this, the
+      // "idempotent" claim above breaks the moment a re-run (manual retry, or
+      // MusicBrainz data changing upstream) produces fewer genres than before.
+      await tx.albumGenre.deleteMany({
+        where: { albumId: album.id, genreId: { notIn: currentGenreIds } },
+      });
     });
 
     this.logger.log(

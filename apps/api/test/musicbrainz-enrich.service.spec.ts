@@ -53,7 +53,47 @@ function createFakeEnrichPrisma() {
 
   const client = {
     async $transaction<T>(fn: (tx: typeof client) => Promise<T>): Promise<T> {
-      return fn(client);
+      // Snapshot-and-restore models real Postgres rollback semantics: if the
+      // callback throws partway through, mutations already applied to these
+      // Maps are undone rather than silently left committed (matching the
+      // established convention — see clerk-webhook.service.spec.ts, commit
+      // d167826). Rows are deep-cloned (not just the Map) because update
+      // branches mutate row objects in place — a shallow `new Map(x)` would
+      // still share the same row references and "roll back" nothing
+      // (judgment-day issue #6).
+      const albumsSnapshot = new Map(
+        [...albums].map(([key, value]) => [key, { ...value }]),
+      );
+      const artistsSnapshot = new Map(
+        [...artists].map(([key, value]) => [key, { ...value }]),
+      );
+      const genresBySlugSnapshot = new Map(
+        [...genresBySlug].map(([key, value]) => [key, { ...value }]),
+      );
+      const albumGenresSnapshot = new Map(
+        [...albumGenres].map(([key, value]) => [key, { ...value }]),
+      );
+      try {
+        return await fn(client);
+      } catch (err) {
+        albums.clear();
+        for (const [key, value] of albumsSnapshot) {
+          albums.set(key, value);
+        }
+        artists.clear();
+        for (const [key, value] of artistsSnapshot) {
+          artists.set(key, value);
+        }
+        genresBySlug.clear();
+        for (const [key, value] of genresBySlugSnapshot) {
+          genresBySlug.set(key, value);
+        }
+        albumGenres.clear();
+        for (const [key, value] of albumGenresSnapshot) {
+          albumGenres.set(key, value);
+        }
+        throw err;
+      }
     },
     album: {
       async findUnique(args: {
@@ -61,6 +101,7 @@ function createFakeEnrichPrisma() {
       }): Promise<{
         id: string;
         title: string;
+        mbid: string | null;
         primaryArtist: { id: string; name: string };
       } | null> {
         const row = albums.get(args.where.spotifyId);
@@ -71,6 +112,7 @@ function createFakeEnrichPrisma() {
         return {
           id: row.id,
           title: row.title,
+          mbid: row.mbid,
           primaryArtist: { id: artist.id, name: artist.name },
         };
       },
@@ -120,6 +162,22 @@ function createFakeEnrichPrisma() {
         }
         albumGenreCreates += 1;
         albumGenres.set(key, { weight: args.create.weight });
+      },
+      async deleteMany(args: {
+        where: { albumId: string; genreId: { notIn: string[] } };
+      }): Promise<{ count: number }> {
+        let count = 0;
+        for (const key of [...albumGenres.keys()]) {
+          const [albumId, genreId] = key.split(":");
+          if (
+            albumId === args.where.albumId &&
+            !args.where.genreId.notIn.includes(genreId)
+          ) {
+            albumGenres.delete(key);
+            count += 1;
+          }
+        }
+        return { count };
       },
     },
   };
@@ -229,6 +287,84 @@ describe("MusicBrainzEnrichService", () => {
     expect(fake.albums.get("sp1")?.mbid).toBe("rg-1");
     expect(fake.counts.genreCreates).toBe(1);
     expect(fake.counts.albumGenreCreates).toBe(1);
+  });
+
+  // judgment-day issue #3: the service must short-circuit on an already-set
+  // mbid WITHOUT calling MusicBrainz — all protection previously rested on
+  // BullMQ's job-id dedup alone, which doesn't cover direct/manual calls or a
+  // call made after the dedup window ages out.
+  it("skips the MusicBrainz lookup and returns already-enriched when the album already has an mbid", async () => {
+    fake.seedAlbum("sp1", "OK Computer", "Radiohead");
+    mb.lookupAlbum.mockResolvedValue(enrichment("rg-1"));
+    await service.enrichAlbum("sp1");
+    mb.lookupAlbum.mockClear();
+
+    const result = await service.enrichAlbum("sp1");
+
+    expect(result).toEqual({ status: "already-enriched", mbid: "rg-1" });
+    expect(mb.lookupAlbum).not.toHaveBeenCalled();
+  });
+
+  // judgment-day issue #5: a later enrichment run producing a SMALLER genre
+  // set than a prior run must remove the now-absent genre's AlbumGenre row —
+  // otherwise the "idempotent" claim breaks the moment the genre set shrinks.
+  it("removes stale AlbumGenre rows for genres no longer present in a later, smaller enrichment result", async () => {
+    fake.seedAlbum("sp1", "OK Computer", "Radiohead");
+    mb.lookupAlbum.mockResolvedValueOnce(
+      enrichment("rg-1", {
+        genres: [
+          { slug: "alternative-rock", name: "Alternative Rock", weight: 10 },
+          { slug: "art-rock", name: "Art Rock", weight: 4 },
+        ],
+      }),
+    );
+
+    await service.enrichAlbum("sp1");
+    const albumId = fake.albums.get("sp1")!.id;
+    const artRockGenreId = fake.genresBySlug.get("art-rock")!.id;
+    expect(fake.albumGenres.has(`${albumId}:${artRockGenreId}`)).toBe(true);
+    expect(fake.albumGenres.size).toBe(2);
+
+    // Simulate a manual retry / upstream MusicBrainz change: the mbid is reset
+    // so the short-circuit from issue #3 doesn't block this second lookup, and
+    // this run resolves a SMALLER genre set (drops "art-rock").
+    fake.albums.get("sp1")!.mbid = null;
+    mb.lookupAlbum.mockResolvedValueOnce(
+      enrichment("rg-1", {
+        genres: [
+          { slug: "alternative-rock", name: "Alternative Rock", weight: 10 },
+        ],
+      }),
+    );
+
+    await service.enrichAlbum("sp1");
+
+    expect(fake.albumGenres.has(`${albumId}:${artRockGenreId}`)).toBe(false);
+    expect(fake.albumGenres.size).toBe(1);
+  });
+
+  // judgment-day issue #6: without snapshot/restore, this fake's $transaction
+  // doesn't prove atomicity — an earlier successful write inside the callback
+  // wouldn't be rolled back when a later step throws. Mirrors the rollback
+  // test convention in clerk-webhook.service.spec.ts (commit d167826).
+  it("rolls back the Album mbid write when a later step in the transaction throws", async () => {
+    fake.seedAlbum("sp1", "OK Computer", "Radiohead");
+    mb.lookupAlbum.mockResolvedValue(enrichment("rg-1"));
+    const originalArtistUpdate = fake.client.artist.update;
+    fake.client.artist.update = () => {
+      throw new Error("simulated failure after album.update committed");
+    };
+
+    await expect(service.enrichAlbum("sp1")).rejects.toThrow(
+      "simulated failure",
+    );
+
+    // The fake's $transaction must undo the Album row it already wrote in this
+    // same callback, matching real Postgres transaction semantics — otherwise
+    // this fake proves nothing about atomicity.
+    expect(fake.albums.get("sp1")?.mbid).toBeNull();
+
+    fake.client.artist.update = originalArtistUpdate;
   });
 
   it("returns no-match and writes nothing when MusicBrainz has no candidate", async () => {
