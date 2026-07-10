@@ -130,6 +130,22 @@ async function bootstrap(): Promise<void> {
       // Chain MusicBrainz enrichment onto the per-album unit (PR6): only reached
       // when the upsert above succeeded (a skipped album returns early), so we
       // never enqueue enrichment for an album that didn't persist.
+      //
+      // Deliberately left UNWRAPPED — unlike the CLI/in-process path's
+      // try/catch around the equivalent call in
+      // `CatalogImportService.importPage` (judgment-day issue #1, round 3).
+      // A throw here fails THIS album job, which gets BullMQ's own
+      // retry/backoff (`CATALOG_JOB_OPTIONS`) plus a visible entry in the
+      // failed-job set for free — exactly the aggregate-failure signal the
+      // CLI path has no infrastructure for and had to build by hand (see
+      // `CatalogImportService.runImport`'s `enqueueFailures` tracking).
+      // Swallowing this error here instead would silently drop the
+      // enrichment enqueue with NO retry at all, which is strictly worse.
+      // The retried job re-runs `upsertAlbum` too, but that's a cheap,
+      // idempotent upsert (Decision #5) keyed on `spotifyId` — not
+      // equivalent to redoing real external work — so the redundant retry
+      // cost of retrying the whole album job (instead of just the enqueue)
+      // is negligible.
       await queue.enqueueEnrichment(job.data.album.spotifyId);
     },
     { connection: albumConnection },

@@ -277,6 +277,19 @@ describe("catalog-worker bootstrap", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("album worker propagates an enqueueEnrichment failure UNCAUGHT so BullMQ's own retry/backoff and failed-job set apply — intentional asymmetry vs the CLI path (judgment-day issue #1, round 3)", async () => {
+    fakeQueue.enqueueEnrichment.mockRejectedValue(
+      new Error("simulated Redis/BullMQ producer failure"),
+    );
+
+    await expect(
+      albumProcessor({ data: { album: album("a1") } }),
+    ).rejects.toThrow(/simulated Redis\/BullMQ producer failure/);
+
+    // The upsert itself succeeded before the enqueue failed.
+    expect(fakeService.upsertAlbum).toHaveBeenCalledTimes(1);
+  });
+
   it("album worker rethrows a systemic error instead of swallowing it", async () => {
     fakeService.upsertAlbum.mockRejectedValue(new Error("connection lost"));
 
