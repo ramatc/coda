@@ -5,6 +5,7 @@ import {
   type OnModuleDestroy,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import type { Job } from "bullmq";
 import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { createBullProducerConnection } from "./catalog-redis.js";
@@ -14,6 +15,7 @@ import {
   CATALOG_ALBUM_QUEUE,
   CATALOG_JOB_OPTIONS,
   CATALOG_PAGE_QUEUE,
+  CHECKPOINT_RUNNING_LOCK_TTL_MS,
   PAGE_JOB_NAME,
   REDIS_URL_ENV,
   albumJobId,
@@ -96,7 +98,22 @@ export class CatalogQueue implements OnModuleDestroy {
       this.logger.log(`Enqueued Spotify seed starting at offset ${offset}`);
       return { offset };
     } catch (err) {
-      await this.checkpointStore.releaseRunningLock(token);
+      // Release failure must NEVER shadow the original error (judgment-day
+      // issue #2, Round 3): if the same underlying Redis problem that caused
+      // `err` also makes `releaseRunningLock` throw, an unguarded call here
+      // would replace the real root cause with the release's exception AND
+      // leave the caller unable to tell whether the lock actually leaked for
+      // the full TTL. Log the release failure separately, then always
+      // rethrow the ORIGINAL error.
+      try {
+        await this.checkpointStore.releaseRunningLock(token);
+      } catch (releaseErr) {
+        this.logger.error(
+          `enqueueSeed failed AND releasing its running lock (token ${token}) also failed — the lock may now be leaking for up to ${CHECKPOINT_RUNNING_LOCK_TTL_MS}ms: ${
+            releaseErr instanceof Error ? releaseErr.message : String(releaseErr)
+          }`,
+        );
+      }
       throw err;
     }
   }
@@ -107,16 +124,26 @@ export class CatalogQueue implements OnModuleDestroy {
    * permanently drop the page (judgment-day issue #1). `lockToken`, when
    * given, rides along in the job data so the page worker can release the
    * SAME running-lock this run acquired once the run ends.
+   *
+   * Revives a stale `failed` job under this id BEFORE calling `add()`
+   * (judgment-day issue #1, Round 3): BullMQ's `Queue.add()` dedupes purely on
+   * Redis key EXISTENCE, which is true for a job in ANY state including
+   * `failed`. Without this, retriggering an import whose checkpoint is parked
+   * at a permanently-failed page's offset would silently return the dead
+   * job's id — no new attempt, no error, no signal — and that page would
+   * never be processed again.
    */
   async enqueuePage(
     offset: number,
     limit: number,
     lockToken?: string,
   ): Promise<void> {
+    const jobId = pageJobId(offset);
+    await this.reviveFailedJob(this.getPageQueue(), jobId);
     await this.getPageQueue().add(
       PAGE_JOB_NAME,
       { offset, limit, lockToken },
-      { ...CATALOG_JOB_OPTIONS, jobId: pageJobId(offset) },
+      { ...CATALOG_JOB_OPTIONS, jobId },
     );
   }
 
@@ -124,14 +151,44 @@ export class CatalogQueue implements OnModuleDestroy {
    * Enqueues a per-album job with the deterministic `album:{spotifyId}` id, so
    * BullMQ dedupes the same album at the queue level (natural dedup, Decision
    * #5), with the same retry/backoff/cleanup policy as page jobs
-   * (judgment-day issue #1).
+   * (judgment-day issue #1). Same stale-`failed`-job revival as
+   * {@link enqueuePage} (judgment-day issue #1, Round 3) — otherwise a
+   * permanently-failed album job would silently block any future re-enqueue
+   * of that same album.
    */
   async enqueueAlbum(album: NormalizedAlbum): Promise<void> {
+    const jobId = albumJobId(album.spotifyId);
+    await this.reviveFailedJob(this.getAlbumQueue(), jobId);
     await this.getAlbumQueue().add(
       ALBUM_JOB_NAME,
       { album },
-      { ...CATALOG_JOB_OPTIONS, jobId: albumJobId(album.spotifyId) },
+      { ...CATALOG_JOB_OPTIONS, jobId },
     );
+  }
+
+  /**
+   * Single choke point for the stale-`failed`-job revival both {@link
+   * enqueuePage} and {@link enqueueAlbum} rely on (judgment-day issue #1,
+   * Round 3). If a job with `jobId` already exists in Redis and is currently
+   * `failed` (i.e. it exhausted `CATALOG_JOB_OPTIONS.attempts` and BullMQ
+   * moved it to the failed set — kept around by `removeOnFail: { count: 5000
+   * }` for inspectability, not deleted), calls BullMQ's own `job.retry()` to
+   * move it back to `waiting` instead of relying on `add()`'s id-based dedup,
+   * which would otherwise return the existing dead job's id without
+   * enqueuing a fresh attempt.
+   */
+  private async reviveFailedJob<T>(
+    queue: Queue<T>,
+    jobId: string,
+  ): Promise<void> {
+    const existing: Job<T> | undefined = await queue.getJob(jobId);
+    if (!existing) {
+      return;
+    }
+    const state = await existing.getState();
+    if (state === "failed") {
+      await existing.retry();
+    }
   }
 
   /**

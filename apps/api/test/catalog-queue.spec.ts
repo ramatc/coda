@@ -26,53 +26,87 @@ interface FakeAddedJob {
   opts: { jobId?: string; attempts?: number; backoff?: unknown; removeOnFail?: unknown };
 }
 
-vi.mock("bullmq", () => {
-  const registry = new Map<string, FakeQueue>();
+/**
+ * Mirrors just enough of a real BullMQ `Job` to prove the stale-`failed`-job
+ * revival (judgment-day issue #1, Round 3): a `state` that a test can force to
+ * `"failed"` (simulating a job that exhausted all its retry attempts), and a
+ * `retry()` that moves it back to `"waiting"` — the same transition BullMQ's
+ * real `job.retry()` performs.
+ */
+class FakeJob {
+  state: "waiting" | "failed" = "waiting";
+  retryCount = 0;
 
-  class FakeQueue {
-    added: FakeAddedJob[] = [];
-    private readonly seenJobIds = new Set<string>();
+  constructor(
+    public readonly id: string,
+    private readonly queue: FakeQueue,
+  ) {}
 
-    constructor(private readonly name: string) {
-      registry.set(name, this);
-    }
-
-    async add(
-      name: string,
-      data: unknown,
-      opts: FakeAddedJob["opts"] = {},
-    ): Promise<{ id?: string }> {
-      // Mirrors BullMQ's deterministic-jobId dedup: re-adding an already-seen
-      // jobId is a no-op that doesn't push a second entry.
-      if (opts.jobId && this.seenJobIds.has(opts.jobId)) {
-        return { id: opts.jobId };
-      }
-      if (opts.jobId) {
-        this.seenJobIds.add(opts.jobId);
-      }
-      this.added.push({ name, data, opts });
-      return { id: opts.jobId };
-    }
-
-    async addBulk(
-      jobs: Array<{ name: string; data: unknown; opts?: FakeAddedJob["opts"] }>,
-    ): Promise<Array<{ id?: string }>> {
-      const results: Array<{ id?: string }> = [];
-      for (const job of jobs) {
-        results.push(await this.add(job.name, job.data, job.opts));
-      }
-      return results;
-    }
-
-    async close(): Promise<void> {}
+  async getState(): Promise<string> {
+    return this.state;
   }
 
+  async retry(): Promise<void> {
+    this.state = "waiting";
+    this.retryCount += 1;
+    this.queue.retriedJobIds.push(this.id);
+  }
+}
+
+class FakeQueue {
+  added: FakeAddedJob[] = [];
+  retriedJobIds: string[] = [];
+  private readonly jobsById = new Map<string, FakeJob>();
+
+  constructor(private readonly name: string) {
+    registry.set(name, this);
+  }
+
+  async add(
+    name: string,
+    data: unknown,
+    opts: FakeAddedJob["opts"] = {},
+  ): Promise<{ id?: string }> {
+    // Mirrors BullMQ's deterministic-jobId dedup: re-adding an already-seen
+    // jobId is a no-op that doesn't push a second entry, REGARDLESS of that
+    // existing job's state (judgment-day issue #1, Round 3) — `EXISTS
+    // jobIdKey` is true for a job in any state, including `failed`.
+    if (opts.jobId && this.jobsById.has(opts.jobId)) {
+      return { id: opts.jobId };
+    }
+    if (opts.jobId) {
+      this.jobsById.set(opts.jobId, new FakeJob(opts.jobId, this));
+    }
+    this.added.push({ name, data, opts });
+    return { id: opts.jobId };
+  }
+
+  async addBulk(
+    jobs: Array<{ name: string; data: unknown; opts?: FakeAddedJob["opts"] }>,
+  ): Promise<Array<{ id?: string }>> {
+    const results: Array<{ id?: string }> = [];
+    for (const job of jobs) {
+      results.push(await this.add(job.name, job.data, job.opts));
+    }
+    return results;
+  }
+
+  async getJob(jobId: string): Promise<FakeJob | undefined> {
+    return this.jobsById.get(jobId);
+  }
+
+  async close(): Promise<void> {}
+}
+
+const registry = new Map<string, FakeQueue>();
+
+vi.mock("bullmq", () => {
   return { Queue: FakeQueue, __queueRegistry: registry };
 });
 
 const { CatalogQueue } = await import("../src/catalog-import/catalog-queue.js");
 const bullmq = (await import("bullmq")) as unknown as {
-  __queueRegistry: Map<string, { added: FakeAddedJob[] }>;
+  __queueRegistry: Map<string, FakeQueue>;
 };
 
 function fakeConfig(): ConfigService {
@@ -105,7 +139,9 @@ function createFakeCheckpoint() {
     async releaseRunningLock(token: string) {
       if (state.lockToken === token) {
         state.lockToken = null;
+        return true;
       }
+      return false;
     },
   } as unknown as SpotifyCheckpointStore;
   return { store, state };
@@ -236,5 +272,63 @@ describe("CatalogQueue", () => {
     // acquire (e.g. from a retried trigger) must succeed rather than being
     // blocked for the full TTL by a leaked lock.
     expect(await failingStore.tryAcquireRunningLock()).not.toBeNull();
+  });
+
+  it("propagates the ORIGINAL enqueue-seed error even if releasing the lock also fails (judgment-day issue #2, Round 3)", async () => {
+    const failingStore: SpotifyCheckpointStore = {
+      ...checkpoint.store,
+      async get() {
+        throw new Error("original root cause: transient redis blip");
+      },
+      async releaseRunningLock() {
+        throw new Error("release also failed: redis still down");
+      },
+    } as unknown as SpotifyCheckpointStore;
+    const failingQueue = new CatalogQueue(fakeConfig(), failingStore);
+
+    // The caller must see the ORIGINAL error, not the release's error.
+    await expect(failingQueue.enqueueSeed(50)).rejects.toThrow(
+      /original root cause/,
+    );
+  });
+
+  describe("stale failed-job revival on retrigger (judgment-day issue #1, Round 3)", () => {
+    it("enqueuePage retries a job that's already in a failed state instead of silently no-op'ing", async () => {
+      await queue.enqueuePage(100, 50);
+      const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
+      const jobId = pageJobId(100);
+      const job = await pageQueue.getJob(jobId);
+      // Simulate BullMQ having moved this job to `failed` after it exhausted
+      // all configured retry attempts.
+      job!.state = "failed";
+
+      // Retriggering (e.g. via a re-run of enqueueSeed) must revive it.
+      await queue.enqueuePage(100, 50);
+
+      expect(await job!.getState()).toBe("waiting");
+      expect(pageQueue.retriedJobIds).toContain(jobId);
+    });
+
+    it("enqueuePage leaves a non-failed job alone (no spurious retry)", async () => {
+      await queue.enqueuePage(100, 50);
+      const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
+
+      await queue.enqueuePage(100, 50);
+
+      expect(pageQueue.retriedJobIds).toHaveLength(0);
+    });
+
+    it("enqueueAlbum retries a job that's already in a failed state instead of silently no-op'ing", async () => {
+      await queue.enqueueAlbum(album("alb-1"));
+      const albumQueue = bullmq.__queueRegistry.get(CATALOG_ALBUM_QUEUE)!;
+      const jobId = albumJobId("alb-1");
+      const job = await albumQueue.getJob(jobId);
+      job!.state = "failed";
+
+      await queue.enqueueAlbum(album("alb-1"));
+
+      expect(await job!.getState()).toBe("waiting");
+      expect(albumQueue.retriedJobIds).toContain(jobId);
+    });
   });
 });
