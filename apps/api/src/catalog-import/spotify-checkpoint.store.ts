@@ -45,15 +45,33 @@ export interface CatalogCheckpointStore {
    * in-memory test fakes — which never exercise two concurrent runs — don't
    * need to implement it.
    *
-   * Returns a unique ownership token on success (or `null` if the lock is
-   * already held) so the caller can prove ownership when releasing it
-   * (judgment-day issue #2) — an unconditional `DEL` in `releaseRunningLock`
-   * would otherwise let a run whose TTL already expired (and was replaced by a
-   * newer run's lock) delete that NEWER run's lock instead of its own.
+   * Both methods are nested under this single optional property, instead of
+   * being two independently-optional top-level methods (judgment-day issue
+   * #6, Round 3): with two separate optional methods, nothing in the type
+   * system stops an implementation from defining one without the other — a
+   * convention, not a guarantee. Bagging both under one optional
+   * `lockSupport` makes "both or neither" a compile-time property: a fake (or
+   * future implementation) either provides the whole guard or none of it.
+   *
+   * `tryAcquireRunningLock` returns a unique ownership token on success (or
+   * `null` if the lock is already held) so the caller can prove ownership
+   * when releasing it (judgment-day issue #2) — an unconditional `DEL` in
+   * `releaseRunningLock` would otherwise let a run whose TTL already expired
+   * (and was replaced by a newer run's lock) delete that NEWER run's lock
+   * instead of its own.
+   *
+   * `releaseRunningLock` releases the marker acquired by
+   * `tryAcquireRunningLock`, iff `token` still owns it, and returns `true`
+   * when this call actually deleted the lock, `false` when it was a no-op
+   * (judgment-day issue #4, Round 3) — e.g. the lock was already gone, or a
+   * different (newer) run now owns it — so callers can distinguish
+   * "released" from "already released or owned by a newer run" instead of
+   * always assuming success.
    */
-  tryAcquireRunningLock?(): Promise<string | null>;
-  /** Releases the marker acquired by `tryAcquireRunningLock`, iff `token` still owns it. */
-  releaseRunningLock?(token: string): Promise<void>;
+  lockSupport?: {
+    tryAcquireRunningLock(): Promise<string | null>;
+    releaseRunningLock(token: string): Promise<boolean>;
+  };
 }
 
 /**
@@ -134,14 +152,36 @@ export class SpotifyCheckpointStore
    * operation (a Lua script via `EVAL`): a plain `GET` followed by a separate
    * `DEL` would itself have a TOCTOU gap where a third party could acquire the
    * lock between the two commands.
+   *
+   * Returns whether THIS call actually deleted the lock (judgment-day issue
+   * #4, Round 3): the Lua script returns `1` on delete, `0` on a no-op (TTL
+   * already expired and/or a different run now owns the lock). Discarding
+   * that signal previously meant every caller — e.g. {@link
+   * CatalogWorker.releaseLockOnPermanentFailure} — unconditionally logged
+   * "released the lock" even when the CAS was actually a no-op.
    */
-  async releaseRunningLock(token: string): Promise<void> {
-    await this.client().eval(
+  async releaseRunningLock(token: string): Promise<boolean> {
+    const deleted = await this.client().eval(
       RELEASE_LOCK_IF_OWNER_SCRIPT,
       1,
       CHECKPOINT_RUNNING_LOCK_KEY,
       token,
     );
+    return deleted === 1;
+  }
+
+  /**
+   * Satisfies {@link CatalogCheckpointStore.lockSupport} (judgment-day issue
+   * #6, Round 3) by wrapping this store's own `tryAcquireRunningLock`/
+   * `releaseRunningLock` methods, which real callers (e.g. `CatalogQueue`,
+   * which is constructed with this concrete class, not the interface) keep
+   * calling directly as top-level methods.
+   */
+  get lockSupport(): NonNullable<CatalogCheckpointStore["lockSupport"]> {
+    return {
+      tryAcquireRunningLock: () => this.tryAcquireRunningLock(),
+      releaseRunningLock: (token: string) => this.releaseRunningLock(token),
+    };
   }
 
   async onModuleDestroy(): Promise<void> {

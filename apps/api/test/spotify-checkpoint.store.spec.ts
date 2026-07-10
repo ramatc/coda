@@ -112,5 +112,34 @@ describe("SpotifyCheckpointStore", () => {
 
       expect(await store.tryAcquireRunningLock()).toBeNull();
     });
+
+    it("resolves true when the release actually deleted the lock (judgment-day issue #4, Round 3)", async () => {
+      const token = await store.tryAcquireRunningLock();
+      await expect(store.releaseRunningLock(token!)).resolves.toBe(true);
+    });
+
+    it("resolves false when the release is a no-op — TTL already gone or owned by a newer run (judgment-day issue #4, Round 3)", async () => {
+      await store.tryAcquireRunningLock();
+      await expect(
+        store.releaseRunningLock("some-other-runs-token"),
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe("lockSupport (judgment-day issue #6, Round 3)", () => {
+    it("exposes both tryAcquireRunningLock and releaseRunningLock together, wired to the same lock", async () => {
+      expect(store.lockSupport).toBeDefined();
+
+      const token = await store.lockSupport.tryAcquireRunningLock();
+      expect(token).toEqual(expect.any(String));
+
+      // Wired to the SAME underlying lock as the top-level methods.
+      expect(await store.tryAcquireRunningLock()).toBeNull();
+
+      await expect(store.lockSupport.releaseRunningLock(token!)).resolves.toBe(
+        true,
+      );
+      expect(await store.tryAcquireRunningLock()).not.toBeNull();
+    });
   });
 });

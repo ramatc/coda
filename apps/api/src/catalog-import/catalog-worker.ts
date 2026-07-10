@@ -13,6 +13,7 @@ import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { createBullConnection } from "./catalog-redis.js";
 import {
   extractUniqueConstraintField,
+  isForeignKeyViolation,
   isUniqueConstraintViolation,
 } from "../prisma/prisma-error.util.js";
 import {
@@ -21,9 +22,6 @@ import {
   REDIS_URL_ENV,
   SPOTIFY_PAGE_LIMIT,
 } from "./catalog-import.constants.js";
-
-/** Prisma error code for a foreign-key constraint violation. */
-const FOREIGN_KEY_VIOLATION = "P2003";
 
 /**
  * Standalone consumer process for the Spotify bulk seed (Decision #4: workers
@@ -109,10 +107,7 @@ async function bootstrap(): Promise<void> {
           );
           return;
         }
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === FOREIGN_KEY_VIOLATION
-        ) {
+        if (isForeignKeyViolation(err)) {
           logger.warn(
             `Skipping album ${job.data.album.spotifyId} due to a foreign key violation: ${err.message}`,
           );
@@ -149,10 +144,16 @@ async function bootstrap(): Promise<void> {
       return;
     }
     try {
-      await checkpoint.releaseRunningLock(job.data.lockToken);
-      logger.warn(
-        `Page job ${job.id} exhausted all ${maxAttempts} attempts — released the running lock so a new run can start.`,
-      );
+      const released = await checkpoint.releaseRunningLock(job.data.lockToken);
+      if (released) {
+        logger.warn(
+          `Page job ${job.id} exhausted all ${maxAttempts} attempts — released the running lock so a new run can start.`,
+        );
+      } else {
+        logger.warn(
+          `Page job ${job.id} exhausted all ${maxAttempts} attempts, but its running lock was already released or is now owned by a newer run — no action taken.`,
+        );
+      }
     } catch (releaseErr) {
       logger.error(
         `Failed to release the running lock after page job ${job.id}'s permanent failure: ${

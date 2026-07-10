@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Logger } from "@nestjs/common";
 import { Prisma } from "@coda/db";
 import {
   CATALOG_ALBUM_QUEUE,
@@ -88,7 +89,11 @@ describe("catalog-worker bootstrap", () => {
   const fakeCheckpoint = {
     clear: vi.fn().mockResolvedValue(undefined),
     set: vi.fn().mockResolvedValue(undefined),
-    releaseRunningLock: vi.fn().mockResolvedValue(undefined),
+    // Real `SpotifyCheckpointStore.releaseRunningLock` now resolves to a
+    // boolean (judgment-day issue #4, Round 3): `true` when this call
+    // actually deleted the lock. Defaulting the fake to `true` mirrors the
+    // common case; individual tests override it to prove the `false` branch.
+    releaseRunningLock: vi.fn().mockResolvedValue(true),
   };
 
   let pageProcessor: (job: FakeJob<{ offset: number; limit: number }>) => Promise<unknown>;
@@ -133,7 +138,7 @@ describe("catalog-worker bootstrap", () => {
     fakeQueue.enqueuePage.mockResolvedValue(undefined);
     fakeCheckpoint.clear.mockResolvedValue(undefined);
     fakeCheckpoint.set.mockResolvedValue(undefined);
-    fakeCheckpoint.releaseRunningLock.mockResolvedValue(undefined);
+    fakeCheckpoint.releaseRunningLock.mockResolvedValue(true);
   });
 
   it("creates a dedicated Redis connection per Worker instead of sharing one", () => {
@@ -276,6 +281,44 @@ describe("catalog-worker bootstrap", () => {
       await new Promise((resolve) => setImmediate(resolve));
 
       expect(fakeCheckpoint.releaseRunningLock).not.toHaveBeenCalled();
+    });
+
+    it("logs a 'released' message when releaseRunningLock actually deleted the lock (judgment-day issue #4, Round 3)", async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, "warn");
+      fakeCheckpoint.releaseRunningLock.mockResolvedValueOnce(true);
+      const job = {
+        id: "spotify-page:0",
+        data: { lockToken: "run-token" },
+        attemptsMade: 5,
+        opts: { attempts: 5 },
+      };
+
+      pageFailedHandler(job, new Error("sustained outage"));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("released the running lock so a new run can start"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("logs a distinct 'already released or owned by a newer run' warning when releaseRunningLock was a no-op (judgment-day issue #4, Round 3)", async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, "warn");
+      fakeCheckpoint.releaseRunningLock.mockResolvedValueOnce(false);
+      const job = {
+        id: "spotify-page:0",
+        data: { lockToken: "run-token" },
+        attemptsMade: 5,
+        opts: { attempts: 5 },
+      };
+
+      pageFailedHandler(job, new Error("sustained outage"));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("already released or is now owned by a newer run"),
+      );
+      warnSpy.mockRestore();
     });
   });
 });

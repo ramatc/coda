@@ -3,6 +3,9 @@ import { Prisma } from "@coda/db";
 /** Prisma error code for a unique-constraint violation. */
 export const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
 
+/** Prisma error code for a foreign-key constraint violation. */
+export const FOREIGN_KEY_VIOLATION = "P2003";
+
 /**
  * Extracts the conflicting column name from a P2002 error thrown by this
  * project's Prisma 7 client, which ALWAYS runs on the `@prisma/adapter-pg`
@@ -53,5 +56,21 @@ export function isUniqueConstraintViolation(
   return (
     err instanceof Prisma.PrismaClientKnownRequestError &&
     err.code === UNIQUE_CONSTRAINT_VIOLATION
+  );
+}
+
+/**
+ * Type guard for a P2003 foreign-key-constraint violation from this project's
+ * Prisma client. Hoisted here (judgment-day issue #5, Round 3) so both
+ * `catalog-import.service.ts` and `catalog-worker.ts` share a single source of
+ * truth instead of each redeclaring `const FOREIGN_KEY_VIOLATION = "P2003"`
+ * locally.
+ */
+export function isForeignKeyViolation(
+  err: unknown,
+): err is Prisma.PrismaClientKnownRequestError {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === FOREIGN_KEY_VIOLATION
   );
 }

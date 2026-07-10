@@ -3,6 +3,7 @@ import { Prisma } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
 import {
   extractUniqueConstraintField,
+  isForeignKeyViolation,
   isUniqueConstraintViolation,
 } from "../prisma/prisma-error.util.js";
 import { SpotifyClient } from "./spotify.client.js";
@@ -10,9 +11,6 @@ import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";
 import type { CatalogCheckpointStore } from "./spotify-checkpoint.store.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
-
-/** Prisma error code for a foreign-key constraint violation. */
-const FOREIGN_KEY_VIOLATION = "P2003";
 
 /**
  * Sentinel token returned by {@link CatalogImportService.tryAcquireRunningLock}
@@ -162,10 +160,7 @@ export class CatalogImportService {
           );
           continue;
         }
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === FOREIGN_KEY_VIOLATION
-        ) {
+        if (isForeignKeyViolation(err)) {
           this.logger.warn(
             `Skipping album ${album.spotifyId} due to a foreign key violation: ${err.message}`,
           );
@@ -235,18 +230,18 @@ export class CatalogImportService {
    * Acquires the shared running-lock marker if the given checkpoint store
    * supports it (real {@link SpotifyCheckpointStore} instances do; in-memory
    * test fakes may omit it since single-run unit tests never race two
-   * imports — see the optional methods on {@link CatalogCheckpointStore}).
-   * Returns the ownership token to thread through to {@link releaseRunningLock}
+   * imports — see {@link CatalogCheckpointStore.lockSupport}). Returns the
+   * ownership token to thread through to {@link releaseRunningLock}
    * (judgment-day issue #2), or {@link NO_LOCK_SUPPORT_TOKEN} when the
    * checkpoint doesn't implement the guard at all.
    */
   private async tryAcquireRunningLock(
     checkpoint: CatalogCheckpointStore,
   ): Promise<string | null> {
-    if (typeof checkpoint.tryAcquireRunningLock !== "function") {
+    if (!checkpoint.lockSupport) {
       return NO_LOCK_SUPPORT_TOKEN;
     }
-    return checkpoint.tryAcquireRunningLock();
+    return checkpoint.lockSupport.tryAcquireRunningLock();
   }
 
   /**
@@ -258,8 +253,8 @@ export class CatalogImportService {
     checkpoint: CatalogCheckpointStore,
     token: string,
   ): Promise<void> {
-    if (typeof checkpoint.releaseRunningLock === "function") {
-      await checkpoint.releaseRunningLock(token);
+    if (checkpoint.lockSupport) {
+      await checkpoint.lockSupport.releaseRunningLock(token);
     }
   }
 }
