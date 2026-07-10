@@ -50,15 +50,19 @@ export interface RunImportOptions {
  *    trigger, no separate worker process) and mirrored by the BullMQ page worker
  *    for the distributed path.
  *
- * `queue` is an OPTIONAL, injected `CatalogQueue` (judgment-day issue #1): when
- * present, {@link importPage} enqueues a MusicBrainz enrichment job for each
- * album it successfully upserts — mirroring exactly what `catalog-worker.ts`'s
- * album Worker already does after its own `upsertAlbum` call — so the CLI
- * `seed:catalog` path enriches too, not just the distributed queue path.
- * Keeping it optional (rather than a hard constructor requirement) preserves
- * the resume-without-duplicates guarantee's unit-testability against fakes,
- * without a live Redis, BullMQ, or Postgres (sandbox convention from PR1-3) —
- * tests that don't care about enrichment simply omit it.
+ * `queue` is a type-OPTIONAL, injected `CatalogQueue` parameter (judgment-day
+ * issue #1): when present, {@link importPage} enqueues a MusicBrainz
+ * enrichment job for each album it successfully upserts — mirroring exactly
+ * what `catalog-worker.ts`'s album Worker already does after its own
+ * `upsertAlbum` call — so the CLI `seed:catalog` path enriches too, not just
+ * the distributed queue path. `CatalogQueue` is a registered provider in this
+ * module with no `@Optional()` decorator, so in production Nest's DI ALWAYS
+ * resolves and injects it — there is no supported "enrichment-disabled"
+ * deployment mode. The `?` on the constructor parameter exists purely for
+ * test-construction convenience: it preserves the resume-without-duplicates
+ * guarantee's unit-testability against fakes, without a live Redis, BullMQ,
+ * or Postgres (sandbox convention from PR1-3) — tests that don't care about
+ * enrichment simply omit it by passing fewer constructor args.
  */
 @Injectable()
 export class CatalogImportService {
