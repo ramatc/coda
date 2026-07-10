@@ -2,13 +2,16 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@coda/db";
 import {
   CATALOG_ALBUM_QUEUE,
+  CATALOG_ENRICH_QUEUE,
   CATALOG_PAGE_QUEUE,
+  MUSICBRAINZ_RATE_LIMIT,
 } from "../src/catalog-import/catalog-import.constants.js";
 import { ConfigService } from "@nestjs/config";
 import { CatalogImportService } from "../src/catalog-import/catalog-import.service.js";
 import { CatalogQueue } from "../src/catalog-import/catalog-queue.js";
 import { SpotifyClient } from "../src/catalog-import/spotify.client.js";
 import { SpotifyCheckpointStore } from "../src/catalog-import/spotify-checkpoint.store.js";
+import { MusicBrainzEnrichService } from "../src/catalog-import/musicbrainz-enrich.service.js";
 import type { NormalizedAlbum } from "../src/catalog-import/spotify.types.js";
 
 /**
@@ -37,6 +40,7 @@ vi.mock("../src/catalog-import/catalog-redis.js", () => ({
 const workerInstances: Array<{
   queueName: string;
   processor: (job: FakeJob<unknown>) => Promise<unknown>;
+  options: { limiter?: { max: number; duration: number } } | undefined;
   handlers: Record<string, (...args: unknown[]) => unknown>;
 }> = [];
 
@@ -47,8 +51,14 @@ vi.mock("bullmq", () => {
     constructor(
       queueName: string,
       processor: (job: FakeJob<unknown>) => Promise<unknown>,
+      options?: { limiter?: { max: number; duration: number } },
     ) {
-      workerInstances.push({ queueName, processor, handlers: this.handlers });
+      workerInstances.push({
+        queueName,
+        processor,
+        options,
+        handlers: this.handlers,
+      });
     }
     on(event: string, handler: (...args: unknown[]) => unknown): this {
       this.handlers[event] = handler;
@@ -81,9 +91,13 @@ function album(spotifyId: string): NormalizedAlbum {
 describe("catalog-worker bootstrap", () => {
   const fakeSpotify = { getAlbumPage: vi.fn() };
   const fakeService = { upsertAlbum: vi.fn().mockResolvedValue(undefined) };
+  const fakeEnrichService = {
+    enrichAlbum: vi.fn().mockResolvedValue({ status: "enriched" }),
+  };
   const fakeQueue = {
     enqueueAlbums: vi.fn().mockResolvedValue(undefined),
     enqueuePage: vi.fn().mockResolvedValue(undefined),
+    enqueueEnrichment: vi.fn().mockResolvedValue(undefined),
   };
   const fakeCheckpoint = {
     clear: vi.fn().mockResolvedValue(undefined),
@@ -92,6 +106,10 @@ describe("catalog-worker bootstrap", () => {
 
   let pageProcessor: (job: FakeJob<{ offset: number; limit: number }>) => Promise<unknown>;
   let albumProcessor: (job: FakeJob<{ album: NormalizedAlbum }>) => Promise<unknown>;
+  let enrichProcessor: (job: FakeJob<{ spotifyId: string }>) => Promise<unknown>;
+  let enrichWorkerOptions:
+    | { limiter?: { max: number; duration: number } }
+    | undefined;
   let connectionCallsDuringBootstrap = 0;
 
   beforeAll(async () => {
@@ -99,6 +117,7 @@ describe("catalog-worker bootstrap", () => {
     providers.set(ConfigService, { get: () => undefined });
     providers.set(SpotifyClient, fakeSpotify);
     providers.set(CatalogImportService, fakeService);
+    providers.set(MusicBrainzEnrichService, fakeEnrichService);
     providers.set(CatalogQueue, fakeQueue);
     providers.set(SpotifyCheckpointStore, fakeCheckpoint);
 
@@ -120,6 +139,11 @@ describe("catalog-worker bootstrap", () => {
       .processor as typeof pageProcessor;
     albumProcessor = workerInstances.find((w) => w.queueName === CATALOG_ALBUM_QUEUE)!
       .processor as typeof albumProcessor;
+    const enrichWorker = workerInstances.find(
+      (w) => w.queueName === CATALOG_ENRICH_QUEUE,
+    )!;
+    enrichProcessor = enrichWorker.processor as typeof enrichProcessor;
+    enrichWorkerOptions = enrichWorker.options;
   });
 
   beforeEach(() => {
@@ -128,14 +152,17 @@ describe("catalog-worker bootstrap", () => {
     // see calls from a previous test.
     vi.clearAllMocks();
     fakeService.upsertAlbum.mockResolvedValue(undefined);
+    fakeEnrichService.enrichAlbum.mockResolvedValue({ status: "enriched" });
     fakeQueue.enqueueAlbums.mockResolvedValue(undefined);
     fakeQueue.enqueuePage.mockResolvedValue(undefined);
+    fakeQueue.enqueueEnrichment.mockResolvedValue(undefined);
     fakeCheckpoint.clear.mockResolvedValue(undefined);
     fakeCheckpoint.set.mockResolvedValue(undefined);
   });
 
   it("creates a dedicated Redis connection per Worker instead of sharing one", () => {
-    expect(connectionCallsDuringBootstrap).toBe(2);
+    // page + album + enrich = 3 dedicated connections.
+    expect(connectionCallsDuringBootstrap).toBe(3);
   });
 
   it("fans out a page's albums via the bulk enqueue, then enqueues the next page BEFORE advancing the checkpoint", async () => {
@@ -180,6 +207,13 @@ describe("catalog-worker bootstrap", () => {
     expect(fakeQueue.enqueuePage).not.toHaveBeenCalled();
   });
 
+  it("album worker chains MusicBrainz enrichment after a successful upsert (PR6)", async () => {
+    await albumProcessor({ data: { album: album("a1") } });
+
+    expect(fakeService.upsertAlbum).toHaveBeenCalledTimes(1);
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledWith("a1");
+  });
+
   it("album worker skips a malformed record (Prisma validation error) instead of failing the job", async () => {
     fakeService.upsertAlbum.mockRejectedValue(
       new Prisma.PrismaClientValidationError("bad shape", { clientVersion: "test" }),
@@ -188,6 +222,8 @@ describe("catalog-worker bootstrap", () => {
     await expect(
       albumProcessor({ data: { album: album("bad") } }),
     ).resolves.toBeUndefined();
+    // A skipped album must NOT be chained into enrichment.
+    expect(fakeQueue.enqueueEnrichment).not.toHaveBeenCalled();
   });
 
   it("album worker skips a P2002 unique-constraint conflict instead of failing the job (judgment-day issue #7)", async () => {
@@ -222,5 +258,39 @@ describe("catalog-worker bootstrap", () => {
     await expect(
       albumProcessor({ data: { album: album("x") } }),
     ).rejects.toThrow(/connection lost/);
+  });
+
+  it("configures the enrich Worker with the ≤1 req/s BullMQ limiter (queue-level half of the rate guard)", () => {
+    expect(enrichWorkerOptions?.limiter).toEqual(MUSICBRAINZ_RATE_LIMIT);
+    expect(MUSICBRAINZ_RATE_LIMIT).toEqual({ max: 1, duration: 1100 });
+  });
+
+  it("enrich worker delegates to the enrich service by spotify id", async () => {
+    await enrichProcessor({ data: { spotifyId: "sp1" } });
+
+    expect(fakeEnrichService.enrichAlbum).toHaveBeenCalledWith("sp1");
+  });
+
+  it("enrich worker skips a P2002 (mbid already claimed) instead of failing the job", async () => {
+    fakeEnrichService.enrichAlbum.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("mbid taken", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+
+    await expect(
+      enrichProcessor({ data: { spotifyId: "dup" } }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("enrich worker rethrows a systemic error so BullMQ retry/backoff applies", async () => {
+    fakeEnrichService.enrichAlbum.mockRejectedValue(
+      new Error("musicbrainz unreachable"),
+    );
+
+    await expect(
+      enrichProcessor({ data: { spotifyId: "sp1" } }),
+    ).rejects.toThrow(/musicbrainz unreachable/);
   });
 });
