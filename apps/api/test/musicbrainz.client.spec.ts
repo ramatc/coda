@@ -89,7 +89,12 @@ describe("MusicBrainzClient", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
         "release-groups": [
-          { id: "rg", "artist-credit": [], tags: [{ name: "Indie", count: 2 }] },
+          {
+            id: "rg",
+            score: 100,
+            "artist-credit": [],
+            tags: [{ name: "Indie", count: 2 }],
+          },
         ],
       }),
     );
@@ -120,6 +125,20 @@ describe("MusicBrainzClient", () => {
     );
 
     expect(await makeClient().lookupAlbum("Greatest Hits", "Various")).toBeNull();
+  });
+
+  // judgment-day issue #4, round 2: a candidate missing `score` entirely must
+  // not silently bypass the confidence threshold by defaulting to accept.
+  it("rejects a top candidate with a missing score field, treating it as no-match", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        "release-groups": [{ id: "rg-no-score", "artist-credit": [] }],
+      }),
+    );
+
+    expect(
+      await makeClient().lookupAlbum("Ambiguous Title", "Some Artist"),
+    ).toBeNull();
   });
 
   it("accepts a top candidate exactly at the minimum score threshold", async () => {

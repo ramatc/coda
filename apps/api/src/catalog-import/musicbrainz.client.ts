@@ -105,7 +105,18 @@ export class MusicBrainzClient {
     if (!best?.id) {
       return null;
     }
-    if (best.score !== undefined && best.score < MIN_MATCH_SCORE) {
+    if (best.score === undefined) {
+      // A missing `score` on this query-based search response (judgment-day
+      // issue #4, round 2) must NOT be treated as an implicit pass — that would
+      // silently bypass the confidence threshold above. Treat it as suspicious
+      // and reject it the same as a below-threshold score.
+      this.logger.warn(
+        `Rejecting MusicBrainz match ${best.id} for "${title}" — missing ` +
+          `"score" on the search response; treating as no-match`,
+      );
+      return null;
+    }
+    if (best.score < MIN_MATCH_SCORE) {
       this.logger.warn(
         `Rejecting low-confidence MusicBrainz match ${best.id} for "${title}" ` +
           `(score ${best.score} < ${MIN_MATCH_SCORE}); treating as no-match`,
