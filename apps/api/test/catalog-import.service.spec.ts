@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Logger } from "@nestjs/common";
 import { Prisma } from "@coda/db";
 import { CatalogImportService } from "../src/catalog-import/catalog-import.service.js";
 import {
@@ -276,7 +277,7 @@ describe("CatalogImportService", () => {
 
     const result = await service.importPage(0, 2);
 
-    expect(result).toEqual({ processed: 2, nextOffset: null });
+    expect(result).toEqual({ processed: 2, nextOffset: null, enqueueFailures: 0 });
   });
 
   it("importPage skips a P2003 foreign-key violation on a single album instead of aborting the whole page (judgment-day issue #7)", async () => {
@@ -317,7 +318,7 @@ describe("CatalogImportService", () => {
 
     const result = await service.importPage(0, 2);
 
-    expect(result).toEqual({ processed: 2, nextOffset: null });
+    expect(result).toEqual({ processed: 2, nextOffset: null, enqueueFailures: 0 });
   });
 
   it("chains MusicBrainz enrichment after each successfully-upserted album on the CLI/in-process path (judgment-day issue #1)", async () => {
@@ -331,7 +332,7 @@ describe("CatalogImportService", () => {
 
     const result = await service.importPage(0, 2);
 
-    expect(result).toEqual({ processed: 2, nextOffset: 2 });
+    expect(result).toEqual({ processed: 2, nextOffset: 2, enqueueFailures: 0 });
     expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledTimes(2);
     expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(1, "alb-0");
     expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(2, "alb-1");
@@ -397,12 +398,84 @@ describe("CatalogImportService", () => {
     // report both albums processed and proceed to enqueue alb-1.
     const result = await service.importPage(0, 2);
 
-    expect(result).toEqual({ processed: 2, nextOffset: 2 });
+    expect(result).toEqual({ processed: 2, nextOffset: 2, enqueueFailures: 1 });
     expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledTimes(2);
     expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(1, "alb-0");
     expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(2, "alb-1");
     // Both albums still persisted despite the queue failure on the first.
     expect(fakePrisma.albums.size).toBe(2);
+  });
+
+  it("escalates to logger.error when enqueueEnrichment fails for EVERY album in the run — a 100% failure signals a down/misconfigured enrich queue, not per-album blips (judgment-day issue #1, round 3)", async () => {
+    const errorSpy = vi
+      .spyOn(Logger.prototype, "error")
+      .mockImplementation(() => undefined);
+    const fakeQueue = createFakeQueue();
+    fakeQueue.enqueueEnrichment.mockRejectedValue(
+      new Error("simulated Redis connection down"),
+    );
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.runImport();
+
+    expect(result.processed).toBe(5);
+    expect(result.enqueueFailures).toBe(5);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Enrichment enqueueing failed for ALL 5 albums this run",
+      ),
+    );
+
+    errorSpy.mockRestore();
+  });
+
+  it("does NOT escalate to logger.error on a partial enqueueEnrichment failure — distinguishable from the 100%-failure case (judgment-day issue #1, round 3)", async () => {
+    const errorSpy = vi
+      .spyOn(Logger.prototype, "error")
+      .mockImplementation(() => undefined);
+    const fakeQueue = createFakeQueue();
+    fakeQueue.enqueueEnrichment
+      .mockRejectedValueOnce(new Error("simulated one-off Redis blip"))
+      .mockResolvedValue(undefined);
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.runImport();
+
+    expect(result.processed).toBe(5);
+    expect(result.enqueueFailures).toBe(1);
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+  });
+
+  it("does NOT escalate to logger.error when there are zero enqueueEnrichment failures", async () => {
+    const errorSpy = vi
+      .spyOn(Logger.prototype, "error")
+      .mockImplementation(() => undefined);
+    const fakeQueue = createFakeQueue();
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.runImport();
+
+    expect(result.enqueueFailures).toBe(0);
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
   });
 
   it("skips enrichment chaining entirely when no queue is injected (backward compatible)", async () => {
@@ -415,6 +488,7 @@ describe("CatalogImportService", () => {
     await expect(service.importPage(0, 2)).resolves.toEqual({
       processed: 2,
       nextOffset: 2,
+      enqueueFailures: 0,
     });
   });
 

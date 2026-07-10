@@ -18,6 +18,11 @@ export interface ImportPageResult {
   processed: number;
   /** Offset of the next page, or `null` when this was the final page. */
   nextOffset: number | null;
+  /**
+   * How many `enqueueEnrichment` calls failed on this page (judgment-day
+   * issue #1, round 3). Always `0` when no {@link CatalogQueue} is injected.
+   */
+  enqueueFailures: number;
 }
 
 export interface RunImportResult {
@@ -25,6 +30,15 @@ export interface RunImportResult {
   processed: number;
   /** How many pages were fetched. */
   pages: number;
+  /**
+   * Total `enqueueEnrichment` failures across every page of this run
+   * (judgment-day issue #1, round 3) — the aggregate signal an operator needs
+   * to detect a total enrichment-queue outage that per-album WARN logs alone
+   * would bury. When this equals {@link processed} and `processed > 0`, EVERY
+   * album this run failed to enqueue for enrichment, and {@link runImport}
+   * escalates that case to `logger.error`.
+   */
+  enqueueFailures: number;
 }
 
 export interface RunImportOptions {
@@ -52,17 +66,26 @@ export interface RunImportOptions {
  *
  * `queue` is a type-OPTIONAL, injected `CatalogQueue` parameter (judgment-day
  * issue #1): when present, {@link importPage} enqueues a MusicBrainz
- * enrichment job for each album it successfully upserts — mirroring exactly
- * what `catalog-worker.ts`'s album Worker already does after its own
- * `upsertAlbum` call — so the CLI `seed:catalog` path enriches too, not just
- * the distributed queue path. `CatalogQueue` is a registered provider in this
- * module with no `@Optional()` decorator, so in production Nest's DI ALWAYS
- * resolves and injects it — there is no supported "enrichment-disabled"
- * deployment mode. The `?` on the constructor parameter exists purely for
- * test-construction convenience: it preserves the resume-without-duplicates
- * guarantee's unit-testability against fakes, without a live Redis, BullMQ,
- * or Postgres (sandbox convention from PR1-3) — tests that don't care about
- * enrichment simply omit it by passing fewer constructor args.
+ * enrichment job for each album it successfully upserts — the same chaining
+ * `catalog-worker.ts`'s album Worker does after its own `upsertAlbum` call —
+ * so the CLI `seed:catalog` path enriches too, not just the distributed queue
+ * path. The two paths are deliberately NOT identical on an enqueue failure,
+ * though (judgment-day issue #1, round 3): {@link importPage} wraps its
+ * `enqueueEnrichment` call in a try/catch and logs-and-continues, because a
+ * CLI run has no built-in retry once the process exits — propagating would
+ * abort the whole run over a transient queue hiccup. `catalog-worker.ts`'s
+ * album Worker deliberately leaves the equivalent call UNWRAPPED instead, so
+ * a failure fails that BullMQ job and gets BullMQ's own retry/backoff plus
+ * failed-job-set visibility rather than a swallowed log line — see the
+ * comment at that call site for the full reasoning. `CatalogQueue` is a
+ * registered provider in this module with no `@Optional()` decorator, so in
+ * production Nest's DI ALWAYS resolves and injects it — there is no
+ * supported "enrichment-disabled" deployment mode. The `?` on the
+ * constructor parameter exists purely for test-construction convenience: it
+ * preserves the resume-without-duplicates guarantee's unit-testability
+ * against fakes, without a live Redis, BullMQ, or Postgres (sandbox
+ * convention from PR1-3) — tests that don't care about enrichment simply
+ * omit it by passing fewer constructor args.
  */
 @Injectable()
 export class CatalogImportService {
@@ -145,13 +168,17 @@ export class CatalogImportService {
    * that didn't persist never gets enqueued for enrichment. The enqueue call
    * itself is error-isolated too (judgment-day issue #1, round 2): a transient
    * queue-producer failure is logged and skipped rather than propagating and
-   * aborting the rest of the run.
+   * aborting the rest of the run. Each such failure also increments the
+   * returned {@link ImportPageResult.enqueueFailures} counter (judgment-day
+   * issue #1, round 3) so {@link runImport} can detect a total, run-wide
+   * enrichment-enqueue outage that per-album WARN logs alone would bury.
    */
   async importPage(
     offset: number,
     limit: number = SPOTIFY_PAGE_LIMIT,
   ): Promise<ImportPageResult> {
     const page = await this.spotify.getAlbumPage(offset, limit);
+    let enqueueFailures = 0;
     for (const album of page.albums) {
       try {
         await this.upsertAlbum(album);
@@ -187,6 +214,7 @@ export class CatalogImportService {
         try {
           await this.queue.enqueueEnrichment(album.spotifyId);
         } catch (err) {
+          enqueueFailures += 1;
           this.logger.warn(
             `Failed to enqueue enrichment for album ${album.spotifyId}: ` +
               `${err instanceof Error ? err.message : String(err)}`,
@@ -194,7 +222,11 @@ export class CatalogImportService {
         }
       }
     }
-    return { processed: page.albums.length, nextOffset: page.nextOffset };
+    return {
+      processed: page.albums.length,
+      nextOffset: page.nextOffset,
+      enqueueFailures,
+    };
   }
 
   /**
@@ -208,6 +240,16 @@ export class CatalogImportService {
    * at a time (via this CLI script or the admin endpoint) — there is no
    * distributed lock preventing a concurrent run, and no automatic recovery
    * for a permanently-failed BullMQ job; an operator retries those manually.
+   *
+   * Aggregates each page's {@link ImportPageResult.enqueueFailures} into a
+   * run-wide total (judgment-day issue #1, round 3): `importPage`'s per-album
+   * try/catch only logs a WARN per failure, which an operator not tailing logs
+   * would never see — so this method's final summary always reports the
+   * count, and when EVERY album in the run failed to enqueue (100% failure,
+   * the signature of a down/misconfigured enrich-queue Redis connection for
+   * the whole run rather than an isolated blip) it escalates to `logger.error`
+   * with an explicit message instead of leaving the run looking like a clean
+   * success.
    */
   async runImport(options: RunImportOptions = {}): Promise<RunImportResult> {
     const limit = options.limit ?? SPOTIFY_PAGE_LIMIT;
@@ -217,10 +259,12 @@ export class CatalogImportService {
 
     let processed = 0;
     let pages = 0;
+    let enqueueFailures = 0;
     for (;;) {
       const result = await this.importPage(offset, limit);
       processed += result.processed;
       pages += 1;
+      enqueueFailures += result.enqueueFailures;
 
       if (result.nextOffset === null) {
         // Import finished cleanly — drop the cursor so the next run starts fresh.
@@ -234,8 +278,19 @@ export class CatalogImportService {
     }
 
     this.logger.log(
-      `Spotify import complete: ${processed} albums across ${pages} pages`,
+      `Spotify import complete: ${processed} albums across ${pages} pages, ` +
+        `${enqueueFailures} enrichment enqueue failures`,
     );
-    return { processed, pages };
+    if (processed > 0 && enqueueFailures === processed) {
+      // Every single album this run failed to enqueue for enrichment — almost
+      // certainly the enrich queue's Redis connection being down/misconfigured
+      // for the WHOLE run, not isolated per-album blips. A plain WARN per
+      // album buries this; escalate so it can't be missed in the run summary.
+      this.logger.error(
+        `Enrichment enqueueing failed for ALL ${processed} albums this run — ` +
+          `check the enrich queue's Redis connection.`,
+      );
+    }
+    return { processed, pages, enqueueFailures };
   }
 }
