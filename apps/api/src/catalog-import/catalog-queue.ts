@@ -7,6 +7,7 @@ import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import {
   ALBUM_JOB_NAME,
   CATALOG_ALBUM_QUEUE,
+  CATALOG_ENRICH_JOB_OPTIONS,
   CATALOG_ENRICH_QUEUE,
   CATALOG_JOB_OPTIONS,
   CATALOG_PAGE_QUEUE,
@@ -120,12 +121,17 @@ export class CatalogQueue implements OnModuleDestroy {
    * by the album worker AFTER a successful upsert, so only albums that actually
    * persisted get chained into the rate-limited enrichment leg. The deterministic
    * `mbenrich:{spotifyId}` job id dedupes re-enqueues (resume / overlapping pages).
+   *
+   * Uses {@link CATALOG_ENRICH_JOB_OPTIONS} (NOT the shared page/album
+   * {@link CATALOG_JOB_OPTIONS}) — its wider `removeOnComplete` keeps this
+   * deterministic job id dedupe-able for far longer, appropriate for a job that
+   * costs a scarce, rate-limited MusicBrainz call (judgment-day issue #4).
    */
   async enqueueEnrichment(spotifyId: string): Promise<void> {
     await this.getEnrichQueue().add(
       ENRICH_JOB_NAME,
       { spotifyId },
-      { ...CATALOG_JOB_OPTIONS, jobId: enrichJobId(spotifyId) },
+      { ...CATALOG_ENRICH_JOB_OPTIONS, jobId: enrichJobId(spotifyId) },
     );
   }
 

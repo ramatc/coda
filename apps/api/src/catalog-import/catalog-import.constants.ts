@@ -135,6 +135,25 @@ export const CATALOG_JOB_OPTIONS: JobsOptions = {
 };
 
 /**
+ * BullMQ retry/cleanup policy for the MusicBrainz enrichment queue specifically
+ * (judgment-day issue #4, Round 4+). Reusing {@link CATALOG_JOB_OPTIONS} verbatim
+ * under-retains completed jobs for this queue: page/album jobs are cheap and
+ * plentiful, but each enrich job costs a scarce, rate-limited MusicBrainz call
+ * (≤1 req/s), so there are comparatively far fewer of them and each is far more
+ * expensive to redo. A much larger `removeOnComplete` keeps the deterministic
+ * `mbenrich:{spotifyId}` job id dedupe-able for a realistic ~100k-album seed run
+ * instead of aging out after only 1000 completions and silently reopening the
+ * door to a wasted re-lookup. `attempts`/`backoff`/`removeOnFail` stay identical
+ * to {@link CATALOG_JOB_OPTIONS} — only the completed-job retention widens.
+ */
+export const CATALOG_ENRICH_JOB_OPTIONS: JobsOptions = {
+  attempts: 5,
+  backoff: { type: "exponential", delay: 2000 },
+  removeOnComplete: { count: 50000 },
+  removeOnFail: { count: 5000 },
+};
+
+/**
  * Deterministic per-album job id (`album:{spotifyId}`). Passing this as BullMQ's
  * `jobId` makes re-enqueuing the same album a no-op at the queue level — the
  * natural-dedup guarantee the resume path relies on.

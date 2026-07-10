@@ -3,7 +3,9 @@ import type { ConfigService } from "@nestjs/config";
 import {
   ALBUM_JOB_NAME,
   CATALOG_ALBUM_QUEUE,
+  CATALOG_ENRICH_JOB_OPTIONS,
   CATALOG_ENRICH_QUEUE,
+  CATALOG_JOB_OPTIONS,
   CATALOG_PAGE_QUEUE,
   ENRICH_JOB_NAME,
   PAGE_JOB_NAME,
@@ -25,7 +27,13 @@ vi.mock("../src/catalog-import/catalog-redis.js", () => ({
 interface FakeAddedJob {
   name: string;
   data: unknown;
-  opts: { jobId?: string; attempts?: number; backoff?: unknown; removeOnFail?: unknown };
+  opts: {
+    jobId?: string;
+    attempts?: number;
+    backoff?: unknown;
+    removeOnFail?: unknown;
+    removeOnComplete?: unknown;
+  };
 }
 
 class FakeQueue {
@@ -179,6 +187,19 @@ describe("CatalogQueue", () => {
     expect(job.opts.jobId).toBe(enrichJobId("alb-1"));
     expect(job.opts.attempts).toBeGreaterThan(1);
     expect(job.opts.backoff).toBeDefined();
+  });
+
+  it("uses a wider removeOnComplete retention for the enrich queue than the shared page/album policy (judgment-day issue #4)", async () => {
+    await queue.enqueueEnrichment("alb-1");
+
+    const enrichQueue = bullmq.__queueRegistry.get(CATALOG_ENRICH_QUEUE)!;
+    const job = enrichQueue.added[0];
+    expect(job.opts.removeOnComplete).toEqual(
+      CATALOG_ENRICH_JOB_OPTIONS.removeOnComplete,
+    );
+    expect(job.opts.removeOnComplete).not.toEqual(
+      CATALOG_JOB_OPTIONS.removeOnComplete,
+    );
   });
 
   it("dedupes re-enqueuing enrichment for the same album (deterministic jobId no-op)", async () => {
