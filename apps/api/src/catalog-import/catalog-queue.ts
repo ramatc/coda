@@ -106,7 +106,16 @@ export class CatalogQueue implements OnModuleDestroy {
       // the full TTL. Log the release failure separately, then always
       // rethrow the ORIGINAL error.
       try {
-        await this.checkpointStore.releaseRunningLock(token);
+        const released = await this.checkpointStore.releaseRunningLock(token);
+        if (released) {
+          this.logger.warn(
+            `enqueueSeed failed — released the running lock (token ${token}) so a new run can start.`,
+          );
+        } else {
+          this.logger.warn(
+            `enqueueSeed failed, but its running lock (token ${token}) was already released or is now owned by a newer run — no action taken.`,
+          );
+        }
       } catch (releaseErr) {
         this.logger.error(
           `enqueueSeed failed AND releasing its running lock (token ${token}) also failed — the lock may now be leaking for up to ${CHECKPOINT_RUNNING_LOCK_TTL_MS}ms: ${
