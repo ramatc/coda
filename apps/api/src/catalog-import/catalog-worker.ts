@@ -158,9 +158,19 @@ async function bootstrap(): Promise<void> {
         }
         if (isUniqueConstraintViolation(err)) {
           const field = extractUniqueConstraintField(err);
+          // `field` alone is ambiguous here (judgment-day issue #9): both
+          // `Album.mbid` and `Artist.mbid` are columns literally named "mbid",
+          // and the driver-adapter P2002 shape this project's Postgres adapter
+          // produces for a unique-constraint violation only exposes
+          // `constraint.fields` (the column name) — no table/model attribution
+          // is available on the error object to disambiguate further (verified
+          // against `@prisma/adapter-pg`'s `mapDriverError` for code `23505`).
+          // Name both candidates explicitly so an operator knows to check both
+          // instead of assuming a single source.
           logger.warn(
             `Skipping enrichment for album ${job.data.spotifyId} due to a unique ` +
-              `constraint conflict${field ? ` on "${field}"` : ""} (mbid already claimed): ${err.message}`,
+              `constraint conflict${field ? ` on "${field}"` : ""} — mbid already ` +
+              `claimed by another Album OR Artist row (ambiguous which; check both): ${err.message}`,
           );
           return;
         }
