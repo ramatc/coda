@@ -15,6 +15,13 @@ import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";
  * admin token and no separate worker/queue round-trip. It still shares the exact
  * same fetch + idempotent-upsert + Redis-checkpoint core, so it resumes from an
  * interrupted cursor and never inserts duplicates, identically to the queue path.
+ * `CatalogImportService` is resolved from the same `AppModule` DI container the
+ * admin/worker path uses, so its optional `CatalogQueue` dependency is injected
+ * here too — each successfully-upserted album is chained into MusicBrainz
+ * enrichment exactly as `catalog-worker.ts`'s album Worker does, so this CLI
+ * path enriches, not just upserts (judgment-day issue #1; a standalone
+ * `worker:catalog` process with its enrich Worker running must still be up to
+ * actually process the enqueued enrichment jobs — this script only enqueues).
  *
  * `SEED_START_OFFSET=0` forces a full re-seed; omit it to resume from the
  * checkpoint.

@@ -8,6 +8,7 @@ import {
 } from "../prisma/prisma-error.util.js";
 import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
+import { CatalogQueue } from "./catalog-queue.js";
 import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";
 import type { CatalogCheckpointStore } from "./spotify-checkpoint.store.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
@@ -49,9 +50,15 @@ export interface RunImportOptions {
  *    trigger, no separate worker process) and mirrored by the BullMQ page worker
  *    for the distributed path.
  *
- * Keeping this class free of any BullMQ dependency is deliberate: it makes the
- * resume-without-duplicates guarantee unit-testable against fakes, without a
- * live Redis or Postgres (sandbox convention from PR1-3).
+ * `queue` is an OPTIONAL, injected `CatalogQueue` (judgment-day issue #1): when
+ * present, {@link importPage} enqueues a MusicBrainz enrichment job for each
+ * album it successfully upserts — mirroring exactly what `catalog-worker.ts`'s
+ * album Worker already does after its own `upsertAlbum` call — so the CLI
+ * `seed:catalog` path enriches too, not just the distributed queue path.
+ * Keeping it optional (rather than a hard constructor requirement) preserves
+ * the resume-without-duplicates guarantee's unit-testability against fakes,
+ * without a live Redis, BullMQ, or Postgres (sandbox convention from PR1-3) —
+ * tests that don't care about enrichment simply omit it.
  */
 @Injectable()
 export class CatalogImportService {
@@ -61,6 +68,7 @@ export class CatalogImportService {
     private readonly prisma: PrismaService,
     private readonly spotify: SpotifyClient,
     private readonly checkpointStore: SpotifyCheckpointStore,
+    private readonly queue?: CatalogQueue,
   ) {}
 
   /**
@@ -126,6 +134,11 @@ export class CatalogImportService {
    * advances on page completion, it would be retried at the identical offset
    * forever. Any other error (e.g. a lost DB connection) still propagates so
    * it isn't silently swallowed.
+   *
+   * When {@link queue} is present, each successfully-upserted album is chained
+   * into MusicBrainz enrichment (judgment-day issue #1) — only reached when the
+   * upsert above succeeded (a skipped album `continue`s past it), so an album
+   * that didn't persist never gets enqueued for enrichment.
    */
   async importPage(
     offset: number,
@@ -157,6 +170,9 @@ export class CatalogImportService {
           continue;
         }
         throw err;
+      }
+      if (this.queue) {
+        await this.queue.enqueueEnrichment(album.spotifyId);
       }
     }
     return { processed: page.albums.length, nextOffset: page.nextOffset };
