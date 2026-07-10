@@ -406,13 +406,56 @@ describe("CatalogImportService", () => {
     expect(fakePrisma.albums.size).toBe(2);
   });
 
-  it("escalates to logger.error when enqueueEnrichment fails for EVERY album in the run — a 100% failure signals a down/misconfigured enrich queue, not per-album blips (judgment-day issue #1, round 3)", async () => {
+  it("escalates to logger.error when enqueueEnrichment fails for EVERY album in the run — a 100% failure at/above the minimum sample size signals a down/misconfigured enrich queue, not per-album blips (judgment-day issue #1, round 3+4)", async () => {
     const errorSpy = vi
       .spyOn(Logger.prototype, "error")
       .mockImplementation(() => undefined);
+    // 10 albums (2 per page x 5 pages) so `processed` meets
+    // MIN_SAMPLE_FOR_ESCALATION and the 100%-failure run still escalates.
+    const largeCatalog: NormalizedAlbum[] = Array.from({ length: 10 }, (_, i) =>
+      album(`alb-${i}`, `a-${i}`),
+    );
     const fakeQueue = createFakeQueue();
     fakeQueue.enqueueEnrichment.mockRejectedValue(
       new Error("simulated Redis connection down"),
+    );
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(largeCatalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.runImport();
+
+    expect(result.processed).toBe(10);
+    expect(result.enqueueFailures).toBe(10);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Enrichment enqueueing failed for ALL 10 albums this run",
+      ),
+    );
+    // The message must not assert a specific root cause as definitive
+    // (judgment-day issue #2, round 4) — `enqueueFailures` counts ANY
+    // exception from `enqueueEnrichment`, not only Redis connectivity issues.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "likely a Redis/queue connectivity issue — check the enrich queue",
+      ),
+    );
+
+    errorSpy.mockRestore();
+  });
+
+  it("does NOT escalate to logger.error on a 100%-failure run BELOW the minimum sample-size floor — a single blip on a small run must not read as a total outage (judgment-day issue #1, round 4)", async () => {
+    const errorSpy = vi
+      .spyOn(Logger.prototype, "error")
+      .mockImplementation(() => undefined);
+    // Only 5 albums (below MIN_SAMPLE_FOR_ESCALATION = 10): even a 100%
+    // enqueue-failure run must stay at warn, not escalate to error.
+    const fakeQueue = createFakeQueue();
+    fakeQueue.enqueueEnrichment.mockRejectedValue(
+      new Error("simulated one-off Redis blip"),
     );
     const service = new CatalogImportService(
       fakePrisma.service,
@@ -425,11 +468,7 @@ describe("CatalogImportService", () => {
 
     expect(result.processed).toBe(5);
     expect(result.enqueueFailures).toBe(5);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Enrichment enqueueing failed for ALL 5 albums this run",
-      ),
-    );
+    expect(errorSpy).not.toHaveBeenCalled();
 
     errorSpy.mockRestore();
   });

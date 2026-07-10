@@ -154,6 +154,19 @@ export const CATALOG_ENRICH_JOB_OPTIONS: JobsOptions = {
 };
 
 /**
+ * Minimum `processed` count {@link CatalogImportService.runImport} requires
+ * before a 100%-`enqueueFailures` run escalates to `logger.error` (judgment-day
+ * issue #1, round 4). Without a floor, "1 failure out of 1 processed" satisfies
+ * the same 100% condition as "500 failures out of 500 processed" — a single
+ * transient blip on a small run (a short/dev-catalog run, a resumed run's tail
+ * page, or simply the last page of any import) would trip the same ALL-albums
+ * error as a genuine full-run outage. Below this threshold, the existing
+ * per-album `logger.warn` calls are already sufficient signal; only a 100%
+ * failure across at least this many processed albums escalates.
+ */
+export const MIN_SAMPLE_FOR_ESCALATION = 10;
+
+/**
  * Deterministic per-album job id (`album:{spotifyId}`). Passing this as BullMQ's
  * `jobId` makes re-enqueuing the same album a no-op at the queue level — the
  * natural-dedup guarantee the resume path relies on.

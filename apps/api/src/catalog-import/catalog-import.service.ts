@@ -9,7 +9,10 @@ import {
 import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { CatalogQueue } from "./catalog-queue.js";
-import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";
+import {
+  MIN_SAMPLE_FOR_ESCALATION,
+  SPOTIFY_PAGE_LIMIT,
+} from "./catalog-import.constants.js";
 import type { CatalogCheckpointStore } from "./spotify-checkpoint.store.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
 
@@ -34,9 +37,10 @@ export interface RunImportResult {
    * Total `enqueueEnrichment` failures across every page of this run
    * (judgment-day issue #1, round 3) — the aggregate signal an operator needs
    * to detect a total enrichment-queue outage that per-album WARN logs alone
-   * would bury. When this equals {@link processed} and `processed > 0`, EVERY
-   * album this run failed to enqueue for enrichment, and {@link runImport}
-   * escalates that case to `logger.error`.
+   * would bury. When this equals {@link processed} and `processed` meets the
+   * minimum sample-size floor (judgment-day issue #1, round 4), EVERY album
+   * this run failed to enqueue for enrichment, and {@link runImport} escalates
+   * that case to `logger.error`.
    */
   enqueueFailures: number;
 }
@@ -246,10 +250,12 @@ export class CatalogImportService {
    * try/catch only logs a WARN per failure, which an operator not tailing logs
    * would never see — so this method's final summary always reports the
    * count, and when EVERY album in the run failed to enqueue (100% failure,
-   * the signature of a down/misconfigured enrich-queue Redis connection for
-   * the whole run rather than an isolated blip) it escalates to `logger.error`
-   * with an explicit message instead of leaving the run looking like a clean
-   * success.
+   * the signature of a down/misconfigured enrich queue for the whole run
+   * rather than an isolated blip) AND `processed` meets
+   * {@link MIN_SAMPLE_FOR_ESCALATION} (judgment-day issue #1, round 4 — below
+   * that floor a single blip would satisfy the same 100% condition as a real
+   * outage), it escalates to `logger.error` with an explicit message instead
+   * of leaving the run looking like a clean success.
    */
   async runImport(options: RunImportOptions = {}): Promise<RunImportResult> {
     const limit = options.limit ?? SPOTIFY_PAGE_LIMIT;
@@ -281,14 +287,20 @@ export class CatalogImportService {
       `Spotify import complete: ${processed} albums across ${pages} pages, ` +
         `${enqueueFailures} enrichment enqueue failures`,
     );
-    if (processed > 0 && enqueueFailures === processed) {
-      // Every single album this run failed to enqueue for enrichment — almost
-      // certainly the enrich queue's Redis connection being down/misconfigured
-      // for the WHOLE run, not isolated per-album blips. A plain WARN per
-      // album buries this; escalate so it can't be missed in the run summary.
+    if (
+      processed >= MIN_SAMPLE_FOR_ESCALATION &&
+      enqueueFailures === processed
+    ) {
+      // Every single album this run failed to enqueue for enrichment, across
+      // at least MIN_SAMPLE_FOR_ESCALATION albums — almost certainly a down/
+      // misconfigured enrich queue for the WHOLE run, not an isolated blip
+      // (judgment-day issue #1, round 4: below that floor, "1 failure out of
+      // 1 processed" would trip this identically to a real outage). A plain
+      // WARN per album buries this; escalate so it can't be missed in the run
+      // summary.
       this.logger.error(
         `Enrichment enqueueing failed for ALL ${processed} albums this run — ` +
-          `check the enrich queue's Redis connection.`,
+          `likely a Redis/queue connectivity issue — check the enrich queue.`,
       );
     }
     return { processed, pages, enqueueFailures };
