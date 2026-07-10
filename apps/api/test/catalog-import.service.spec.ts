@@ -381,6 +381,30 @@ describe("CatalogImportService", () => {
     expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledWith(okAlbum.spotifyId);
   });
 
+  it("does not abort the run when enqueueEnrichment fails for an album — logs and continues (judgment-day issue #1, round 2)", async () => {
+    const fakeQueue = createFakeQueue();
+    fakeQueue.enqueueEnrichment
+      .mockRejectedValueOnce(new Error("simulated Redis/BullMQ producer failure"))
+      .mockResolvedValue(undefined);
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    // Page 0 (alb-0, alb-1): enqueue fails for alb-0 but the page must still
+    // report both albums processed and proceed to enqueue alb-1.
+    const result = await service.importPage(0, 2);
+
+    expect(result).toEqual({ processed: 2, nextOffset: 2 });
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledTimes(2);
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(1, "alb-0");
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(2, "alb-1");
+    // Both albums still persisted despite the queue failure on the first.
+    expect(fakePrisma.albums.size).toBe(2);
+  });
+
   it("skips enrichment chaining entirely when no queue is injected (backward compatible)", async () => {
     const service = new CatalogImportService(
       fakePrisma.service,

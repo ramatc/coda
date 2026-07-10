@@ -138,7 +138,10 @@ export class CatalogImportService {
    * When {@link queue} is present, each successfully-upserted album is chained
    * into MusicBrainz enrichment (judgment-day issue #1) — only reached when the
    * upsert above succeeded (a skipped album `continue`s past it), so an album
-   * that didn't persist never gets enqueued for enrichment.
+   * that didn't persist never gets enqueued for enrichment. The enqueue call
+   * itself is error-isolated too (judgment-day issue #1, round 2): a transient
+   * queue-producer failure is logged and skipped rather than propagating and
+   * aborting the rest of the run.
    */
   async importPage(
     offset: number,
@@ -172,7 +175,19 @@ export class CatalogImportService {
         throw err;
       }
       if (this.queue) {
-        await this.queue.enqueueEnrichment(album.spotifyId);
+        // Isolated from the upsert's try/catch above (judgment-day issue #1,
+        // round 2): a transient Redis/BullMQ producer error here must not
+        // propagate uncaught and abort the rest of the run — the album already
+        // persisted, so we log-and-continue rather than losing every remaining
+        // album/page on a queue hiccup with no retry.
+        try {
+          await this.queue.enqueueEnrichment(album.spotifyId);
+        } catch (err) {
+          this.logger.warn(
+            `Failed to enqueue enrichment for album ${album.spotifyId}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
     return { processed: page.albums.length, nextOffset: page.nextOffset };
