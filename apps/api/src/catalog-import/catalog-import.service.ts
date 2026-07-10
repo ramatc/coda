@@ -12,16 +12,6 @@ import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";
 import type { CatalogCheckpointStore } from "./spotify-checkpoint.store.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
 
-/**
- * Sentinel token returned by {@link CatalogImportService.tryAcquireRunningLock}
- * when the given checkpoint doesn't implement the running-lock guard at all
- * (in-memory test fakes — see {@link CatalogCheckpointStore}'s optional
- * methods). Any non-null string works as a "no real lock" placeholder here
- * since {@link CatalogImportService.releaseRunningLock} only forwards it when
- * the checkpoint actually supports `releaseRunningLock`.
- */
-const NO_LOCK_SUPPORT_TOKEN = "no-lock-support";
-
 export interface ImportPageResult {
   /** How many albums this page upserted. */
   processed: number;
@@ -179,82 +169,38 @@ export class CatalogImportService {
    * mid-run resumes from the last fully processed page, never re-doing completed
    * work and never skipping a page. Clears the checkpoint on clean completion.
    *
-   * Guarded by the shared running-lock marker (judgment-day issue #6) so this
-   * in-process pager (`seed:catalog`) can't race the BullMQ page-worker
-   * pipeline over the same checkpoint; see
-   * {@link CatalogCheckpointStore.tryAcquireRunningLock} for why this is a
-   * best-effort marker rather than a full renewing distributed lock.
+   * Fase 1 MVP scope note: this assumes a single operator triggers an import
+   * at a time (via this CLI script or the admin endpoint) — there is no
+   * distributed lock preventing a concurrent run, and no automatic recovery
+   * for a permanently-failed BullMQ job; an operator retries those manually.
    */
   async runImport(options: RunImportOptions = {}): Promise<RunImportResult> {
     const limit = options.limit ?? SPOTIFY_PAGE_LIMIT;
     const checkpoint = options.checkpoint ?? this.checkpointStore;
 
-    const lockToken = await this.tryAcquireRunningLock(checkpoint);
-    if (!lockToken) {
-      throw new Error(
-        "Catalog import is already in progress — refusing to start a concurrent run.",
-      );
-    }
+    let offset = options.startOffset ?? (await checkpoint.get()) ?? 0;
 
-    try {
-      let offset = options.startOffset ?? (await checkpoint.get()) ?? 0;
+    let processed = 0;
+    let pages = 0;
+    for (;;) {
+      const result = await this.importPage(offset, limit);
+      processed += result.processed;
+      pages += 1;
 
-      let processed = 0;
-      let pages = 0;
-      for (;;) {
-        const result = await this.importPage(offset, limit);
-        processed += result.processed;
-        pages += 1;
-
-        if (result.nextOffset === null) {
-          // Import finished cleanly — drop the cursor so the next run starts fresh.
-          await checkpoint.clear();
-          break;
-        }
-        // Persist progress BEFORE advancing: if we die now, the resume reads this
-        // offset and re-fetches only the not-yet-completed remainder.
-        await checkpoint.set(result.nextOffset);
-        offset = result.nextOffset;
+      if (result.nextOffset === null) {
+        // Import finished cleanly — drop the cursor so the next run starts fresh.
+        await checkpoint.clear();
+        break;
       }
-
-      this.logger.log(
-        `Spotify import complete: ${processed} albums across ${pages} pages`,
-      );
-      return { processed, pages };
-    } finally {
-      await this.releaseRunningLock(checkpoint, lockToken);
+      // Persist progress BEFORE advancing: if we die now, the resume reads this
+      // offset and re-fetches only the not-yet-completed remainder.
+      await checkpoint.set(result.nextOffset);
+      offset = result.nextOffset;
     }
-  }
 
-  /**
-   * Acquires the shared running-lock marker if the given checkpoint store
-   * supports it (real {@link SpotifyCheckpointStore} instances do; in-memory
-   * test fakes may omit it since single-run unit tests never race two
-   * imports — see {@link CatalogCheckpointStore.lockSupport}). Returns the
-   * ownership token to thread through to {@link releaseRunningLock}
-   * (judgment-day issue #2), or {@link NO_LOCK_SUPPORT_TOKEN} when the
-   * checkpoint doesn't implement the guard at all.
-   */
-  private async tryAcquireRunningLock(
-    checkpoint: CatalogCheckpointStore,
-  ): Promise<string | null> {
-    if (!checkpoint.lockSupport) {
-      return NO_LOCK_SUPPORT_TOKEN;
-    }
-    return checkpoint.lockSupport.tryAcquireRunningLock();
-  }
-
-  /**
-   * Releases the marker acquired by {@link tryAcquireRunningLock}, if
-   * supported, passing back the SAME ownership token so the store only
-   * releases the lock this run actually holds (judgment-day issue #2).
-   */
-  private async releaseRunningLock(
-    checkpoint: CatalogCheckpointStore,
-    token: string,
-  ): Promise<void> {
-    if (checkpoint.lockSupport) {
-      await checkpoint.lockSupport.releaseRunningLock(token);
-    }
+    this.logger.log(
+      `Spotify import complete: ${processed} albums across ${pages} pages`,
+    );
+    return { processed, pages };
   }
 }

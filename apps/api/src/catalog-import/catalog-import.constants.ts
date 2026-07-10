@@ -51,24 +51,6 @@ export const ALBUM_JOB_NAME = "spotify-album";
 export const CHECKPOINT_KEY = "catalog-import:spotify:offset";
 
 /**
- * Redis key marking "an import is currently running" (judgment-day issue #6):
- * a best-effort mutual-exclusion marker shared by the in-process `seed:catalog`
- * pager and the BullMQ page-worker pipeline, both of which read/write
- * {@link CHECKPOINT_KEY} with no other coordination.
- */
-export const CHECKPOINT_RUNNING_LOCK_KEY = "catalog-import:spotify:running-lock";
-
-/**
- * TTL for {@link CHECKPOINT_RUNNING_LOCK_KEY}. This is a best-effort guard, not
- * a renewed/heartbeat lock: a run that's still legitimately in progress past
- * this window would let a second run start, and a crashed run's marker
- * self-expires after this window rather than blocking forever. A full
- * renewing distributed lock was judged disproportionate to this PR's scope —
- * see the comment on `CatalogImportService.runImport`.
- */
-export const CHECKPOINT_RUNNING_LOCK_TTL_MS = 6 * 60 * 60 * 1000; // 6h
-
-/**
  * Albums fetched per Spotify page. Spotify's browse/search endpoints cap `limit`
  * at 50, so this is both the page size and the API max.
  */

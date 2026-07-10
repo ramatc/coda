@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConflictException } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import {
   ALBUM_JOB_NAME,
@@ -26,59 +25,8 @@ interface FakeAddedJob {
   opts: { jobId?: string; attempts?: number; backoff?: unknown; removeOnFail?: unknown };
 }
 
-/**
- * Mirrors just enough of a real BullMQ `Job` to prove the stale-`failed`-job
- * revival (judgment-day issue #1, Round 3): a `state` that a test can force to
- * `"failed"` (simulating a job that exhausted all its retry attempts), and a
- * `retry()` that moves it back to `"waiting"` — the same transition BullMQ's
- * real `job.retry()` performs.
- *
- * Also tracks `attemptsMade` (judgment-day issue #1, Round 4): a real
- * permanently-failed job has `attemptsMade === CATALOG_JOB_OPTIONS.attempts`,
- * and BullMQ's `job.retry()` only resets it back to 0 when called with
- * `{ resetAttemptsMade: true }` (see `bullmq/dist/cjs/classes/job.js`'s
- * `retry()`). This mock mirrors that exact conditional so a regression
- * (calling `retry()` with no options, or without `resetAttemptsMade`) is
- * caught by a test instead of silently shipping.
- */
-class FakeJob {
-  state: "waiting" | "failed" = "waiting";
-  retryCount = 0;
-  attemptsMade = 0;
-  /** Set by a test to simulate a raced concurrent state change. */
-  throwOnNextRetry: Error | undefined;
-
-  constructor(
-    public readonly id: string,
-    private readonly queue: FakeQueue,
-  ) {}
-
-  async getState(): Promise<string> {
-    return this.state;
-  }
-
-  async retry(
-    _state: "failed" | "completed" = "failed",
-    opts: { resetAttemptsMade?: boolean; resetAttemptsStarted?: boolean } = {},
-  ): Promise<void> {
-    if (this.throwOnNextRetry) {
-      const err = this.throwOnNextRetry;
-      this.throwOnNextRetry = undefined;
-      throw err;
-    }
-    this.state = "waiting";
-    this.retryCount += 1;
-    if (opts.resetAttemptsMade) {
-      this.attemptsMade = 0;
-    }
-    this.queue.retriedJobIds.push(this.id);
-  }
-}
-
 class FakeQueue {
   added: FakeAddedJob[] = [];
-  retriedJobIds: string[] = [];
-  private readonly jobsById = new Map<string, FakeJob>();
 
   constructor(private readonly name: string) {
     registry.set(name, this);
@@ -90,14 +38,9 @@ class FakeQueue {
     opts: FakeAddedJob["opts"] = {},
   ): Promise<{ id?: string }> {
     // Mirrors BullMQ's deterministic-jobId dedup: re-adding an already-seen
-    // jobId is a no-op that doesn't push a second entry, REGARDLESS of that
-    // existing job's state (judgment-day issue #1, Round 3) — `EXISTS
-    // jobIdKey` is true for a job in any state, including `failed`.
-    if (opts.jobId && this.jobsById.has(opts.jobId)) {
+    // jobId is a no-op that doesn't push a second entry.
+    if (opts.jobId && this.added.some((job) => job.opts.jobId === opts.jobId)) {
       return { id: opts.jobId };
-    }
-    if (opts.jobId) {
-      this.jobsById.set(opts.jobId, new FakeJob(opts.jobId, this));
     }
     this.added.push({ name, data, opts });
     return { id: opts.jobId };
@@ -111,10 +54,6 @@ class FakeQueue {
       results.push(await this.add(job.name, job.data, job.opts));
     }
     return results;
-  }
-
-  async getJob(jobId: string): Promise<FakeJob | undefined> {
-    return this.jobsById.get(jobId);
   }
 
   async close(): Promise<void> {}
@@ -136,8 +75,7 @@ function fakeConfig(): ConfigService {
 }
 
 function createFakeCheckpoint() {
-  const state = { offset: null as number | null, lockToken: null as string | null };
-  let tokenSeq = 0;
+  const state = { offset: null as number | null };
   const store: SpotifyCheckpointStore = {
     async get() {
       return state.offset;
@@ -147,23 +85,6 @@ function createFakeCheckpoint() {
     },
     async clear() {
       state.offset = null;
-    },
-    // Ownership-token contract (judgment-day issue #2): returns a unique
-    // token on success, `null` if already held; `releaseRunningLock` only
-    // clears the lock if the given token still matches.
-    async tryAcquireRunningLock() {
-      if (state.lockToken !== null) {
-        return null;
-      }
-      state.lockToken = `fake-token-${++tokenSeq}`;
-      return state.lockToken;
-    },
-    async releaseRunningLock(token: string) {
-      if (state.lockToken === token) {
-        state.lockToken = null;
-        return true;
-      }
-      return false;
     },
   } as unknown as SpotifyCheckpointStore;
   return { store, state };
@@ -244,150 +165,13 @@ describe("CatalogQueue", () => {
     expect(bullmq.__queueRegistry.get(CATALOG_ALBUM_QUEUE)).toBeUndefined();
   });
 
-  it("enqueueSeed resumes from the checkpoint offset and enqueues the first page with the lock token", async () => {
+  it("enqueueSeed resumes from the checkpoint offset and enqueues the first page", async () => {
     await checkpoint.store.set(100);
 
     const result = await queue.enqueueSeed(50);
 
     expect(result.offset).toBe(100);
     const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
-    // The lock token rides along in the page job data (judgment-day issue #2)
-    // so the page worker can release the SAME lock once the run ends.
-    expect(pageQueue.added[0].data).toEqual({
-      offset: 100,
-      limit: 50,
-      lockToken: expect.any(String),
-    });
-    // The lock is deliberately still held after a successful enqueue (judgment-
-    // day issue #1) — it's released by the import's actual completion, not here.
-    expect(checkpoint.state.lockToken).not.toBeNull();
-  });
-
-  it("enqueueSeed refuses to start a concurrent run while the running lock is held, mapping to a 409 (judgment-day issue #10)", async () => {
-    await queue.enqueueSeed(50);
-
-    await expect(queue.enqueueSeed(50)).rejects.toThrow(/already in progress/);
-    await expect(queue.enqueueSeed(50)).rejects.toBeInstanceOf(ConflictException);
-    try {
-      await queue.enqueueSeed(50);
-      throw new Error("expected enqueueSeed to reject");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConflictException);
-      expect((err as ConflictException).getStatus()).toBe(409);
-    }
-  });
-
-  it("releases the running lock if the enqueue-seed step throws before the import starts (judgment-day issue #1)", async () => {
-    const failingStore: SpotifyCheckpointStore = {
-      ...checkpoint.store,
-      async get() {
-        throw new Error("transient redis blip");
-      },
-    } as unknown as SpotifyCheckpointStore;
-    const failingQueue = new CatalogQueue(fakeConfig(), failingStore);
-
-    await expect(failingQueue.enqueueSeed(50)).rejects.toThrow(
-      /transient redis blip/,
-    );
-
-    // The lock must have been released despite the failure — a subsequent
-    // acquire (e.g. from a retried trigger) must succeed rather than being
-    // blocked for the full TTL by a leaked lock.
-    expect(await failingStore.tryAcquireRunningLock()).not.toBeNull();
-  });
-
-  it("propagates the ORIGINAL enqueue-seed error even if releasing the lock also fails (judgment-day issue #2, Round 3)", async () => {
-    const failingStore: SpotifyCheckpointStore = {
-      ...checkpoint.store,
-      async get() {
-        throw new Error("original root cause: transient redis blip");
-      },
-      async releaseRunningLock() {
-        throw new Error("release also failed: redis still down");
-      },
-    } as unknown as SpotifyCheckpointStore;
-    const failingQueue = new CatalogQueue(fakeConfig(), failingStore);
-
-    // The caller must see the ORIGINAL error, not the release's error.
-    await expect(failingQueue.enqueueSeed(50)).rejects.toThrow(
-      /original root cause/,
-    );
-  });
-
-  describe("stale failed-job revival on retrigger (judgment-day issue #1, Round 3)", () => {
-    it("enqueuePage retries a job that's already in a failed state instead of silently no-op'ing", async () => {
-      await queue.enqueuePage(100, 50);
-      const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
-      const jobId = pageJobId(100);
-      const job = await pageQueue.getJob(jobId);
-      // Simulate BullMQ having moved this job to `failed` after it exhausted
-      // all configured retry attempts.
-      job!.state = "failed";
-
-      // Retriggering (e.g. via a re-run of enqueueSeed) must revive it.
-      await queue.enqueuePage(100, 50);
-
-      expect(await job!.getState()).toBe("waiting");
-      expect(pageQueue.retriedJobIds).toContain(jobId);
-    });
-
-    it("enqueuePage leaves a non-failed job alone (no spurious retry)", async () => {
-      await queue.enqueuePage(100, 50);
-      const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
-
-      await queue.enqueuePage(100, 50);
-
-      expect(pageQueue.retriedJobIds).toHaveLength(0);
-    });
-
-    it("enqueuePage revival resets attemptsMade so a revived job gets its full retry budget back (judgment-day issue #1, Round 4)", async () => {
-      await queue.enqueuePage(100, 50);
-      const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
-      const jobId = pageJobId(100);
-      const job = await pageQueue.getJob(jobId);
-      // Simulate a job that permanently failed after exhausting every
-      // configured attempt — a real BullMQ job in this state has
-      // `attemptsMade === CATALOG_JOB_OPTIONS.attempts` (5).
-      job!.state = "failed";
-      job!.attemptsMade = 5;
-
-      await queue.enqueuePage(100, 50);
-
-      expect(job!.attemptsMade).toBe(0);
-    });
-
-    it("enqueuePage revival tolerates a raced retry() throw and falls back to the normal enqueue path (judgment-day issue #3, Round 4)", async () => {
-      await queue.enqueuePage(100, 50);
-      const pageQueue = bullmq.__queueRegistry.get(CATALOG_PAGE_QUEUE)!;
-      const jobId = pageJobId(100);
-      const job = await pageQueue.getJob(jobId);
-      job!.state = "failed";
-      // Simulate a concurrent revival winning the race: BullMQ's retry()
-      // throws when the job is no longer in the expected `failed` set.
-      job!.throwOnNextRetry = new Error("Job is not in the expected failed state");
-
-      await expect(queue.enqueuePage(100, 50)).resolves.toBeUndefined();
-      expect(pageQueue.retriedJobIds).not.toContain(jobId);
-    });
-
-    it("enqueueAlbums retries a job that's already in a failed state instead of silently no-op'ing", async () => {
-      await queue.enqueueAlbums([album("alb-1")]);
-      const albumQueue = bullmq.__queueRegistry.get(CATALOG_ALBUM_QUEUE)!;
-      const jobId = albumJobId("alb-1");
-      const job = await albumQueue.getJob(jobId);
-      job!.state = "failed";
-      job!.attemptsMade = 5;
-
-      // This is the ONLY production album-enqueue path (judgment-day issue
-      // #2, Round 4) — the page worker calls `enqueueAlbums` via `addBulk`,
-      // never a singular per-album `add()`. A permanently-failed album job
-      // resurfacing here (resumed run, overlapping page, re-seed) must be
-      // revived with its full attempt budget restored, not silently dropped.
-      await queue.enqueueAlbums([album("alb-1")]);
-
-      expect(await job!.getState()).toBe("waiting");
-      expect(albumQueue.retriedJobIds).toContain(jobId);
-      expect(job!.attemptsMade).toBe(0);
-    });
+    expect(pageQueue.added[0].data).toEqual({ offset: 100, limit: 50 });
   });
 });

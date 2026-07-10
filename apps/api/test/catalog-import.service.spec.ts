@@ -124,54 +124,6 @@ function createFakeCheckpoint() {
   return { store, state };
 }
 
-/**
- * In-memory checkpoint store that DOES implement the running-lock guard
- * (judgment-day issue #3, Round 3): every `createFakeCheckpoint()` fake above
- * omits `lockSupport`, so `runImport()`'s real lock-acquire/release logic was
- * never exercised by a test — only proven by code reading. This fake tracks
- * every acquire/release call and the token passed, so a test can assert
- * `runImport()` releases the SAME token it acquired, on both the success and
- * the throwing path.
- */
-function createFakeCheckpointWithLock() {
-  const state = { value: null as number | null, lockToken: null as string | null };
-  const calls = {
-    acquired: 0,
-    released: [] as string[],
-  };
-  let tokenSeq = 0;
-  const store: SpotifyCheckpointStore = {
-    async get() {
-      return state.value;
-    },
-    async set(offset: number) {
-      state.value = offset;
-    },
-    async clear() {
-      state.value = null;
-    },
-    lockSupport: {
-      async tryAcquireRunningLock() {
-        calls.acquired += 1;
-        if (state.lockToken !== null) {
-          return null;
-        }
-        state.lockToken = `fake-token-${++tokenSeq}`;
-        return state.lockToken;
-      },
-      async releaseRunningLock(token: string) {
-        calls.released.push(token);
-        if (state.lockToken === token) {
-          state.lockToken = null;
-          return true;
-        }
-        return false;
-      },
-    },
-  } as unknown as SpotifyCheckpointStore;
-  return { store, state, calls };
-}
-
 function album(spotifyId: string, artistSpotifyId: string): NormalizedAlbum {
   return {
     spotifyId,
@@ -356,57 +308,6 @@ describe("CatalogImportService", () => {
     const result = await service.importPage(0, 2);
 
     expect(result).toEqual({ processed: 2, nextOffset: null });
-  });
-
-  describe("runImport's running-lock thread-through (judgment-day issue #3, Round 3)", () => {
-    it("acquires the lock, does the work, and releases it with the SAME token on the success path", async () => {
-      const checkpoint = createFakeCheckpointWithLock();
-      const service = new CatalogImportService(
-        fakePrisma.service,
-        createFakeSpotify(catalog, 2),
-        checkpoint.store,
-      );
-
-      const result = await service.runImport();
-
-      expect(result.processed).toBe(5);
-      expect(checkpoint.calls.acquired).toBe(1);
-      expect(checkpoint.calls.released).toHaveLength(1);
-      // The lock must be fully released — a subsequent acquire succeeds.
-      expect(checkpoint.state.lockToken).toBeNull();
-    });
-
-    it("releases the lock with the SAME token acquired even when the import body throws partway through", async () => {
-      const checkpoint = createFakeCheckpointWithLock();
-      const crashingService = new CatalogImportService(
-        fakePrisma.service,
-        createFakeSpotify(catalog, 2, { throwOnceAtOffset: 2 }),
-        checkpoint.store,
-      );
-
-      await expect(crashingService.runImport()).rejects.toThrow(
-        /simulated Spotify/,
-      );
-
-      expect(checkpoint.calls.acquired).toBe(1);
-      expect(checkpoint.calls.released).toHaveLength(1);
-      // The lock must be released despite the failure, not leaked for the TTL.
-      expect(checkpoint.state.lockToken).toBeNull();
-    });
-
-    it("refuses to start a concurrent run while the lock is already held", async () => {
-      const checkpoint = createFakeCheckpointWithLock();
-      const service = new CatalogImportService(
-        fakePrisma.service,
-        createFakeSpotify(catalog, 2),
-        checkpoint.store,
-      );
-      await checkpoint.store.lockSupport!.tryAcquireRunningLock();
-
-      await expect(service.runImport()).rejects.toThrow(
-        /already in progress/,
-      );
-    });
   });
 
   it("derives deterministic, dedup-safe job ids for pages and albums", () => {

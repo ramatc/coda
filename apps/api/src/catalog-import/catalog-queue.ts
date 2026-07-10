@@ -1,11 +1,5 @@
-import {
-  ConflictException,
-  Injectable,
-  Logger,
-  type OnModuleDestroy,
-} from "@nestjs/common";
+import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import type { Job } from "bullmq";
 import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { createBullProducerConnection } from "./catalog-redis.js";
@@ -15,7 +9,6 @@ import {
   CATALOG_ALBUM_QUEUE,
   CATALOG_JOB_OPTIONS,
   CATALOG_PAGE_QUEUE,
-  CHECKPOINT_RUNNING_LOCK_TTL_MS,
   PAGE_JOB_NAME,
   REDIS_URL_ENV,
   albumJobId,
@@ -27,14 +20,6 @@ import type { NormalizedAlbum } from "./spotify.types.js";
 export interface PageJobData {
   offset: number;
   limit: number;
-  /**
-   * Running-lock ownership token (judgment-day issue #2), threaded through
-   * every page job of a run so whichever job ends the run — a clean finish or
-   * a permanent failure (see `catalog-worker.ts`'s `pageWorker.on("failed", ...)`)
-   * — releases the SAME lock this run's `enqueueSeed()` acquired, rather than
-   * an unconditional `DEL` that could delete a different run's lock.
-   */
-  lockToken?: string;
 }
 
 /** Data carried by a per-album job (the album to upsert / later enrich). */
@@ -51,6 +36,12 @@ export interface AlbumJobData {
  * first enqueue: constructing this provider is side-effect-free, so the API
  * boots without Redis and the e2e suite (which boots the full AppModule) never
  * opens a socket. Connections are closed on module destroy if they were opened.
+ *
+ * Fase 1 MVP scope note: there is no distributed lock guarding against
+ * concurrent runs and no automatic revival of permanently-failed jobs — this
+ * assumes a single operator triggers an import at a time, and treats a
+ * BullMQ job that exhausts its retries as something an operator inspects/
+ * retries manually (e.g. via Bull Board or `queue.getJob(id).retry()`).
  */
 @Injectable()
 export class CatalogQueue implements OnModuleDestroy {
@@ -70,145 +61,26 @@ export class CatalogQueue implements OnModuleDestroy {
    * after an interruption picks up where it left off rather than restarting from
    * zero. The deterministic page job id keeps a concurrent double-trigger from
    * enqueuing the same page twice.
-   *
-   * Also acquires the shared running-lock marker (judgment-day issue #6) so a
-   * second trigger can't race the in-process `seed:catalog` pager (or another
-   * seed request) over the same checkpoint; see
-   * {@link SpotifyCheckpointStore.tryAcquireRunningLock} for the guard's scope
-   * and limitations.
-   *
-   * The lock is deliberately NOT released on success — it stays held until
-   * the actual import completes (via the worker's clean-finish/permanent-
-   * failure paths, or `CatalogImportService.runImport`'s `finally`). It is
-   * only released here if the enqueue-seed step itself throws (e.g. a
-   * transient Redis/BullMQ blip) — before the real import has even started —
-   * so a partial failure at this step can't leak the lock for the full TTL
-   * and block every subsequent trigger (judgment-day issue #1).
    */
   async enqueueSeed(limit: number): Promise<{ offset: number }> {
-    const token = await this.checkpointStore.tryAcquireRunningLock();
-    if (!token) {
-      throw new ConflictException(
-        "Catalog import is already in progress — refusing to start a concurrent run.",
-      );
-    }
-    try {
-      const offset = (await this.checkpointStore.get()) ?? 0;
-      await this.enqueuePage(offset, limit, token);
-      this.logger.log(`Enqueued Spotify seed starting at offset ${offset}`);
-      return { offset };
-    } catch (err) {
-      // Release failure must NEVER shadow the original error (judgment-day
-      // issue #2, Round 3): if the same underlying Redis problem that caused
-      // `err` also makes `releaseRunningLock` throw, an unguarded call here
-      // would replace the real root cause with the release's exception AND
-      // leave the caller unable to tell whether the lock actually leaked for
-      // the full TTL. Log the release failure separately, then always
-      // rethrow the ORIGINAL error.
-      try {
-        const released = await this.checkpointStore.releaseRunningLock(token);
-        if (released) {
-          this.logger.warn(
-            `enqueueSeed failed — released the running lock (token ${token}) so a new run can start.`,
-          );
-        } else {
-          this.logger.warn(
-            `enqueueSeed failed, but its running lock (token ${token}) was already released or is now owned by a newer run — no action taken.`,
-          );
-        }
-      } catch (releaseErr) {
-        this.logger.error(
-          `enqueueSeed failed AND releasing its running lock (token ${token}) also failed — the lock may now be leaking for up to ${CHECKPOINT_RUNNING_LOCK_TTL_MS}ms: ${
-            releaseErr instanceof Error ? releaseErr.message : String(releaseErr)
-          }`,
-        );
-      }
-      throw err;
-    }
+    const offset = (await this.checkpointStore.get()) ?? 0;
+    await this.enqueuePage(offset, limit);
+    this.logger.log(`Enqueued Spotify seed starting at offset ${offset}`);
+    return { offset };
   }
 
   /**
    * Enqueues a page job with a deterministic id (dedupes a re-derived page),
    * with retry/backoff and bounded cleanup so a transient failure doesn't
-   * permanently drop the page (judgment-day issue #1). `lockToken`, when
-   * given, rides along in the job data so the page worker can release the
-   * SAME running-lock this run acquired once the run ends.
-   *
-   * Revives a stale `failed` job under this id BEFORE calling `add()`
-   * (judgment-day issue #1, Round 3): BullMQ's `Queue.add()` dedupes purely on
-   * Redis key EXISTENCE, which is true for a job in ANY state including
-   * `failed`. Without this, retriggering an import whose checkpoint is parked
-   * at a permanently-failed page's offset would silently return the dead
-   * job's id — no new attempt, no error, no signal — and that page would
-   * never be processed again.
+   * permanently drop the page (judgment-day issue #1).
    */
-  async enqueuePage(
-    offset: number,
-    limit: number,
-    lockToken?: string,
-  ): Promise<void> {
+  async enqueuePage(offset: number, limit: number): Promise<void> {
     const jobId = pageJobId(offset);
-    await this.reviveFailedJob(this.getPageQueue(), jobId);
     await this.getPageQueue().add(
       PAGE_JOB_NAME,
-      { offset, limit, lockToken },
+      { offset, limit },
       { ...CATALOG_JOB_OPTIONS, jobId },
     );
-  }
-
-  /**
-   * Single choke point for the stale-`failed`-job revival both {@link
-   * enqueuePage} and {@link enqueueAlbums} rely on (judgment-day issue #1,
-   * Round 3). If a job with `jobId` already exists in Redis and is currently
-   * `failed` (i.e. it exhausted `CATALOG_JOB_OPTIONS.attempts` and BullMQ
-   * moved it to the failed set — kept around by `removeOnFail: { count: 5000
-   * }` for inspectability, not deleted), calls BullMQ's own `job.retry()` to
-   * move it back to `waiting` instead of relying on `add()`'s id-based dedup,
-   * which would otherwise return the existing dead job's id without
-   * enqueuing a fresh attempt.
-   *
-   * Passes `resetAttemptsMade`/`resetAttemptsStarted` (judgment-day issue #1,
-   * Round 4): a permanently-failed job already has `attemptsMade` equal to
-   * `CATALOG_JOB_OPTIONS.attempts`. Without resetting it, BullMQ's own retry
-   * logic (`this.attemptsMade + 1 < this.opts.attempts`, see
-   * `bullmq/dist/cjs/classes/job.js`) treats the revived job as having ZERO
-   * attempts left — one bare try with no backoff before it's permanently
-   * failed again, defeating the point of manual retriggering during an
-   * ongoing transient issue.
-   *
-   * Wraps `retry()` in a try/catch (judgment-day issue #3, Round 4): if the
-   * job's state changed between `getState()` and `retry()` (e.g. a concurrent
-   * revival racing this one), BullMQ's `reprocessJob` Lua script throws
-   * because the job is no longer in the expected `failed` set. Treat that as
-   * a no-op and let the caller's own `add()`/`addBulk()` naturally dedup
-   * against whatever the concurrent process did, rather than letting the
-   * race fail an otherwise-successful caller (e.g. the page worker's
-   * "enqueue next page" call).
-   */
-  private async reviveFailedJob<T>(
-    queue: Queue<T>,
-    jobId: string,
-  ): Promise<void> {
-    const existing: Job<T> | undefined = await queue.getJob(jobId);
-    if (!existing) {
-      return;
-    }
-    const state = await existing.getState();
-    if (state !== "failed") {
-      return;
-    }
-    try {
-      await existing.retry("failed", {
-        resetAttemptsMade: true,
-        resetAttemptsStarted: true,
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Revive of failed job ${jobId} raced a concurrent state change and was skipped — falling back to the normal enqueue path: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
   }
 
   /**
@@ -218,24 +90,12 @@ export class CatalogQueue implements OnModuleDestroy {
    * otherwise be that many sequential Redis round-trips. This is the ONLY
    * production album-enqueue path (the page worker calls this, never a
    * singular per-album `add()`).
-   *
-   * Revives any stale `failed` job under each album's deterministic id BEFORE
-   * building the bulk batch (judgment-day issue #2, Round 4): `addBulk`
-   * dedupes on Redis key EXISTENCE the same way `add()` does, so without this
-   * a permanently-failed album job that resurfaces later (a resumed run, an
-   * overlapping page, a re-seed) would silently no-op forever instead of
-   * getting a fresh attempt.
    */
   async enqueueAlbums(albums: NormalizedAlbum[]): Promise<void> {
     if (albums.length === 0) {
       return;
     }
     const albumQueue = this.getAlbumQueue();
-    await Promise.all(
-      albums.map((album) =>
-        this.reviveFailedJob(albumQueue, albumJobId(album.spotifyId)),
-      ),
-    );
     await albumQueue.addBulk(
       albums.map((album) => ({
         name: ALBUM_JOB_NAME,
