@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Logger } from "@nestjs/common";
 import { Prisma } from "@coda/db";
 import {
   CATALOG_ALBUM_QUEUE,
@@ -75,6 +76,30 @@ vi.mock("@nestjs/core", () => ({
 }));
 
 vi.mock("../src/app.module.js", () => ({ AppModule: class {} }));
+
+/**
+ * P2002 built with the REAL `@prisma/adapter-pg` driver-adapter error shape
+ * (fields live on `meta.driverAdapterError.cause.constraint.fields`, NOT the
+ * classic `meta.target` this client never populates — Decision #14, reused
+ * from `profile.service.spec.ts` / `clerk-webhook.service.spec.ts`).
+ */
+function p2002WithFields(
+  message: string,
+  fields: string[] | undefined,
+): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(message, {
+    code: "P2002",
+    clientVersion: "test",
+    meta: {
+      driverAdapterError: {
+        cause: {
+          kind: "UniqueConstraintViolation",
+          constraint: fields !== undefined ? { fields } : undefined,
+        },
+      },
+    },
+  });
+}
 
 function album(spotifyId: string): NormalizedAlbum {
   return {
@@ -271,17 +296,46 @@ describe("catalog-worker bootstrap", () => {
     expect(fakeEnrichService.enrichAlbum).toHaveBeenCalledWith("sp1");
   });
 
-  it("enrich worker skips a P2002 (mbid already claimed) instead of failing the job", async () => {
+  it("enrich worker skips a P2002 on mbid, logging the mbid-specific Album/Artist message", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
     fakeEnrichService.enrichAlbum.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("mbid taken", {
-        code: "P2002",
-        clientVersion: "test",
-      }),
+      p2002WithFields("mbid taken", ["mbid"]),
     );
 
     await expect(
       enrichProcessor({ data: { spotifyId: "dup" } }),
     ).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'due to a unique constraint conflict on "mbid" — mbid already claimed by another Album OR Artist row',
+      ),
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  // judgment-day issue #2, round 2: the enrichment transaction also upserts
+  // `Genre.slug` and the `AlbumGenre` composite unique key — a P2002 on either
+  // must NOT be reported with the mbid-specific narrative.
+  it("enrich worker skips a P2002 on a non-mbid field (e.g. genre slug), logging the generic message", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+    fakeEnrichService.enrichAlbum.mockRejectedValue(
+      p2002WithFields("slug taken", ["slug"]),
+    );
+
+    await expect(
+      enrichProcessor({ data: { spotifyId: "genre-collision" } }),
+    ).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('due to a unique constraint conflict on field "slug"'),
+    );
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("mbid"));
+
+    warnSpy.mockRestore();
   });
 
   it("enrich worker rethrows a systemic error so BullMQ retry/backoff applies", async () => {

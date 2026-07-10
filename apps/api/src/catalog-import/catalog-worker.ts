@@ -139,9 +139,10 @@ async function bootstrap(): Promise<void> {
     CATALOG_ENRICH_QUEUE,
     async (job) => {
       // Per-item error isolation mirrors the album worker: a P2002 (the resolved
-      // mbid is already claimed by another album/artist edition), a P2003, or a
-      // malformed record is logged and skipped; anything systemic (lost DB/
-      // MusicBrainz connection) propagates for BullMQ's retry/backoff.
+      // mbid already claimed, OR a genre-slug / album-genre composite-key
+      // conflict from the same transaction — see the field-gated message below),
+      // a P2003, or a malformed record is logged and skipped; anything systemic
+      // (lost DB/MusicBrainz connection) propagates for BullMQ's retry/backoff.
       try {
         const result = await enrichService.enrichAlbum(job.data.spotifyId);
         if (result.status !== "enriched") {
@@ -158,19 +159,33 @@ async function bootstrap(): Promise<void> {
         }
         if (isUniqueConstraintViolation(err)) {
           const field = extractUniqueConstraintField(err);
-          // `field` alone is ambiguous here (judgment-day issue #9): both
-          // `Album.mbid` and `Artist.mbid` are columns literally named "mbid",
-          // and the driver-adapter P2002 shape this project's Postgres adapter
-          // produces for a unique-constraint violation only exposes
-          // `constraint.fields` (the column name) — no table/model attribution
-          // is available on the error object to disambiguate further (verified
-          // against `@prisma/adapter-pg`'s `mapDriverError` for code `23505`).
-          // Name both candidates explicitly so an operator knows to check both
-          // instead of assuming a single source.
+          if (field === "mbid") {
+            // `field === "mbid"` alone is ambiguous WHICH table (judgment-day
+            // issue #9): both `Album.mbid` and `Artist.mbid` are columns
+            // literally named "mbid", and the driver-adapter P2002 shape this
+            // project's Postgres adapter produces for a unique-constraint
+            // violation only exposes `constraint.fields` (the column name) —
+            // no table/model attribution is available on the error object to
+            // disambiguate further (verified against `@prisma/adapter-pg`'s
+            // `mapDriverError` for code `23505`). Name both candidates
+            // explicitly so an operator knows to check both instead of
+            // assuming a single source.
+            logger.warn(
+              `Skipping enrichment for album ${job.data.spotifyId} due to a unique ` +
+                `constraint conflict on "mbid" — mbid already claimed by another ` +
+                `Album OR Artist row (ambiguous which; check both): ${err.message}`,
+            );
+            return;
+          }
+          // Any other field (judgment-day issue #2, round 2): the same
+          // transaction also does `tx.genre.upsert` (unique on `Genre.slug`)
+          // and `tx.albumGenre.upsert` (composite unique) — a P2002 on either
+          // of those is NOT an mbid conflict, so the mbid-specific narrative
+          // above would be misleading/wrong here. Log a generic message naming
+          // the actual conflicting field instead.
           logger.warn(
             `Skipping enrichment for album ${job.data.spotifyId} due to a unique ` +
-              `constraint conflict${field ? ` on "${field}"` : ""} — mbid already ` +
-              `claimed by another Album OR Artist row (ambiguous which; check both): ${err.message}`,
+              `constraint conflict${field ? ` on field "${field}"` : ""}: ${err.message}`,
           );
           return;
         }
