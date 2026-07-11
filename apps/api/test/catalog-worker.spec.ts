@@ -339,6 +339,55 @@ describe("catalog-worker bootstrap", () => {
     expect(fakeEnrichService.enrichAlbum).toHaveBeenCalledWith("sp1");
   });
 
+  // judgment-day fix: the album-upsert worker's search-sync enqueue fires
+  // BEFORE enrichment ever runs, so genres are still empty at that point —
+  // this second enqueue after a successful enrichment is the only place that
+  // ever refreshes `genreNames`/`genreSlugs` in the search index.
+  it("enrich worker re-enqueues a search-sync after a successful enrichment (judgment-day fix)", async () => {
+    fakeEnrichService.enrichAlbum.mockResolvedValue({
+      status: "enriched",
+      mbid: "mb-1",
+      genres: 2,
+    });
+
+    await enrichProcessor({ data: { spotifyId: "sp1" } });
+
+    expect(fakeSearchQueue.enqueueAlbumSync).toHaveBeenCalledWith("sp1");
+  });
+
+  it("enrich worker does NOT re-enqueue a search-sync when enrichment didn't change genres (no-match/already-enriched/album-missing)", async () => {
+    fakeEnrichService.enrichAlbum.mockResolvedValue({ status: "no-match" });
+
+    await enrichProcessor({ data: { spotifyId: "sp2" } });
+
+    expect(fakeSearchQueue.enqueueAlbumSync).not.toHaveBeenCalled();
+  });
+
+  it("enrich worker logs and continues (doesn't fail the job) when the post-enrichment search-sync enqueue fails", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+    fakeEnrichService.enrichAlbum.mockResolvedValue({
+      status: "enriched",
+      mbid: "mb-1",
+      genres: 1,
+    });
+    fakeSearchQueue.enqueueAlbumSync.mockRejectedValue(
+      new Error("simulated Redis/BullMQ producer failure"),
+    );
+
+    await expect(
+      enrichProcessor({ data: { spotifyId: "sp1" } }),
+    ).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Could not enqueue post-enrichment search-sync for album sp1",
+      ),
+    );
+
+    warnSpy.mockRestore();
+  });
+
   it("enrich worker skips a P2002 on mbid, logging the mbid-specific Album/Artist message", async () => {
     const warnSpy = vi
       .spyOn(Logger.prototype, "warn")

@@ -200,6 +200,26 @@ async function bootstrap(): Promise<void> {
           logger.log(
             `Enrichment for album ${job.data.spotifyId}: ${result.status}`,
           );
+        } else {
+          // Re-sync the album into Meilisearch now that it carries genres
+          // (judgment-day fix): the album-upsert worker's search-sync enqueue
+          // fires BEFORE this enrichment ever runs, so `genreNames`/`genreSlugs`
+          // are still empty at that point — this is the only place that ever
+          // refreshes them. Log-and-continue on failure (unlike the album
+          // worker's enrichment enqueue, which is deliberately left unwrapped):
+          // the enrichment above already succeeded and persisted, so failing/
+          // retrying this whole rate-limited MusicBrainz job over a queue-
+          // producer hiccup would be disproportionate — the next
+          // `reindex:search` (or a later re-enqueue) still picks up the genres.
+          try {
+            await searchQueue.enqueueAlbumSync(job.data.spotifyId);
+          } catch (enqueueErr) {
+            logger.warn(
+              `Could not enqueue post-enrichment search-sync for album ` +
+                `${job.data.spotifyId}: ` +
+                `${enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr)}`,
+            );
+          }
         }
       } catch (err) {
         if (err instanceof Prisma.PrismaClientValidationError) {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Logger } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import { MeiliService } from "../src/search/meili.service.js";
 import {
@@ -153,6 +154,40 @@ describe("MeiliService", () => {
     expect(call.body).toEqual({ q: "radiohead", limit: 20, offset: 0 });
     expect(page.hits).toEqual([albumDoc]);
     expect(page.estimatedTotalHits).toBe(1);
+  });
+
+  // judgment-day fix: Meilisearch's document-write endpoints are async — a 2xx
+  // only means the write TASK was accepted, not that it succeeded. Logging the
+  // `taskUid` gives an operator a way to cross-reference Meili's own task
+  // history if a write silently fails Meili-side.
+  it("logs the Meilisearch taskUid returned by a document-write call", async () => {
+    stubFetch(calls, () => okResponse({ taskUid: 42, indexUid: ALBUMS_INDEX }));
+    const debugSpy = vi
+      .spyOn(Logger.prototype, "debug")
+      .mockImplementation(() => undefined);
+    const service = new MeiliService(config({ MEILI_HOST: "http://meili:7700" }));
+
+    await service.indexAlbums([albumDoc]);
+
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.stringContaining("42"),
+    );
+
+    debugSpy.mockRestore();
+  });
+
+  it("does not log a taskUid for responses that don't carry one (e.g. search)", async () => {
+    stubFetch(calls, () => okResponse({ hits: [], estimatedTotalHits: 0 }));
+    const debugSpy = vi
+      .spyOn(Logger.prototype, "debug")
+      .mockImplementation(() => undefined);
+    const service = new MeiliService(config({ MEILI_HOST: "http://meili:7700" }));
+
+    await service.searchAlbums("x", { limit: 10, offset: 0 });
+
+    expect(debugSpy).not.toHaveBeenCalled();
+
+    debugSpy.mockRestore();
   });
 
   it("throws on a non-OK Meilisearch response", async () => {

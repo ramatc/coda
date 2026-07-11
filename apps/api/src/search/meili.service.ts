@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   ALBUMS_INDEX,
@@ -50,6 +50,7 @@ export interface MeiliSearchParams {
  */
 @Injectable()
 export class MeiliService {
+  private readonly logger = new Logger(MeiliService.name);
   private readonly host: string;
   private readonly apiKey: string | undefined;
 
@@ -190,6 +191,18 @@ export class MeiliService {
     }
     // DELETE/PATCH task responses and search responses are all JSON; tolerate an
     // empty body defensively.
-    return (await response.json().catch(() => undefined)) as T;
+    const parsed = await response.json().catch(() => undefined);
+    // Meilisearch's document-write endpoints are ASYNC: a 2xx here only means
+    // the write task was accepted, not that it succeeded (a schema mismatch
+    // etc. can still fail Meili-side with no HTTP signal). This project
+    // deliberately does not poll task completion (fire-and-forget, per the
+    // class doc) — logging the `taskUid` is the minimal, proportionate
+    // observability fix so an operator can cross-reference Meilisearch's own
+    // task history (`GET /tasks/{taskUid}`) if something looks wrong.
+    const taskUid = (parsed as { taskUid?: unknown } | undefined)?.taskUid;
+    if (taskUid !== undefined) {
+      this.logger.debug(`Meilisearch ${method} ${path} accepted as task ${taskUid}`);
+    }
+    return parsed as T;
   }
 }
