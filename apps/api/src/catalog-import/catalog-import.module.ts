@@ -6,6 +6,7 @@ import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { MusicBrainzClient } from "./musicbrainz.client.js";
 import { MusicBrainzEnrichService } from "./musicbrainz-enrich.service.js";
+import { SearchModule } from "../search/search.module.js";
 
 /**
  * Catalog-import module (PR5 Spotify bulk seed + PR6 MusicBrainz enrichment).
@@ -18,8 +19,13 @@ import { MusicBrainzEnrichService } from "./musicbrainz-enrich.service.js";
  * and all infra connections (Redis, BullMQ queues) are opened lazily, so
  * importing this module into `AppModule` never touches Redis at boot.
  * `PrismaService` and `ConfigService` come from their global modules.
+ *
+ * Imports {@link SearchModule} (one-way: search never depends back on catalog)
+ * so {@link CatalogImportService} and the catalog worker can enqueue search-sync
+ * jobs — the Meilisearch write-through is chained onto each album upsert (PR7).
  */
 @Module({
+  imports: [SearchModule],
   controllers: [CatalogImportController],
   providers: [
     CatalogImportService,

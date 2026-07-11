@@ -7,12 +7,16 @@ import {
   CATALOG_PAGE_QUEUE,
   MUSICBRAINZ_RATE_LIMIT,
 } from "../src/catalog-import/catalog-import.constants.js";
+import { SEARCH_SYNC_QUEUE } from "../src/search/search.constants.js";
 import { ConfigService } from "@nestjs/config";
 import { CatalogImportService } from "../src/catalog-import/catalog-import.service.js";
 import { CatalogQueue } from "../src/catalog-import/catalog-queue.js";
 import { SpotifyClient } from "../src/catalog-import/spotify.client.js";
 import { SpotifyCheckpointStore } from "../src/catalog-import/spotify-checkpoint.store.js";
 import { MusicBrainzEnrichService } from "../src/catalog-import/musicbrainz-enrich.service.js";
+import { SearchQueue } from "../src/search/search-queue.js";
+import { SearchSyncService } from "../src/search/search-sync.service.js";
+import { MeiliService } from "../src/search/meili.service.js";
 import type { NormalizedAlbum } from "../src/catalog-import/spotify.types.js";
 
 /**
@@ -124,6 +128,15 @@ describe("catalog-worker bootstrap", () => {
     enqueuePage: vi.fn().mockResolvedValue(undefined),
     enqueueEnrichment: vi.fn().mockResolvedValue(undefined),
   };
+  const fakeSearchQueue = {
+    enqueueAlbumSync: vi.fn().mockResolvedValue(undefined),
+  };
+  const fakeSearchSyncService = {
+    syncAlbum: vi.fn().mockResolvedValue({ status: "synced" }),
+  };
+  const fakeMeili = {
+    configureIndexes: vi.fn().mockResolvedValue(undefined),
+  };
   const fakeCheckpoint = {
     clear: vi.fn().mockResolvedValue(undefined),
     set: vi.fn().mockResolvedValue(undefined),
@@ -132,10 +145,12 @@ describe("catalog-worker bootstrap", () => {
   let pageProcessor: (job: FakeJob<{ offset: number; limit: number }>) => Promise<unknown>;
   let albumProcessor: (job: FakeJob<{ album: NormalizedAlbum }>) => Promise<unknown>;
   let enrichProcessor: (job: FakeJob<{ spotifyId: string }>) => Promise<unknown>;
+  let searchProcessor: (job: FakeJob<{ spotifyId: string }>) => Promise<unknown>;
   let enrichWorkerOptions:
     | { limiter?: { max: number; duration: number } }
     | undefined;
   let connectionCallsDuringBootstrap = 0;
+  let meiliConfiguredDuringBootstrap = 0;
 
   beforeAll(async () => {
     const providers = new Map<unknown, unknown>();
@@ -144,6 +159,9 @@ describe("catalog-worker bootstrap", () => {
     providers.set(CatalogImportService, fakeService);
     providers.set(MusicBrainzEnrichService, fakeEnrichService);
     providers.set(CatalogQueue, fakeQueue);
+    providers.set(SearchQueue, fakeSearchQueue);
+    providers.set(SearchSyncService, fakeSearchSyncService);
+    providers.set(MeiliService, fakeMeili);
     providers.set(SpotifyCheckpointStore, fakeCheckpoint);
 
     const fakeApp = {
@@ -160,6 +178,7 @@ describe("catalog-worker bootstrap", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     connectionCallsDuringBootstrap = createBullConnectionMock.mock.calls.length;
+    meiliConfiguredDuringBootstrap = fakeMeili.configureIndexes.mock.calls.length;
     pageProcessor = workerInstances.find((w) => w.queueName === CATALOG_PAGE_QUEUE)!
       .processor as typeof pageProcessor;
     albumProcessor = workerInstances.find((w) => w.queueName === CATALOG_ALBUM_QUEUE)!
@@ -169,6 +188,8 @@ describe("catalog-worker bootstrap", () => {
     )!;
     enrichProcessor = enrichWorker.processor as typeof enrichProcessor;
     enrichWorkerOptions = enrichWorker.options;
+    searchProcessor = workerInstances.find((w) => w.queueName === SEARCH_SYNC_QUEUE)!
+      .processor as typeof searchProcessor;
   });
 
   beforeEach(() => {
@@ -181,13 +202,20 @@ describe("catalog-worker bootstrap", () => {
     fakeQueue.enqueueAlbums.mockResolvedValue(undefined);
     fakeQueue.enqueuePage.mockResolvedValue(undefined);
     fakeQueue.enqueueEnrichment.mockResolvedValue(undefined);
+    fakeSearchQueue.enqueueAlbumSync.mockResolvedValue(undefined);
+    fakeSearchSyncService.syncAlbum.mockResolvedValue({ status: "synced" });
+    fakeMeili.configureIndexes.mockResolvedValue(undefined);
     fakeCheckpoint.clear.mockResolvedValue(undefined);
     fakeCheckpoint.set.mockResolvedValue(undefined);
   });
 
   it("creates a dedicated Redis connection per Worker instead of sharing one", () => {
-    // page + album + enrich = 3 dedicated connections.
-    expect(connectionCallsDuringBootstrap).toBe(3);
+    // page + album + enrich + search-sync = 4 dedicated connections.
+    expect(connectionCallsDuringBootstrap).toBe(4);
+  });
+
+  it("configures the Meilisearch indexes once at boot", () => {
+    expect(meiliConfiguredDuringBootstrap).toBe(1);
   });
 
   it("fans out a page's albums via the bulk enqueue, then enqueues the next page BEFORE advancing the checkpoint", async () => {
@@ -232,11 +260,12 @@ describe("catalog-worker bootstrap", () => {
     expect(fakeQueue.enqueuePage).not.toHaveBeenCalled();
   });
 
-  it("album worker chains MusicBrainz enrichment after a successful upsert (PR6)", async () => {
+  it("album worker chains MusicBrainz enrichment AND search-sync after a successful upsert (PR6/PR7)", async () => {
     await albumProcessor({ data: { album: album("a1") } });
 
     expect(fakeService.upsertAlbum).toHaveBeenCalledTimes(1);
     expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledWith("a1");
+    expect(fakeSearchQueue.enqueueAlbumSync).toHaveBeenCalledWith("a1");
   });
 
   it("album worker skips a malformed record (Prisma validation error) instead of failing the job", async () => {
@@ -247,8 +276,9 @@ describe("catalog-worker bootstrap", () => {
     await expect(
       albumProcessor({ data: { album: album("bad") } }),
     ).resolves.toBeUndefined();
-    // A skipped album must NOT be chained into enrichment.
+    // A skipped album must NOT be chained into enrichment OR search-sync.
     expect(fakeQueue.enqueueEnrichment).not.toHaveBeenCalled();
+    expect(fakeSearchQueue.enqueueAlbumSync).not.toHaveBeenCalled();
   });
 
   it("album worker skips a P2002 unique-constraint conflict instead of failing the job (judgment-day issue #7)", async () => {
@@ -309,6 +339,55 @@ describe("catalog-worker bootstrap", () => {
     expect(fakeEnrichService.enrichAlbum).toHaveBeenCalledWith("sp1");
   });
 
+  // judgment-day fix: the album-upsert worker's search-sync enqueue fires
+  // BEFORE enrichment ever runs, so genres are still empty at that point —
+  // this second enqueue after a successful enrichment is the only place that
+  // ever refreshes `genreNames`/`genreSlugs` in the search index.
+  it("enrich worker re-enqueues a search-sync after a successful enrichment (judgment-day fix)", async () => {
+    fakeEnrichService.enrichAlbum.mockResolvedValue({
+      status: "enriched",
+      mbid: "mb-1",
+      genres: 2,
+    });
+
+    await enrichProcessor({ data: { spotifyId: "sp1" } });
+
+    expect(fakeSearchQueue.enqueueAlbumSync).toHaveBeenCalledWith("sp1");
+  });
+
+  it("enrich worker does NOT re-enqueue a search-sync when enrichment didn't change genres (no-match/already-enriched/album-missing)", async () => {
+    fakeEnrichService.enrichAlbum.mockResolvedValue({ status: "no-match" });
+
+    await enrichProcessor({ data: { spotifyId: "sp2" } });
+
+    expect(fakeSearchQueue.enqueueAlbumSync).not.toHaveBeenCalled();
+  });
+
+  it("enrich worker logs and continues (doesn't fail the job) when the post-enrichment search-sync enqueue fails", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+    fakeEnrichService.enrichAlbum.mockResolvedValue({
+      status: "enriched",
+      mbid: "mb-1",
+      genres: 1,
+    });
+    fakeSearchQueue.enqueueAlbumSync.mockRejectedValue(
+      new Error("simulated Redis/BullMQ producer failure"),
+    );
+
+    await expect(
+      enrichProcessor({ data: { spotifyId: "sp1" } }),
+    ).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Could not enqueue post-enrichment search-sync for album sp1",
+      ),
+    );
+
+    warnSpy.mockRestore();
+  });
+
   it("enrich worker skips a P2002 on mbid, logging the mbid-specific Album/Artist message", async () => {
     const warnSpy = vi
       .spyOn(Logger.prototype, "warn")
@@ -359,5 +438,29 @@ describe("catalog-worker bootstrap", () => {
     await expect(
       enrichProcessor({ data: { spotifyId: "sp1" } }),
     ).rejects.toThrow(/musicbrainz unreachable/);
+  });
+
+  it("search-sync worker delegates to the sync service by spotify id (PR7)", async () => {
+    await searchProcessor({ data: { spotifyId: "sp1" } });
+
+    expect(fakeSearchSyncService.syncAlbum).toHaveBeenCalledWith("sp1");
+  });
+
+  it("search-sync worker tolerates a benign album-missing result without throwing", async () => {
+    fakeSearchSyncService.syncAlbum.mockResolvedValue({ status: "album-missing" });
+
+    await expect(
+      searchProcessor({ data: { spotifyId: "gone" } }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("search-sync worker rethrows a Meilisearch failure so BullMQ retry/backoff applies", async () => {
+    fakeSearchSyncService.syncAlbum.mockRejectedValue(
+      new Error("meilisearch unreachable"),
+    );
+
+    await expect(
+      searchProcessor({ data: { spotifyId: "sp1" } }),
+    ).rejects.toThrow(/meilisearch unreachable/);
   });
 });

@@ -16,6 +16,10 @@ import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { MusicBrainzEnrichService } from "./musicbrainz-enrich.service.js";
 import { createBullConnection } from "./catalog-redis.js";
+import { SearchQueue, type SearchSyncJobData } from "../search/search-queue.js";
+import { SearchSyncService } from "../search/search-sync.service.js";
+import { MeiliService } from "../search/meili.service.js";
+import { SEARCH_SYNC_QUEUE } from "../search/search.constants.js";
 import {
   extractUniqueConstraintField,
   isForeignKeyViolation,
@@ -45,6 +49,11 @@ import {
  *  - Enrich worker: fetches the album's MusicBrainz mbid + genres and upserts
  *    them. Carries the {@link MUSICBRAINZ_RATE_LIMIT} BullMQ limiter so the whole
  *    fleet honours MusicBrainz's ≤1 req/s policy regardless of worker count.
+ *  - Search-sync worker (PR7): projects an upserted album (+ its artist) into
+ *    Meilisearch. Chained off the album upsert (NOT gated behind the slow,
+ *    rate-limited enrichment leg), so a freshly-imported album is searchable by
+ *    title/artist promptly; a re-sync after enrichment then adds its genres.
+ *    Co-located here per the design (search-sync is a catalog-import worker).
  *
  * Fase 1 MVP scope note: a job that exhausts BullMQ's own configured retries
  * (`CATALOG_JOB_OPTIONS`) is left in the failed set for an operator to inspect
@@ -59,14 +68,32 @@ async function bootstrap(): Promise<void> {
   const service = app.get(CatalogImportService);
   const enrichService = app.get(MusicBrainzEnrichService);
   const queue = app.get(CatalogQueue);
+  const searchQueue = app.get(SearchQueue);
+  const searchSyncService = app.get(SearchSyncService);
+  const meili = app.get(MeiliService);
   const checkpoint = app.get(SpotifyCheckpointStore);
   // Each Worker gets its OWN connection (judgment-day issue #11): BullMQ's
   // Workers use blocking Redis commands, so sharing one connection between the
-  // page, album, and enrich Workers would let one Worker's blocking read stall
-  // the others' commands on the same socket.
+  // page, album, enrich, and search-sync Workers would let one Worker's blocking
+  // read stall the others' commands on the same socket.
   const pageConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
   const albumConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
   const enrichConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
+  const searchConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
+
+  // Configure the Meilisearch indexes (searchable/filterable/sortable attributes)
+  // once at boot, before any search-sync job runs. Best-effort: if Meili is
+  // unreachable this logs and continues so the catalog page/album/enrich workers
+  // still run — the search-sync jobs will retry via BullMQ backoff, and the
+  // settings get (re)applied by the next `reindex:search`.
+  try {
+    await meili.configureIndexes();
+  } catch (err) {
+    logger.warn(
+      `Could not configure Meilisearch indexes at boot: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   const pageWorker = new Worker<PageJobData>(
     CATALOG_PAGE_QUEUE,
@@ -147,6 +174,14 @@ async function bootstrap(): Promise<void> {
       // cost of retrying the whole album job (instead of just the enqueue)
       // is negligible.
       await queue.enqueueEnrichment(job.data.album.spotifyId);
+      // Chain the search-sync onto the same per-album unit (PR7). Enqueued right
+      // after upsert — NOT gated behind the rate-limited enrichment — so the
+      // album is searchable by title/artist promptly (genres land when the
+      // enrichment re-sync runs / on the next `reindex:search`). Left UNWRAPPED
+      // for the same reason as the enrichment enqueue above: a throw fails this
+      // idempotent album job and gets BullMQ's retry/backoff + failed-set
+      // visibility, rather than silently dropping the sync with no retry.
+      await searchQueue.enqueueAlbumSync(job.data.album.spotifyId);
     },
     { connection: albumConnection },
   );
@@ -165,6 +200,26 @@ async function bootstrap(): Promise<void> {
           logger.log(
             `Enrichment for album ${job.data.spotifyId}: ${result.status}`,
           );
+        } else {
+          // Re-sync the album into Meilisearch now that it carries genres
+          // (judgment-day fix): the album-upsert worker's search-sync enqueue
+          // fires BEFORE this enrichment ever runs, so `genreNames`/`genreSlugs`
+          // are still empty at that point — this is the only place that ever
+          // refreshes them. Log-and-continue on failure (unlike the album
+          // worker's enrichment enqueue, which is deliberately left unwrapped):
+          // the enrichment above already succeeded and persisted, so failing/
+          // retrying this whole rate-limited MusicBrainz job over a queue-
+          // producer hiccup would be disproportionate — the next
+          // `reindex:search` (or a later re-enqueue) still picks up the genres.
+          try {
+            await searchQueue.enqueueAlbumSync(job.data.spotifyId);
+          } catch (enqueueErr) {
+            logger.warn(
+              `Could not enqueue post-enrichment search-sync for album ` +
+                `${job.data.spotifyId}: ` +
+                `${enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr)}`,
+            );
+          }
         }
       } catch (err) {
         if (err instanceof Prisma.PrismaClientValidationError) {
@@ -220,6 +275,22 @@ async function bootstrap(): Promise<void> {
     { connection: enrichConnection, limiter: MUSICBRAINZ_RATE_LIMIT },
   );
 
+  const searchWorker = new Worker<SearchSyncJobData>(
+    SEARCH_SYNC_QUEUE,
+    async (job) => {
+      // Per-item error isolation: an album deleted between upsert and sync is a
+      // benign `album-missing` (logged, not retried); a Meilisearch write
+      // failure PROPAGATES so BullMQ's retry/backoff re-attempts the sync — the
+      // "survives Meili downtime via Redis retry" property from design
+      // Decision #6. No bespoke lock/revival/escalation logic (PR5/PR6 lesson).
+      const result = await searchSyncService.syncAlbum(job.data.spotifyId);
+      if (result.status !== "synced") {
+        logger.log(`Search-sync for album ${job.data.spotifyId}: ${result.status}`);
+      }
+    },
+    { connection: searchConnection },
+  );
+
   pageWorker.on("failed", (job, err) => {
     logger.error(`Page job ${job?.id} failed: ${err.message}`);
   });
@@ -229,9 +300,12 @@ async function bootstrap(): Promise<void> {
   enrichWorker.on("failed", (job, err) => {
     logger.error(`Enrich job ${job?.id} failed: ${err.message}`);
   });
+  searchWorker.on("failed", (job, err) => {
+    logger.error(`Search-sync job ${job?.id} failed: ${err.message}`);
+  });
 
   logger.log(
-    "Catalog seed workers running (page + album + musicbrainz-enrich). Ctrl-C to stop.",
+    "Catalog seed workers running (page + album + musicbrainz-enrich + search-sync). Ctrl-C to stop.",
   );
 
   const shutdown = async (): Promise<void> => {
@@ -239,9 +313,11 @@ async function bootstrap(): Promise<void> {
     await pageWorker.close();
     await albumWorker.close();
     await enrichWorker.close();
+    await searchWorker.close();
     await pageConnection.quit();
     await albumConnection.quit();
     await enrichConnection.quit();
+    await searchConnection.quit();
     await app.close();
     process.exit(0);
   };
