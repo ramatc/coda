@@ -426,211 +426,12 @@ describe("CatalogImportService", () => {
     expect(fakePrisma.albums.size).toBe(2);
   });
 
-  it("escalates to logger.error when enqueueEnrichment fails for EVERY album in the run — a 100% failure at/above the minimum sample size signals a down/misconfigured enrich queue, not per-album blips (judgment-day issue #1, round 3+4)", async () => {
-    const errorSpy = vi
-      .spyOn(Logger.prototype, "error")
-      .mockImplementation(() => undefined);
-    // 10 albums (2 per page x 5 pages) so `processed` meets
-    // MIN_SAMPLE_FOR_ESCALATION and the 100%-failure run still escalates.
-    const largeCatalog: NormalizedAlbum[] = Array.from({ length: 10 }, (_, i) =>
-      album(`alb-${i}`, `a-${i}`),
-    );
-    const fakeQueue = createFakeQueue();
-    fakeQueue.enqueueEnrichment.mockRejectedValue(
-      new Error("simulated Redis connection down"),
-    );
-    const service = new CatalogImportService(
-      fakePrisma.service,
-      createFakeSpotify(largeCatalog, 2),
-      createFakeCheckpoint().store,
-      fakeQueue.queue,
-    );
-
-    const result = await service.runImport();
-
-    expect(result.processed).toBe(10);
-    expect(result.enqueueAttempts).toBe(10);
-    expect(result.enqueueFailures).toBe(10);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Enrichment enqueueing failed for 10 of 10 albums this run",
-      ),
-    );
-    // The message must not assert a specific root cause as definitive
-    // (judgment-day issue #2, round 4) — `enqueueFailures` counts ANY
-    // exception from `enqueueEnrichment`, not only Redis connectivity issues.
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "likely a Redis/queue connectivity issue — check the enrich queue",
-      ),
-    );
-
-    errorSpy.mockRestore();
-  });
-
-  it("escalates to logger.error when one album is skipped at the upsert stage and every remaining enqueue attempt fails — enqueueAttempts, not processed, is the correct denominator (judgment-day issue #1, round 5)", async () => {
-    const errorSpy = vi
-      .spyOn(Logger.prototype, "error")
-      .mockImplementation(() => undefined);
-    // 11 albums: alb-0 is skipped at the upsert stage (P2002) and never
-    // reaches enqueueEnrichment; the other 10 all reach it and all fail — a
-    // genuine total outage for every album actually attempted. `processed`
-    // (11) would never equal `enqueueFailures` (10) under the old
-    // `enqueueFailures === processed` check, so this real total-outage case
-    // would previously never escalate.
-    const largeCatalog: NormalizedAlbum[] = Array.from({ length: 11 }, (_, i) =>
-      album(`alb-${i}`, `a-${i}`),
-    );
-    const skippedId = largeCatalog[0].spotifyId;
-    const client = {
-      async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
-        return fn(client);
-      },
-      artist: {
-        async upsert() {
-          return { id: "artist-1" };
-        },
-      },
-      album: {
-        async upsert(args: { where: { spotifyId: string } }) {
-          if (args.where.spotifyId === skippedId) {
-            throw new Prisma.PrismaClientKnownRequestError("duplicate", {
-              code: "P2002",
-              clientVersion: "test",
-            });
-          }
-          return { id: `album-${args.where.spotifyId}` };
-        },
-      },
-    };
-    const prisma = { client } as unknown as PrismaService;
-    const fakeQueue = createFakeQueue();
-    fakeQueue.enqueueEnrichment.mockRejectedValue(
-      new Error("simulated Redis connection down"),
-    );
-    const service = new CatalogImportService(
-      prisma,
-      createFakeSpotify(largeCatalog, 11),
-      createFakeCheckpoint().store,
-      fakeQueue.queue,
-    );
-
-    const result = await service.runImport();
-
-    expect(result.processed).toBe(11);
-    expect(result.enqueueAttempts).toBe(10);
-    expect(result.enqueueFailures).toBe(10);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Enrichment enqueueing failed for 10 of 10 albums this run",
-      ),
-    );
-
-    errorSpy.mockRestore();
-  });
-
-  it("escalates to logger.error on a 95%+ enqueue-failure ratio even when not literally 100% — a near-total outage must not hide behind strict equality (judgment-day issue #1, round 5)", async () => {
-    const errorSpy = vi
-      .spyOn(Logger.prototype, "error")
-      .mockImplementation(() => undefined);
-    // 20 albums, 19 enqueue failures = 95% — at the escalation ratio floor.
-    const largeCatalog: NormalizedAlbum[] = Array.from({ length: 20 }, (_, i) =>
-      album(`alb-${i}`, `a-${i}`),
-    );
-    const fakeQueue = createFakeQueue();
-    for (let i = 0; i < 19; i += 1) {
-      fakeQueue.enqueueEnrichment.mockRejectedValueOnce(
-        new Error("simulated Redis connection down"),
-      );
-    }
-    const service = new CatalogImportService(
-      fakePrisma.service,
-      createFakeSpotify(largeCatalog, 20),
-      createFakeCheckpoint().store,
-      fakeQueue.queue,
-    );
-
-    const result = await service.runImport();
-
-    expect(result.enqueueAttempts).toBe(20);
-    expect(result.enqueueFailures).toBe(19);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Enrichment enqueueing failed for 19 of 20 albums this run",
-      ),
-    );
-
-    errorSpy.mockRestore();
-  });
-
-  it("does NOT escalate to logger.error on a 90% enqueue-failure ratio — below the near-total-outage threshold (judgment-day issue #1, round 5)", async () => {
-    const errorSpy = vi
-      .spyOn(Logger.prototype, "error")
-      .mockImplementation(() => undefined);
-    // 20 albums, 18 enqueue failures = 90% — below the 95% escalation ratio.
-    const largeCatalog: NormalizedAlbum[] = Array.from({ length: 20 }, (_, i) =>
-      album(`alb-${i}`, `a-${i}`),
-    );
-    const fakeQueue = createFakeQueue();
-    for (let i = 0; i < 18; i += 1) {
-      fakeQueue.enqueueEnrichment.mockRejectedValueOnce(
-        new Error("simulated Redis connection down"),
-      );
-    }
-    const service = new CatalogImportService(
-      fakePrisma.service,
-      createFakeSpotify(largeCatalog, 20),
-      createFakeCheckpoint().store,
-      fakeQueue.queue,
-    );
-
-    const result = await service.runImport();
-
-    expect(result.enqueueAttempts).toBe(20);
-    expect(result.enqueueFailures).toBe(18);
-    expect(errorSpy).not.toHaveBeenCalled();
-
-    errorSpy.mockRestore();
-  });
-
-  it("does NOT escalate to logger.error on a 100%-failure run BELOW the minimum sample-size floor — a single blip on a small run must not read as a total outage (judgment-day issue #1, round 4)", async () => {
-    const errorSpy = vi
-      .spyOn(Logger.prototype, "error")
+  it("logs the run summary at WARN when the run had any enrichment enqueue failures (simplified from the escalation heuristic — Fase 1 MVP scope)", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
       .mockImplementation(() => undefined);
     const logSpy = vi
       .spyOn(Logger.prototype, "log")
-      .mockImplementation(() => undefined);
-    // Only 5 albums (below MIN_SAMPLE_FOR_ESCALATION = 10): even a 100%
-    // enqueue-failure run must stay at warn, not escalate to error.
-    const fakeQueue = createFakeQueue();
-    fakeQueue.enqueueEnrichment.mockRejectedValue(
-      new Error("simulated one-off Redis blip"),
-    );
-    const service = new CatalogImportService(
-      fakePrisma.service,
-      createFakeSpotify(catalog, 2),
-      createFakeCheckpoint().store,
-      fakeQueue.queue,
-    );
-
-    const result = await service.runImport();
-
-    expect(result.processed).toBe(5);
-    expect(result.enqueueFailures).toBe(5);
-    expect(errorSpy).not.toHaveBeenCalled();
-    // Below the floor, the run must not go silent (judgment-day issue #1,
-    // round 5): the summary `logger.log` still surfaces the failure count.
-    expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining("5 enrichment enqueue failures"),
-    );
-
-    errorSpy.mockRestore();
-    logSpy.mockRestore();
-  });
-
-  it("does NOT escalate to logger.error on a partial enqueueEnrichment failure — distinguishable from the 100%-failure case (judgment-day issue #1, round 3)", async () => {
-    const errorSpy = vi
-      .spyOn(Logger.prototype, "error")
       .mockImplementation(() => undefined);
     const fakeQueue = createFakeQueue();
     fakeQueue.enqueueEnrichment
@@ -647,14 +448,23 @@ describe("CatalogImportService", () => {
 
     expect(result.processed).toBe(5);
     expect(result.enqueueFailures).toBe(1);
-    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("1 enrichment enqueue failures"),
+    );
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("enrichment enqueue failures"),
+    );
 
-    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
   });
 
-  it("does NOT escalate to logger.error when there are zero enqueueEnrichment failures", async () => {
-    const errorSpy = vi
-      .spyOn(Logger.prototype, "error")
+  it("logs the run summary at the normal log level when there are zero enrichment enqueue failures", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+    const logSpy = vi
+      .spyOn(Logger.prototype, "log")
       .mockImplementation(() => undefined);
     const fakeQueue = createFakeQueue();
     const service = new CatalogImportService(
@@ -667,9 +477,13 @@ describe("CatalogImportService", () => {
     const result = await service.runImport();
 
     expect(result.enqueueFailures).toBe(0);
-    expect(errorSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("0 enrichment enqueue failures"),
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
 
-    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
   });
 
   it("skips enrichment chaining entirely when no queue is injected (backward compatible)", async () => {

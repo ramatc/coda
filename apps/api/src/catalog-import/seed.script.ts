@@ -43,7 +43,8 @@ async function main(): Promise<void> {
     // `result.enqueueFailures` (judgment-day issue #1, round 3): surfaced here
     // too so this CLI's own summary line — not just `runImport`'s internal
     // log — shows whether enrichment enqueueing actually worked. `runImport`
-    // already escalates a total (100%) failure to `logger.error` on its own.
+    // already logs its own summary at `logger.warn` whenever there were any
+    // enqueue failures (simplified from the earlier escalation heuristic).
     logger.log(
       `Seed finished: ${result.processed} albums across ${result.pages} pages` +
         (result.enqueueFailures > 0

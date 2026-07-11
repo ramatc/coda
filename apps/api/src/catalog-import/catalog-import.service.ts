@@ -9,11 +9,7 @@ import {
 import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { CatalogQueue } from "./catalog-queue.js";
-import {
-  ENQUEUE_FAILURE_ESCALATION_RATIO,
-  MIN_SAMPLE_FOR_ESCALATION,
-  SPOTIFY_PAGE_LIMIT,
-} from "./catalog-import.constants.js";
+import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";
 import type { CatalogCheckpointStore } from "./spotify-checkpoint.store.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
 
@@ -63,11 +59,10 @@ export interface RunImportResult {
    * Total `enqueueEnrichment` failures across every page of this run
    * (judgment-day issue #1, round 3) — the aggregate signal an operator needs
    * to detect a total enrichment-queue outage that per-album WARN logs alone
-   * would bury. When the failure ratio against {@link enqueueAttempts} meets
-   * {@link ENQUEUE_FAILURE_ESCALATION_RATIO} and `enqueueAttempts` meets the
-   * minimum sample-size floor (judgment-day issue #1, rounds 4-5), NEARLY
-   * EVERY album this run attempted failed to enqueue for enrichment, and
-   * {@link runImport} escalates that case to `logger.error`.
+   * would bury. {@link runImport} always reports this count in its summary
+   * log, at `logger.warn` whenever it is non-zero (Fase 1 MVP scope: a single
+   * operator watches the console output of their own `seed:catalog` run, so a
+   * plain elevated-level count is enough signal — no ratio/floor heuristics).
    */
   enqueueFailures: number;
 }
@@ -281,17 +276,15 @@ export class CatalogImportService {
    * enqueue attempt; judgment-day issue #1, round 5) into a run-wide total
    * (judgment-day issue #1, round 3): `importPage`'s per-album try/catch only
    * logs a WARN per failure, which an operator not tailing logs would never
-   * see — so this method's final summary always reports the count, and when
-   * the failure ratio against `enqueueAttempts` meets or exceeds
-   * {@link ENQUEUE_FAILURE_ESCALATION_RATIO} (near-total failure, the
-   * signature of a down/misconfigured enrich queue for the whole run rather
-   * than an isolated blip; judgment-day issue #1, round 5 — strict equality
-   * to 100% previously missed a near-total outage like 9999/10000) AND
-   * `enqueueAttempts` meets {@link MIN_SAMPLE_FOR_ESCALATION} (judgment-day
-   * issue #1, round 4 — below that floor a single blip would satisfy the
-   * same near-100% condition as a real outage), it escalates to
-   * `logger.error` with an explicit message instead of leaving the run
-   * looking like a clean success.
+   * see — so this method's final summary always reports the count, at
+   * `logger.warn` whenever `enqueueFailures > 0` (and the normal `logger.log`
+   * level otherwise). Fase 1 MVP scope note: a single operator manually runs
+   * `seed:catalog` and watches its own console output, so an always-present,
+   * honest count at an appropriately elevated level is enough — no
+   * ratio/floor heuristics about what fraction of failures counts as
+   * "enough" to be alarming (simplified from the escalation heuristic added
+   * in judgment-day issue #1, rounds 3-5, which over-engineered this for
+   * Fase 1's actual usage).
    */
   async runImport(options: RunImportOptions = {}): Promise<RunImportResult> {
     const limit = options.limit ?? SPOTIFY_PAGE_LIMIT;
@@ -321,28 +314,19 @@ export class CatalogImportService {
       offset = result.nextOffset;
     }
 
-    this.logger.log(
+    const summary =
       `Spotify import complete: ${processed} albums across ${pages} pages, ` +
-        `${enqueueFailures} enrichment enqueue failures`,
-    );
-    if (
-      enqueueAttempts >= MIN_SAMPLE_FOR_ESCALATION &&
-      enqueueAttempts > 0 &&
-      enqueueFailures / enqueueAttempts >= ENQUEUE_FAILURE_ESCALATION_RATIO
-    ) {
-      // Near-total (or total) enqueue failure across at least
-      // MIN_SAMPLE_FOR_ESCALATION attempts — almost certainly a down/
-      // misconfigured enrich queue for the WHOLE run, not an isolated blip
-      // (judgment-day issue #1, round 4: below that floor, "1 failure out of
-      // 1 attempt" would trip this identically to a real outage; round 5:
-      // a ratio threshold instead of exact-100% equality also catches a
-      // near-total outage like 9999/10000). A plain WARN per album buries
-      // this; escalate so it can't be missed in the run summary.
-      this.logger.error(
-        `Enrichment enqueueing failed for ${enqueueFailures} of ` +
-          `${enqueueAttempts} albums this run — likely a Redis/queue ` +
-          `connectivity issue — check the enrich queue.`,
-      );
+      `${enqueueFailures} enrichment enqueue failures`;
+    // Elevated to WARN whenever there were any enqueue failures — a single,
+    // always-present, honest count is enough signal for Fase 1 MVP's actual
+    // usage (one operator manually running `seed:catalog` and watching its
+    // own console output); no ratio/floor heuristic about what fraction of
+    // failures is "enough" to be alarming (simplified from judgment-day
+    // issue #1, rounds 3-5).
+    if (enqueueFailures > 0) {
+      this.logger.warn(summary);
+    } else {
+      this.logger.log(summary);
     }
     return { processed, pages, enqueueAttempts, enqueueFailures };
   }

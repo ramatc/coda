@@ -154,53 +154,6 @@ export const CATALOG_ENRICH_JOB_OPTIONS: JobsOptions = {
 };
 
 /**
- * Env var: optional override for {@link MIN_SAMPLE_FOR_ESCALATION} (judgment-day
- * issue #1, round 5). A resumed run's tail page (or any deliberately small
- * run) may never reach the default floor below, so a genuine total outage
- * confined to that tail would never escalate. Unset, missing, or non-numeric
- * falls back to the default.
- */
-export const CATALOG_ENRICH_MIN_SAMPLE_FOR_ESCALATION_ENV =
-  "CATALOG_ENRICH_MIN_SAMPLE_FOR_ESCALATION";
-
-/** Default {@link MIN_SAMPLE_FOR_ESCALATION} when the env override is unset. */
-const DEFAULT_MIN_SAMPLE_FOR_ESCALATION = 10;
-
-function resolveMinSampleForEscalation(): number {
-  const raw = process.env[CATALOG_ENRICH_MIN_SAMPLE_FOR_ESCALATION_ENV];
-  if (raw === undefined) {
-    return DEFAULT_MIN_SAMPLE_FOR_ESCALATION;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isNaN(parsed) ? DEFAULT_MIN_SAMPLE_FOR_ESCALATION : parsed;
-}
-
-/**
- * Minimum `enqueueAttempts` count {@link CatalogImportService.runImport}
- * requires before a near-total-`enqueueFailures` run escalates to
- * `logger.error` (judgment-day issue #1, round 4; overridable via
- * {@link CATALOG_ENRICH_MIN_SAMPLE_FOR_ESCALATION_ENV}, round 5). Without a
- * floor, "1 failure out of 1 attempt" satisfies the same near-100% condition
- * as "500 failures out of 500 attempts" — a single transient blip on a small
- * run (a short/dev-catalog run, a resumed run's tail page, or simply the last
- * page of any import) would trip the same escalation as a genuine full-run
- * outage. Below this threshold, the existing per-album `logger.warn` calls
- * are already sufficient signal; only a near-total failure across at least
- * this many enqueue attempts escalates.
- */
-export const MIN_SAMPLE_FOR_ESCALATION = resolveMinSampleForEscalation();
-
-/**
- * Minimum enqueue-failure ratio (judgment-day issue #1, round 5) at/above
- * which {@link CatalogImportService.runImport} escalates to `logger.error`.
- * Strict equality to 100% previously meant a near-total outage — e.g.
- * 9999 failures out of 10000 attempts — never escalated. 0.95 (95%+) catches
- * that case while still requiring an overwhelming majority of enqueue
- * attempts to have failed, not just a handful of unlucky ones.
- */
-export const ENQUEUE_FAILURE_ESCALATION_RATIO = 0.95;
-
-/**
  * Deterministic per-album job id (`album:{spotifyId}`). Passing this as BullMQ's
  * `jobId` makes re-enqueuing the same album a no-op at the queue level — the
  * natural-dedup guarantee the resume path relies on.
