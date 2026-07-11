@@ -6,9 +6,15 @@ import { Worker } from "bullmq";
 import { Prisma } from "@coda/db";
 import { AppModule } from "../app.module.js";
 import { CatalogImportService } from "./catalog-import.service.js";
-import { CatalogQueue, type AlbumJobData, type PageJobData } from "./catalog-queue.js";
+import {
+  CatalogQueue,
+  type AlbumJobData,
+  type EnrichJobData,
+  type PageJobData,
+} from "./catalog-queue.js";
 import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
+import { MusicBrainzEnrichService } from "./musicbrainz-enrich.service.js";
 import { createBullConnection } from "./catalog-redis.js";
 import {
   extractUniqueConstraintField,
@@ -17,7 +23,9 @@ import {
 } from "../prisma/prisma-error.util.js";
 import {
   CATALOG_ALBUM_QUEUE,
+  CATALOG_ENRICH_QUEUE,
   CATALOG_PAGE_QUEUE,
+  MUSICBRAINZ_RATE_LIMIT,
   REDIS_URL_ENV,
   SPOTIFY_PAGE_LIMIT,
 } from "./catalog-import.constants.js";
@@ -31,8 +39,12 @@ import {
  *    `album:{spotifyId}` job per album (queue-level dedup), advances the Redis
  *    checkpoint, then enqueues the next page. Killing the process leaves the
  *    checkpoint at the last completed page, so a restart resumes there.
- *  - Album worker: performs the idempotent Artist+Album upsert. PR6 chains the
- *    MusicBrainz enrichment onto this same per-album unit.
+ *  - Album worker: performs the idempotent Artist+Album upsert, then enqueues a
+ *    MusicBrainz enrichment job for that album (PR6) — the enrichment is chained
+ *    onto this same per-album unit, and only fires for albums that persisted.
+ *  - Enrich worker: fetches the album's MusicBrainz mbid + genres and upserts
+ *    them. Carries the {@link MUSICBRAINZ_RATE_LIMIT} BullMQ limiter so the whole
+ *    fleet honours MusicBrainz's ≤1 req/s policy regardless of worker count.
  *
  * Fase 1 MVP scope note: a job that exhausts BullMQ's own configured retries
  * (`CATALOG_JOB_OPTIONS`) is left in the failed set for an operator to inspect
@@ -45,14 +57,16 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService);
   const spotify = app.get(SpotifyClient);
   const service = app.get(CatalogImportService);
+  const enrichService = app.get(MusicBrainzEnrichService);
   const queue = app.get(CatalogQueue);
   const checkpoint = app.get(SpotifyCheckpointStore);
   // Each Worker gets its OWN connection (judgment-day issue #11): BullMQ's
   // Workers use blocking Redis commands, so sharing one connection between the
-  // page and album Workers would let one Worker's blocking read stall the
-  // other's commands on the same socket.
+  // page, album, and enrich Workers would let one Worker's blocking read stall
+  // the others' commands on the same socket.
   const pageConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
   const albumConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
+  const enrichConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
 
   const pageWorker = new Worker<PageJobData>(
     CATALOG_PAGE_QUEUE,
@@ -113,8 +127,97 @@ async function bootstrap(): Promise<void> {
         }
         throw err;
       }
+      // Chain MusicBrainz enrichment onto the per-album unit (PR6): only reached
+      // when the upsert above succeeded (a skipped album returns early), so we
+      // never enqueue enrichment for an album that didn't persist.
+      //
+      // Deliberately left UNWRAPPED — unlike the CLI/in-process path's
+      // try/catch around the equivalent call in
+      // `CatalogImportService.importPage` (judgment-day issue #1, round 3).
+      // A throw here fails THIS album job, which gets BullMQ's own
+      // retry/backoff (`CATALOG_JOB_OPTIONS`) plus a visible entry in the
+      // failed-job set for free — exactly the aggregate-failure signal the
+      // CLI path has no infrastructure for and had to build by hand (see
+      // `CatalogImportService.runImport`'s `enqueueFailures` tracking).
+      // Swallowing this error here instead would silently drop the
+      // enrichment enqueue with NO retry at all, which is strictly worse.
+      // The retried job re-runs `upsertAlbum` too, but that's a cheap,
+      // idempotent upsert (Decision #5) keyed on `spotifyId` — not
+      // equivalent to redoing real external work — so the redundant retry
+      // cost of retrying the whole album job (instead of just the enqueue)
+      // is negligible.
+      await queue.enqueueEnrichment(job.data.album.spotifyId);
     },
     { connection: albumConnection },
+  );
+
+  const enrichWorker = new Worker<EnrichJobData>(
+    CATALOG_ENRICH_QUEUE,
+    async (job) => {
+      // Per-item error isolation mirrors the album worker: a P2002 (the resolved
+      // mbid already claimed, OR a genre-slug / album-genre composite-key
+      // conflict from the same transaction — see the field-gated message below),
+      // a P2003, or a malformed record is logged and skipped; anything systemic
+      // (lost DB/MusicBrainz connection) propagates for BullMQ's retry/backoff.
+      try {
+        const result = await enrichService.enrichAlbum(job.data.spotifyId);
+        if (result.status !== "enriched") {
+          logger.log(
+            `Enrichment for album ${job.data.spotifyId}: ${result.status}`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientValidationError) {
+          logger.warn(
+            `Skipping enrichment for album ${job.data.spotifyId} (malformed): ${err.message}`,
+          );
+          return;
+        }
+        if (isUniqueConstraintViolation(err)) {
+          const field = extractUniqueConstraintField(err);
+          if (field === "mbid") {
+            // `field === "mbid"` alone is ambiguous WHICH table (judgment-day
+            // issue #9): both `Album.mbid` and `Artist.mbid` are columns
+            // literally named "mbid", and the driver-adapter P2002 shape this
+            // project's Postgres adapter produces for a unique-constraint
+            // violation only exposes `constraint.fields` (the column name) —
+            // no table/model attribution is available on the error object to
+            // disambiguate further (verified against `@prisma/adapter-pg`'s
+            // `mapDriverError` for code `23505`). Name both candidates
+            // explicitly so an operator knows to check both instead of
+            // assuming a single source.
+            logger.warn(
+              `Skipping enrichment for album ${job.data.spotifyId} due to a unique ` +
+                `constraint conflict on "mbid" — mbid already claimed by another ` +
+                `Album OR Artist row (ambiguous which; check both): ${err.message}`,
+            );
+            return;
+          }
+          // Any other field (judgment-day issue #2, round 2): the same
+          // transaction also does `tx.genre.upsert` (unique on `Genre.slug`)
+          // and `tx.albumGenre.upsert` (composite unique) — a P2002 on either
+          // of those is NOT an mbid conflict, so the mbid-specific narrative
+          // above would be misleading/wrong here. Log a generic message naming
+          // the actual conflicting field instead.
+          logger.warn(
+            `Skipping enrichment for album ${job.data.spotifyId} due to a unique ` +
+              `constraint conflict${field ? ` on field "${field}"` : ""}: ${err.message}`,
+          );
+          return;
+        }
+        if (isForeignKeyViolation(err)) {
+          logger.warn(
+            `Skipping enrichment for album ${job.data.spotifyId} due to a foreign key violation: ${err.message}`,
+          );
+          return;
+        }
+        throw err;
+      }
+    },
+    // The BullMQ limiter caps the enrich queue at 1 job / MusicBrainz interval
+    // across the whole worker fleet — the queue-level half of the ≤1 req/s
+    // guarantee (the client-side gate in MusicBrainzClient is the other half).
+    { connection: enrichConnection, limiter: MUSICBRAINZ_RATE_LIMIT },
   );
 
   pageWorker.on("failed", (job, err) => {
@@ -123,15 +226,22 @@ async function bootstrap(): Promise<void> {
   albumWorker.on("failed", (job, err) => {
     logger.error(`Album job ${job?.id} failed: ${err.message}`);
   });
+  enrichWorker.on("failed", (job, err) => {
+    logger.error(`Enrich job ${job?.id} failed: ${err.message}`);
+  });
 
-  logger.log("Catalog seed workers running (page + album). Ctrl-C to stop.");
+  logger.log(
+    "Catalog seed workers running (page + album + musicbrainz-enrich). Ctrl-C to stop.",
+  );
 
   const shutdown = async (): Promise<void> => {
     logger.log("Shutting down catalog workers...");
     await pageWorker.close();
     await albumWorker.close();
+    await enrichWorker.close();
     await pageConnection.quit();
     await albumConnection.quit();
+    await enrichConnection.quit();
     await app.close();
     process.exit(0);
   };

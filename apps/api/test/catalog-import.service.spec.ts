@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Logger } from "@nestjs/common";
 import { Prisma } from "@coda/db";
 import { CatalogImportService } from "../src/catalog-import/catalog-import.service.js";
 import {
@@ -8,6 +9,7 @@ import {
 import type { PrismaService } from "../src/prisma/prisma.service.js";
 import type { SpotifyClient } from "../src/catalog-import/spotify.client.js";
 import type { SpotifyCheckpointStore } from "../src/catalog-import/spotify-checkpoint.store.js";
+import type { CatalogQueue } from "../src/catalog-import/catalog-queue.js";
 import type {
   NormalizedAlbum,
   NormalizedAlbumPage,
@@ -122,6 +124,15 @@ function createFakeCheckpoint() {
     },
   } as unknown as SpotifyCheckpointStore;
   return { store, state };
+}
+
+/** Fake `CatalogQueue` stand-in exposing only what `importPage` calls. */
+function createFakeQueue() {
+  const enqueueEnrichment = vi.fn().mockResolvedValue(undefined);
+  return {
+    queue: { enqueueEnrichment } as unknown as CatalogQueue,
+    enqueueEnrichment,
+  };
 }
 
 function album(spotifyId: string, artistSpotifyId: string): NormalizedAlbum {
@@ -266,7 +277,12 @@ describe("CatalogImportService", () => {
 
     const result = await service.importPage(0, 2);
 
-    expect(result).toEqual({ processed: 2, nextOffset: null });
+    expect(result).toEqual({
+      processed: 2,
+      nextOffset: null,
+      enqueueAttempts: 0,
+      enqueueFailures: 0,
+    });
   });
 
   it("importPage skips a P2003 foreign-key violation on a single album instead of aborting the whole page (judgment-day issue #7)", async () => {
@@ -307,7 +323,245 @@ describe("CatalogImportService", () => {
 
     const result = await service.importPage(0, 2);
 
-    expect(result).toEqual({ processed: 2, nextOffset: null });
+    expect(result).toEqual({
+      processed: 2,
+      nextOffset: null,
+      enqueueAttempts: 0,
+      enqueueFailures: 0,
+    });
+  });
+
+  it("chains MusicBrainz enrichment after each successfully-upserted album on the CLI/in-process path (judgment-day issue #1)", async () => {
+    const fakeQueue = createFakeQueue();
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.importPage(0, 2);
+
+    expect(result).toEqual({
+      processed: 2,
+      nextOffset: 2,
+      enqueueAttempts: 2,
+      enqueueFailures: 0,
+    });
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledTimes(2);
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(1, "alb-0");
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(2, "alb-1");
+  });
+
+  it("does not chain enrichment for an album that was skipped due to a conflict (judgment-day issue #1)", async () => {
+    const [okAlbum, conflictingAlbum] = catalog;
+    const fakeQueue = createFakeQueue();
+    const client = {
+      async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+        return fn(client);
+      },
+      artist: {
+        async upsert() {
+          return { id: "artist-1" };
+        },
+      },
+      album: {
+        async upsert(args: { where: { spotifyId: string } }) {
+          if (args.where.spotifyId === conflictingAlbum.spotifyId) {
+            throw new Prisma.PrismaClientKnownRequestError("duplicate", {
+              code: "P2002",
+              clientVersion: "test",
+            });
+          }
+          return { id: `album-${args.where.spotifyId}` };
+        },
+      },
+    };
+    const prisma = { client } as unknown as PrismaService;
+    const spotify: SpotifyClient = {
+      async getAlbumPage(): Promise<NormalizedAlbumPage> {
+        return { albums: [okAlbum, conflictingAlbum], nextOffset: null };
+      },
+    } as unknown as SpotifyClient;
+
+    const service = new CatalogImportService(
+      prisma,
+      spotify,
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    await service.importPage(0, 2);
+
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledTimes(1);
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledWith(okAlbum.spotifyId);
+  });
+
+  it("does not count an album skipped at the upsert stage toward enqueueAttempts when a queue is injected (judgment-day issue #1, round 5)", async () => {
+    const [okAlbum, conflictingAlbum, otherOkAlbum] = catalog;
+    const fakeQueue = createFakeQueue();
+    const client = {
+      async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+        return fn(client);
+      },
+      artist: {
+        async upsert() {
+          return { id: "artist-1" };
+        },
+      },
+      album: {
+        async upsert(args: { where: { spotifyId: string } }) {
+          if (args.where.spotifyId === conflictingAlbum.spotifyId) {
+            throw new Prisma.PrismaClientKnownRequestError("duplicate", {
+              code: "P2002",
+              clientVersion: "test",
+            });
+          }
+          return { id: `album-${args.where.spotifyId}` };
+        },
+      },
+    };
+    const prisma = { client } as unknown as PrismaService;
+    const spotify: SpotifyClient = {
+      async getAlbumPage(): Promise<NormalizedAlbumPage> {
+        return {
+          albums: [okAlbum, conflictingAlbum, otherOkAlbum],
+          nextOffset: null,
+        };
+      },
+    } as unknown as SpotifyClient;
+
+    const service = new CatalogImportService(
+      prisma,
+      spotify,
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.importPage(0, 3);
+
+    // 3 albums processed, but only the 2 that survived the upsert stage
+    // reach the enqueue attempt — the skipped conflict must not inflate
+    // enqueueAttempts (nor count as an enqueueFailure).
+    expect(result).toEqual({
+      processed: 3,
+      nextOffset: null,
+      enqueueAttempts: 2,
+      enqueueFailures: 0,
+    });
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledTimes(2);
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(
+      1,
+      okAlbum.spotifyId,
+    );
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(
+      2,
+      otherOkAlbum.spotifyId,
+    );
+  });
+
+  it("does not abort the run when enqueueEnrichment fails for an album — logs and continues (judgment-day issue #1, round 2)", async () => {
+    const fakeQueue = createFakeQueue();
+    fakeQueue.enqueueEnrichment
+      .mockRejectedValueOnce(new Error("simulated Redis/BullMQ producer failure"))
+      .mockResolvedValue(undefined);
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    // Page 0 (alb-0, alb-1): enqueue fails for alb-0 but the page must still
+    // report both albums processed and proceed to enqueue alb-1.
+    const result = await service.importPage(0, 2);
+
+    expect(result).toEqual({
+      processed: 2,
+      nextOffset: 2,
+      enqueueAttempts: 2,
+      enqueueFailures: 1,
+    });
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledTimes(2);
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(1, "alb-0");
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(2, "alb-1");
+    // Both albums still persisted despite the queue failure on the first.
+    expect(fakePrisma.albums.size).toBe(2);
+  });
+
+  it("logs the run summary at WARN when the run had any enrichment enqueue failures (simplified from the escalation heuristic — Fase 1 MVP scope)", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+    const logSpy = vi
+      .spyOn(Logger.prototype, "log")
+      .mockImplementation(() => undefined);
+    const fakeQueue = createFakeQueue();
+    fakeQueue.enqueueEnrichment
+      .mockRejectedValueOnce(new Error("simulated one-off Redis blip"))
+      .mockResolvedValue(undefined);
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.runImport();
+
+    expect(result.processed).toBe(5);
+    expect(result.enqueueFailures).toBe(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("1 enrichment enqueue failures"),
+    );
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("enrichment enqueue failures"),
+    );
+
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  it("logs the run summary at the normal log level when there are zero enrichment enqueue failures", async () => {
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+    const logSpy = vi
+      .spyOn(Logger.prototype, "log")
+      .mockImplementation(() => undefined);
+    const fakeQueue = createFakeQueue();
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.runImport();
+
+    expect(result.enqueueFailures).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("0 enrichment enqueue failures"),
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  it("skips enrichment chaining entirely when no queue is injected (backward compatible)", async () => {
+    const service = new CatalogImportService(
+      fakePrisma.service,
+      createFakeSpotify(catalog, 2),
+      createFakeCheckpoint().store,
+    );
+
+    await expect(service.importPage(0, 2)).resolves.toEqual({
+      processed: 2,
+      nextOffset: 2,
+      enqueueAttempts: 0,
+      enqueueFailures: 0,
+    });
   });
 
   it("derives deterministic, dedup-safe job ids for pages and albums", () => {

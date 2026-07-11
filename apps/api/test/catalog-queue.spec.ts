@@ -3,9 +3,14 @@ import type { ConfigService } from "@nestjs/config";
 import {
   ALBUM_JOB_NAME,
   CATALOG_ALBUM_QUEUE,
+  CATALOG_ENRICH_JOB_OPTIONS,
+  CATALOG_ENRICH_QUEUE,
+  CATALOG_JOB_OPTIONS,
   CATALOG_PAGE_QUEUE,
+  ENRICH_JOB_NAME,
   PAGE_JOB_NAME,
   albumJobId,
+  enrichJobId,
   pageJobId,
 } from "../src/catalog-import/catalog-import.constants.js";
 import type { SpotifyCheckpointStore } from "../src/catalog-import/spotify-checkpoint.store.js";
@@ -22,7 +27,13 @@ vi.mock("../src/catalog-import/catalog-redis.js", () => ({
 interface FakeAddedJob {
   name: string;
   data: unknown;
-  opts: { jobId?: string; attempts?: number; backoff?: unknown; removeOnFail?: unknown };
+  opts: {
+    jobId?: string;
+    attempts?: number;
+    backoff?: unknown;
+    removeOnFail?: unknown;
+    removeOnComplete?: unknown;
+  };
 }
 
 class FakeQueue {
@@ -163,6 +174,40 @@ describe("CatalogQueue", () => {
   it("enqueueAlbums is a no-op for an empty page", async () => {
     await queue.enqueueAlbums([]);
     expect(bullmq.__queueRegistry.get(CATALOG_ALBUM_QUEUE)).toBeUndefined();
+  });
+
+  it("enqueues a MusicBrainz enrichment job with the deterministic enrich job id and retry policy (PR6)", async () => {
+    await queue.enqueueEnrichment("alb-1");
+
+    const enrichQueue = bullmq.__queueRegistry.get(CATALOG_ENRICH_QUEUE)!;
+    expect(enrichQueue.added).toHaveLength(1);
+    const job = enrichQueue.added[0];
+    expect(job.name).toBe(ENRICH_JOB_NAME);
+    expect(job.data).toEqual({ spotifyId: "alb-1" });
+    expect(job.opts.jobId).toBe(enrichJobId("alb-1"));
+    expect(job.opts.attempts).toBeGreaterThan(1);
+    expect(job.opts.backoff).toBeDefined();
+  });
+
+  it("uses a wider removeOnComplete retention for the enrich queue than the shared page/album policy (judgment-day issue #4)", async () => {
+    await queue.enqueueEnrichment("alb-1");
+
+    const enrichQueue = bullmq.__queueRegistry.get(CATALOG_ENRICH_QUEUE)!;
+    const job = enrichQueue.added[0];
+    expect(job.opts.removeOnComplete).toEqual(
+      CATALOG_ENRICH_JOB_OPTIONS.removeOnComplete,
+    );
+    expect(job.opts.removeOnComplete).not.toEqual(
+      CATALOG_JOB_OPTIONS.removeOnComplete,
+    );
+  });
+
+  it("dedupes re-enqueuing enrichment for the same album (deterministic jobId no-op)", async () => {
+    await queue.enqueueEnrichment("alb-1");
+    await queue.enqueueEnrichment("alb-1");
+
+    const enrichQueue = bullmq.__queueRegistry.get(CATALOG_ENRICH_QUEUE)!;
+    expect(enrichQueue.added).toHaveLength(1);
   });
 
   it("enqueueSeed resumes from the checkpoint offset and enqueues the first page", async () => {

@@ -7,11 +7,15 @@ import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import {
   ALBUM_JOB_NAME,
   CATALOG_ALBUM_QUEUE,
+  CATALOG_ENRICH_JOB_OPTIONS,
+  CATALOG_ENRICH_QUEUE,
   CATALOG_JOB_OPTIONS,
   CATALOG_PAGE_QUEUE,
+  ENRICH_JOB_NAME,
   PAGE_JOB_NAME,
   REDIS_URL_ENV,
   albumJobId,
+  enrichJobId,
   pageJobId,
 } from "./catalog-import.constants.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
@@ -25,6 +29,12 @@ export interface PageJobData {
 /** Data carried by a per-album job (the album to upsert / later enrich). */
 export interface AlbumJobData {
   album: NormalizedAlbum;
+}
+
+/** Data carried by a per-album MusicBrainz enrichment job (PR6). */
+export interface EnrichJobData {
+  /** Stable Spotify id of the seeded album to enrich (looked up by the worker). */
+  spotifyId: string;
 }
 
 /**
@@ -49,6 +59,7 @@ export class CatalogQueue implements OnModuleDestroy {
   private connection: Redis | undefined;
   private pageQueue: Queue<PageJobData> | undefined;
   private albumQueue: Queue<AlbumJobData> | undefined;
+  private enrichQueue: Queue<EnrichJobData> | undefined;
 
   constructor(
     private readonly config: ConfigService,
@@ -105,9 +116,29 @@ export class CatalogQueue implements OnModuleDestroy {
     );
   }
 
+  /**
+   * Enqueues a MusicBrainz enrichment job for a just-upserted album (PR6). Called
+   * by the album worker AFTER a successful upsert, so only albums that actually
+   * persisted get chained into the rate-limited enrichment leg. The deterministic
+   * `mbenrich:{spotifyId}` job id dedupes re-enqueues (resume / overlapping pages).
+   *
+   * Uses {@link CATALOG_ENRICH_JOB_OPTIONS} (NOT the shared page/album
+   * {@link CATALOG_JOB_OPTIONS}) — its wider `removeOnComplete` keeps this
+   * deterministic job id dedupe-able for far longer, appropriate for a job that
+   * costs a scarce, rate-limited MusicBrainz call (judgment-day issue #4).
+   */
+  async enqueueEnrichment(spotifyId: string): Promise<void> {
+    await this.getEnrichQueue().add(
+      ENRICH_JOB_NAME,
+      { spotifyId },
+      { ...CATALOG_ENRICH_JOB_OPTIONS, jobId: enrichJobId(spotifyId) },
+    );
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.pageQueue?.close();
     await this.albumQueue?.close();
+    await this.enrichQueue?.close();
     if (this.connection) {
       await this.connection.quit();
     }
@@ -138,6 +169,15 @@ export class CatalogQueue implements OnModuleDestroy {
     const queue =
       this.albumQueue ??
       (this.albumQueue = new Queue<AlbumJobData>(CATALOG_ALBUM_QUEUE, {
+        connection: this.getConnection(),
+      }));
+    return queue;
+  }
+
+  private getEnrichQueue(): Queue<EnrichJobData> {
+    const queue =
+      this.enrichQueue ??
+      (this.enrichQueue = new Queue<EnrichJobData>(CATALOG_ENRICH_QUEUE, {
         connection: this.getConnection(),
       }));
     return queue;

@@ -34,6 +34,22 @@ export const REDIS_URL_ENV = "REDIS_URL";
  */
 export const CATALOG_ADMIN_USER_IDS_ENV = "CATALOG_ADMIN_USER_IDS";
 
+/**
+ * Env var: descriptive User-Agent string identifying this application to
+ * MusicBrainz. MusicBrainz's usage policy REQUIRES a meaningful, contactable
+ * User-Agent (app name/version + contact URL or email), e.g.
+ * `Coda/1.0 (https://coda.example.com)`. Requests without one are throttled or
+ * blocked. Unset means the {@link MusicBrainzClient} fails fast (see its
+ * `requireConfig`).
+ */
+export const MUSICBRAINZ_USER_AGENT_ENV = "MUSICBRAINZ_USER_AGENT";
+/**
+ * Env var: optional MusicBrainz API base URL override (e.g. a self-hosted mirror
+ * or a staging proxy). Defaults to the real `https://musicbrainz.org` host, so
+ * no extra config is required in production.
+ */
+export const MUSICBRAINZ_BASE_URL_ENV = "MUSICBRAINZ_BASE_URL";
+
 /** Default Redis URL when `REDIS_URL` is unset (matches docker-compose/Fase 0). */
 export const DEFAULT_REDIS_URL = "redis://localhost:6379";
 
@@ -41,11 +57,21 @@ export const DEFAULT_REDIS_URL = "redis://localhost:6379";
 export const CATALOG_PAGE_QUEUE = "catalog-spotify-page";
 /** BullMQ queue holding per-album jobs (idempotent upsert of Artist+Album). */
 export const CATALOG_ALBUM_QUEUE = "catalog-spotify-album";
+/**
+ * BullMQ queue holding per-album MusicBrainz enrichment jobs (PR6). Chained off
+ * the per-album upsert: once the Spotify album worker persists an album, it
+ * enqueues one enrich job here to fetch its MusicBrainz mbid + genres. This
+ * queue's Worker carries the {@link MUSICBRAINZ_RATE_LIMIT} limiter so the whole
+ * fleet never exceeds MusicBrainz's ≤1 req/s policy.
+ */
+export const CATALOG_ENRICH_QUEUE = "catalog-musicbrainz-enrich";
 
 /** BullMQ job name for a page job. */
 export const PAGE_JOB_NAME = "spotify-page";
 /** BullMQ job name for a per-album job. */
 export const ALBUM_JOB_NAME = "spotify-album";
+/** BullMQ job name for a per-album MusicBrainz enrichment job. */
+export const ENRICH_JOB_NAME = "musicbrainz-enrich";
 
 /** Redis key storing the last completed page offset (the resume cursor). */
 export const CHECKPOINT_KEY = "catalog-import:spotify:offset";
@@ -67,6 +93,29 @@ export const SPOTIFY_PAGE_LIMIT = 50;
 export const SPOTIFY_SEARCH_MAX_OFFSET = 1000;
 
 /**
+ * Minimum spacing between consecutive MusicBrainz HTTP requests, in
+ * milliseconds. MusicBrainz's usage policy caps anonymous/app clients at ≤1
+ * request/second; 1100ms (not a flat 1000ms) leaves a safety margin so clock
+ * jitter or a slightly-late timer can never straddle the boundary and let two
+ * requests land inside the same 1s window. {@link MusicBrainzClient} enforces
+ * this CLIENT-side (a serialized min-interval gate) as defense-in-depth on top
+ * of the queue-level {@link MUSICBRAINZ_RATE_LIMIT}.
+ */
+export const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
+
+/**
+ * BullMQ Worker rate-limiter for the MusicBrainz enrichment queue (design
+ * Decision #4): at most ONE job processed per {@link MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS}
+ * across the whole worker fleet, so scaling out enrich workers never breaches
+ * MusicBrainz's ≤1 req/s policy. This is the queue-level guard; the client-side
+ * gate is the second layer that also covers non-worker callers.
+ */
+export const MUSICBRAINZ_RATE_LIMIT = {
+  max: 1,
+  duration: MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS,
+} as const;
+
+/**
  * Shared BullMQ retry/cleanup policy for both page and per-album jobs.
  * Without `attempts`/`backoff`, BullMQ defaults to `attempts: 1` — any
  * transient failure (Spotify 429/5xx, a DB hiccup, a malformed record)
@@ -86,6 +135,25 @@ export const CATALOG_JOB_OPTIONS: JobsOptions = {
 };
 
 /**
+ * BullMQ retry/cleanup policy for the MusicBrainz enrichment queue specifically
+ * (judgment-day issue #4, Round 4+). Reusing {@link CATALOG_JOB_OPTIONS} verbatim
+ * under-retains completed jobs for this queue: page/album jobs are cheap and
+ * plentiful, but each enrich job costs a scarce, rate-limited MusicBrainz call
+ * (≤1 req/s), so there are comparatively far fewer of them and each is far more
+ * expensive to redo. A much larger `removeOnComplete` keeps the deterministic
+ * `mbenrich:{spotifyId}` job id dedupe-able for a realistic ~100k-album seed run
+ * instead of aging out after only 1000 completions and silently reopening the
+ * door to a wasted re-lookup. `attempts`/`backoff`/`removeOnFail` stay identical
+ * to {@link CATALOG_JOB_OPTIONS} — only the completed-job retention widens.
+ */
+export const CATALOG_ENRICH_JOB_OPTIONS: JobsOptions = {
+  attempts: 5,
+  backoff: { type: "exponential", delay: 2000 },
+  removeOnComplete: { count: 50000 },
+  removeOnFail: { count: 5000 },
+};
+
+/**
  * Deterministic per-album job id (`album:{spotifyId}`). Passing this as BullMQ's
  * `jobId` makes re-enqueuing the same album a no-op at the queue level — the
  * natural-dedup guarantee the resume path relies on.
@@ -100,4 +168,14 @@ export function albumJobId(spotifyId: string): string {
  */
 export function pageJobId(offset: number): string {
   return `${PAGE_JOB_NAME}:${offset}`;
+}
+
+/**
+ * Deterministic MusicBrainz-enrichment job id (`mbenrich:{spotifyId}`). Keys the
+ * enrich job to the album's stable Spotify id so re-enqueuing the same album
+ * (on a resume, or an overlapping page) is a queue-level no-op — the same
+ * natural-dedup guarantee the Spotify album jobs rely on.
+ */
+export function enrichJobId(spotifyId: string): string {
+  return `mbenrich:${spotifyId}`;
 }
