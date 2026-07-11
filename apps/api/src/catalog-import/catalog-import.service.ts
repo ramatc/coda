@@ -9,6 +9,7 @@ import {
 import { SpotifyClient } from "./spotify.client.js";
 import { SpotifyCheckpointStore } from "./spotify-checkpoint.store.js";
 import { CatalogQueue } from "./catalog-queue.js";
+import { SearchQueue } from "../search/search-queue.js";
 import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";
 import type { CatalogCheckpointStore } from "./spotify-checkpoint.store.js";
 import type { NormalizedAlbum } from "./spotify.types.js";
@@ -122,6 +123,10 @@ export class CatalogImportService {
     private readonly spotify: SpotifyClient,
     private readonly checkpointStore: SpotifyCheckpointStore,
     private readonly queue?: CatalogQueue,
+    // Optional like `queue` (same test-construction convenience): when present,
+    // each successfully-upserted album is also chained into a search-sync so the
+    // CLI `seed:catalog` path keeps Meilisearch current, not just the queue path.
+    private readonly searchQueue?: SearchQueue,
   ) {}
 
   /**
@@ -245,6 +250,23 @@ export class CatalogImportService {
           enqueueFailures += 1;
           this.logger.warn(
             `Failed to enqueue enrichment for album ${album.spotifyId}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      if (this.searchQueue) {
+        // Best-effort, error-isolated like the enrichment enqueue above: a
+        // transient Redis/BullMQ hiccup enqueuing the search-sync must not abort
+        // the rest of the CLI run (the album already persisted, and the index
+        // can always be rebuilt with `reindex:search`). Kept intentionally
+        // simple — no aggregate failure counters here (unlike enrichment, whose
+        // counters exist for a specific judgment-day reason): a plain per-album
+        // WARN is enough operator signal for the single-operator MVP model.
+        try {
+          await this.searchQueue.enqueueAlbumSync(album.spotifyId);
+        } catch (err) {
+          this.logger.warn(
+            `Failed to enqueue search-sync for album ${album.spotifyId}: ` +
               `${err instanceof Error ? err.message : String(err)}`,
           );
         }
