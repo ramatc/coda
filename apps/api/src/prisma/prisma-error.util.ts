@@ -6,6 +6,9 @@ export const UNIQUE_CONSTRAINT_VIOLATION = "P2002";
 /** Prisma error code for a foreign-key constraint violation. */
 export const FOREIGN_KEY_VIOLATION = "P2003";
 
+/** Prisma error code for "record to update/delete does not exist". */
+export const RECORD_NOT_FOUND = "P2025";
+
 /**
  * Extracts the conflicting column name from a P2002 error thrown by this
  * project's Prisma 7 client, which ALWAYS runs on the `@prisma/adapter-pg`
@@ -72,5 +75,20 @@ export function isForeignKeyViolation(
   return (
     err instanceof Prisma.PrismaClientKnownRequestError &&
     err.code === FOREIGN_KEY_VIOLATION
+  );
+}
+
+/**
+ * Type guard for a P2025 "record not found" error from this project's Prisma
+ * client — thrown by `update`/`delete` when the targeted row is gone by the
+ * time the query runs (e.g. a concurrent delete won the race between a
+ * pre-check and the write itself; judgment-day PR8 round 2, issue #1).
+ */
+export function isRecordNotFound(
+  err: unknown,
+): err is Prisma.PrismaClientKnownRequestError {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === RECORD_NOT_FOUND
   );
 }
