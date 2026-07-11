@@ -397,6 +397,69 @@ describe("CatalogImportService", () => {
     expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledWith(okAlbum.spotifyId);
   });
 
+  it("does not count an album skipped at the upsert stage toward enqueueAttempts when a queue is injected (judgment-day issue #1, round 5)", async () => {
+    const [okAlbum, conflictingAlbum, otherOkAlbum] = catalog;
+    const fakeQueue = createFakeQueue();
+    const client = {
+      async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+        return fn(client);
+      },
+      artist: {
+        async upsert() {
+          return { id: "artist-1" };
+        },
+      },
+      album: {
+        async upsert(args: { where: { spotifyId: string } }) {
+          if (args.where.spotifyId === conflictingAlbum.spotifyId) {
+            throw new Prisma.PrismaClientKnownRequestError("duplicate", {
+              code: "P2002",
+              clientVersion: "test",
+            });
+          }
+          return { id: `album-${args.where.spotifyId}` };
+        },
+      },
+    };
+    const prisma = { client } as unknown as PrismaService;
+    const spotify: SpotifyClient = {
+      async getAlbumPage(): Promise<NormalizedAlbumPage> {
+        return {
+          albums: [okAlbum, conflictingAlbum, otherOkAlbum],
+          nextOffset: null,
+        };
+      },
+    } as unknown as SpotifyClient;
+
+    const service = new CatalogImportService(
+      prisma,
+      spotify,
+      createFakeCheckpoint().store,
+      fakeQueue.queue,
+    );
+
+    const result = await service.importPage(0, 3);
+
+    // 3 albums processed, but only the 2 that survived the upsert stage
+    // reach the enqueue attempt — the skipped conflict must not inflate
+    // enqueueAttempts (nor count as an enqueueFailure).
+    expect(result).toEqual({
+      processed: 3,
+      nextOffset: null,
+      enqueueAttempts: 2,
+      enqueueFailures: 0,
+    });
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenCalledTimes(2);
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(
+      1,
+      okAlbum.spotifyId,
+    );
+    expect(fakeQueue.enqueueEnrichment).toHaveBeenNthCalledWith(
+      2,
+      otherOkAlbum.spotifyId,
+    );
+  });
+
   it("does not abort the run when enqueueEnrichment fails for an album — logs and continues (judgment-day issue #1, round 2)", async () => {
     const fakeQueue = createFakeQueue();
     fakeQueue.enqueueEnrichment
