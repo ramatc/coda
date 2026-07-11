@@ -22,6 +22,10 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/home(.*)");
   });
 
+  it("protects the discover/search route (PR7)", () => {
+    expect(protectedRoutePatterns).toContain("/search(.*)");
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");
