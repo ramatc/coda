@@ -1,6 +1,9 @@
-# Local development infrastructure for Coda (Fase 0).
-# Postgres 17 (plain, NO pgvector — deferred to Fase 3) and Redis 7.
-# Credentials match the DATABASE_URL / REDIS_URL defaults in .env.example.
+# Local development infrastructure for Coda.
+# Fase 0: Postgres 17 (plain, NO pgvector — deferred to Fase 3) and Redis 7.
+# Fase 1 (PR7): Meilisearch as the search projection (a 3rd container mirroring
+# pg/redis — design Decision #6).
+# Credentials/hosts match the DATABASE_URL / REDIS_URL / MEILI_HOST defaults in
+# .env.example.
 
 services:
   postgres:
@@ -35,6 +38,31 @@ services:
       timeout: 3s
       retries: 5
 
+  # Search projection (PR7, design Decision #6). Meilisearch is a rebuildable
+  # read model derived from Postgres — the catalog-import pipeline write-throughs
+  # album/artist documents via the `search-sync` BullMQ queue, and the index can
+  # always be rebuilt from scratch with `pnpm --filter @coda/api reindex:search`.
+  # MEILI_MASTER_KEY here is a local-dev value only; production supplies a real
+  # secret via the deployment environment (see .env.example / MEILI_HOST).
+  meilisearch:
+    image: getmeili/meilisearch:v1.10
+    container_name: coda-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: coda_dev_master_key
+      MEILI_ENV: development
+    ports:
+      - "7700:7700"
+    volumes:
+      - coda_meilidata:/meili_data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -sf http://localhost:7700/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 volumes:
   coda_pgdata:
   coda_redisdata:
+  coda_meilidata:

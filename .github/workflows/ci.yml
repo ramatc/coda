@@ -40,12 +40,26 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
+      # Search projection (PR7). Provided as a service container mirroring
+      # pg/redis so future integration tests can exercise it; the current unit
+      # suite stubs the Meilisearch HTTP client (global `fetch`), so no live
+      # Meili round-trip is required for `pnpm turbo test` to pass.
+      meilisearch:
+        image: getmeili/meilisearch:v1.10
+        env:
+          MEILI_MASTER_KEY: coda_ci_master_key
+          MEILI_ENV: development
+        ports:
+          - 7700:7700
 
     env:
       # Point at the service containers on the runner host.
       DATABASE_URL: postgresql://coda:coda@localhost:5432/coda?schema=public
       DIRECT_URL: postgresql://coda:coda@localhost:5432/coda?schema=public
       REDIS_URL: redis://localhost:6379
+      # Meilisearch service container (PR7). Values match the service `env` above.
+      MEILI_HOST: http://localhost:7700
+      MEILI_MASTER_KEY: coda_ci_master_key
       # Dummy, syntactically-valid Clerk *test* keys — NOT real secrets and NOT
       # wired to GitHub Actions Secrets (no Clerk account in Fase 0 CI). They only
       # let `next build` succeed without a live Clerk instance. The publishable
