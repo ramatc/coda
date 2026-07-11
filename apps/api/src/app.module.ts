@@ -7,6 +7,7 @@ import { ProfileModule } from "./profile/profile.module.js";
 import { OnboardingModule } from "./onboarding/onboarding.module.js";
 import { CatalogImportModule } from "./catalog-import/catalog-import.module.js";
 import { SearchModule } from "./search/search.module.js";
+import { TrackingModule } from "./tracking/tracking.module.js";
 
 /**
  * Root module for the Coda API. Fase 1 wires the global PrismaModule (first real
@@ -14,8 +15,9 @@ import { SearchModule } from "./search/search.module.js";
  * layer (global Clerk JWT guard + webhook user sync), the profile module
  * (profile edit + R2 avatar upload), the onboarding module (preference capture +
  * gate), the catalog-import module (Spotify bulk seed — admin trigger + BullMQ
- * producer), and the search module (Meilisearch sync + `GET /search`). Remaining
- * domain feature modules land in later PR slices.
+ * producer), the search module (Meilisearch sync + `GET /search`), and the
+ * tracking module (listen/rating/review + delete paths). Remaining domain
+ * feature modules land in later PR slices.
  */
 @Module({
   imports: [
@@ -30,6 +32,7 @@ import { SearchModule } from "./search/search.module.js";
     OnboardingModule,
     CatalogImportModule,
     SearchModule,
+    TrackingModule,
     HealthModule,
   ],
 })
