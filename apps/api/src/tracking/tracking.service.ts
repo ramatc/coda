@@ -15,6 +15,12 @@ import {
   SCORE_RANGE_ERROR,
   UUID_PATTERN,
 } from "./tracking.constants.js";
+import {
+  computeAggregateRating,
+  type RatingAggregate,
+} from "./rating-aggregate.util.js";
+
+export type { RatingAggregate };
 
 export interface RateAlbumInput {
   albumId?: unknown;
@@ -32,12 +38,6 @@ export interface ListenResult {
   listenedAt: Date;
   /** `false` when an existing listen was returned instead of a new one. */
   created: boolean;
-}
-
-export interface RatingAggregate {
-  /** Mean score across every user's rating of the album, or `null` if none. */
-  average: number | null;
-  count: number;
 }
 
 export interface RatingResult {
@@ -502,14 +502,25 @@ export class TrackingService {
     };
   }
 
-  /** Resolves the local `User.id` for a Clerk user id, or throws 404. */
+  /**
+   * Resolves the local `User.id` for a Clerk user id, or throws a 404 carrying
+   * the stable `ACCOUNT_NOT_SYNCED` code (mirroring `prisma-error.util.ts`'s
+   * P2002/P2003/P2025 string-code convention, applied to an HTTP-level error
+   * instead of a Prisma one). The client checks this `code` field rather than
+   * guessing off `message` content, so it can show its friendly
+   * "still syncing" copy for exactly this case and nothing else
+   * (judgment-day PR9 round 3, finding #1).
+   */
   private async resolveUserId(clerkUserId: string): Promise<string> {
     const user = await this.prisma.client.user.findUnique({
       where: { clerkUserId },
       select: { id: true },
     });
     if (!user) {
-      throw new NotFoundException("No user found for the current session");
+      throw new NotFoundException({
+        message: "No user found for the current session",
+        code: "ACCOUNT_NOT_SYNCED",
+      });
     }
     return user.id;
   }
@@ -531,15 +542,7 @@ export class TrackingService {
    * reflected without a denormalized counter to keep in sync.
    */
   private async computeAggregate(albumId: string): Promise<RatingAggregate> {
-    const result = await this.prisma.client.rating.aggregate({
-      where: { albumId },
-      _avg: { score: true },
-      _count: { _all: true },
-    });
-    return {
-      average: result._avg.score ?? null,
-      count: result._count._all,
-    };
+    return computeAggregateRating(this.prisma, albumId);
   }
 
   /**

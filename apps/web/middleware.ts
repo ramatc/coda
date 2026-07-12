@@ -2,9 +2,10 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { protectedRoutePatterns } from "./middleware.config";
 
 /**
- * Clerk middleware. Only `/dashboard(.*)` is protected in Fase 0: matched
- * requests from unauthenticated visitors are redirected to Clerk's sign-in by
- * `auth.protect()`. Everything else (including `/`) stays public.
+ * Clerk middleware. Protected routes are defined by `protectedRoutePatterns`
+ * in `middleware.config.ts` — the single source of truth for what's gated —
+ * matched requests from unauthenticated visitors are redirected to Clerk's
+ * sign-in by `auth.protect()`. Everything else (including `/`) stays public.
  */
 const isProtectedRoute = createRouteMatcher([...protectedRoutePatterns]);
 
