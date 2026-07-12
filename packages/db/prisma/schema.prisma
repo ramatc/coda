@@ -366,7 +366,7 @@ model ActivityEvent {
   review Review? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
   rating Rating? @relation(fields: [ratingId], references: [id], onDelete: SetNull)
 
-  @@index([userId, occurredAt(sort: Desc)])
+  @@index([userId, occurredAt(sort: Desc), id(sort: Desc)])
   @@index([occurredAt(sort: Desc)])
   @@index([albumId])
   @@index([listenId])

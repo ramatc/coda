@@ -30,6 +30,10 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/albums(.*)");
   });
 
+  it("protects the personal activity route (PR10)", () => {
+    expect(protectedRoutePatterns).toContain("/activity(.*)");
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");
