@@ -448,6 +448,18 @@ describe("TrackingService", () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
+    it("tags the no-local-user 404 with a stable machine-readable code", async () => {
+      // The client (apps/web/lib/albums.ts) relies on this exact `code` to
+      // show a friendly "still syncing" message instead of the raw string
+      // below — a regression here would silently revert to the confusing
+      // message judgment-day PR9 round 2/3 fixed.
+      await expect(
+        service.markListened("clerk_ghost", ALBUM_ID),
+      ).rejects.toMatchObject({
+        response: { code: "ACCOUNT_NOT_SYNCED" },
+      });
+    });
+
     it("400s a malformed album id before any write", async () => {
       await expect(
         service.markListened("clerk_1", "not-a-uuid"),

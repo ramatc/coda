@@ -8,9 +8,10 @@
 /**
  * Route patterns treated as protected. Fase 0 protected only the dashboard;
  * Fase 1 (PR3) adds the profile pages at `/u/[username]`, PR4 adds the
- * onboarding flow (`/onboarding`) plus the app home (`/home`), and PR7 adds the
- * discover/search page (`/search`) — all require a signed-in session. `/home`
- * additionally runs the onboarding-complete gate server-side (see
+ * onboarding flow (`/onboarding`) plus the app home (`/home`), PR7 adds the
+ * discover/search page (`/search`), and PR9 adds the album detail page
+ * (`/albums/[id]`) — all require a signed-in session. `/home` and the album
+ * page additionally run the onboarding-complete gate server-side (see
  * `lib/onboarding.ts`), redirecting unonboarded users to `/onboarding`.
  */
 export const protectedRoutePatterns = [
@@ -19,4 +20,5 @@ export const protectedRoutePatterns = [
   "/onboarding(.*)",
   "/home(.*)",
   "/search(.*)",
+  "/albums(.*)",
 ] as const;

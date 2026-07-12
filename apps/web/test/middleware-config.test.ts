@@ -26,6 +26,10 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/search(.*)");
   });
 
+  it("protects the album detail route (PR9)", () => {
+    expect(protectedRoutePatterns).toContain("/albums(.*)");
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");
