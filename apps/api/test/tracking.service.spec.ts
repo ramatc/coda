@@ -1,9 +1,24 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@coda/db";
 import { TrackingService } from "../src/tracking/tracking.service.js";
 import { SCORE_RANGE_ERROR } from "../src/tracking/tracking.constants.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
+import type { RecoQueue } from "../src/recommendations/reco.queue.js";
+
+/** Records the debounced recommendation trigger fired on positive tracking writes. */
+function createRecoQueueStub() {
+  const enqueueGeneration = vi.fn().mockResolvedValue(undefined);
+  const enqueueDebouncedGeneration = vi.fn().mockResolvedValue(undefined);
+  return {
+    enqueueGeneration,
+    enqueueDebouncedGeneration,
+    queue: {
+      enqueueGeneration,
+      enqueueDebouncedGeneration,
+    } as unknown as RecoQueue,
+  };
+}
 
 /**
  * `PrismaClientKnownRequestError` builder matching the REAL driver-adapter
@@ -402,13 +417,15 @@ function createFakePrisma() {
 describe("TrackingService", () => {
   let service: TrackingService;
   let fake: ReturnType<typeof createFakePrisma>;
+  let recoQueue: ReturnType<typeof createRecoQueueStub>;
 
   beforeEach(() => {
     fake = createFakePrisma();
+    recoQueue = createRecoQueueStub();
     fake.users.set("clerk_1", "user_1");
     fake.albums.add(ALBUM_ID);
     fake.albums.add(OTHER_ALBUM_ID);
-    service = new TrackingService(fake.service);
+    service = new TrackingService(fake.service, recoQueue.queue);
   });
 
   describe("markListened", () => {
@@ -433,6 +450,27 @@ describe("TrackingService", () => {
       expect(second.id).toBe(first.id);
       expect(fake.listens).toHaveLength(1);
       expect(fake.activity).toHaveLength(1);
+    });
+
+    it("triggers a debounced recommendation refresh on a new listen (PR11 tracking trigger)", async () => {
+      await service.markListened("clerk_1", ALBUM_ID);
+      expect(recoQueue.enqueueDebouncedGeneration).toHaveBeenCalledWith("user_1");
+    });
+
+    it("does not re-trigger recommendations on an idempotent re-mark", async () => {
+      await service.markListened("clerk_1", ALBUM_ID);
+      recoQueue.enqueueDebouncedGeneration.mockClear();
+      await service.markListened("clerk_1", ALBUM_ID);
+      expect(recoQueue.enqueueDebouncedGeneration).not.toHaveBeenCalled();
+    });
+
+    it("still records the listen when the recommendation trigger throws (best-effort)", async () => {
+      recoQueue.enqueueDebouncedGeneration.mockRejectedValueOnce(
+        new Error("redis down"),
+      );
+      const result = await service.markListened("clerk_1", ALBUM_ID);
+      expect(result.created).toBe(true);
+      expect(fake.listens).toHaveLength(1);
     });
 
     it("404s when the album does not exist", async () => {
