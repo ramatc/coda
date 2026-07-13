@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BadRequestException,
   ConflictException,
@@ -7,6 +7,21 @@ import {
 import { Prisma } from "@coda/db";
 import { OnboardingService } from "../src/onboarding/onboarding.service.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
+import type { RecoQueue } from "../src/recommendations/reco.queue.js";
+
+/** Records the recommendation-generation trigger fired on onboarding completion. */
+function createRecoQueueStub() {
+  const enqueueGeneration = vi.fn().mockResolvedValue(undefined);
+  const enqueueDebouncedGeneration = vi.fn().mockResolvedValue(undefined);
+  return {
+    enqueueGeneration,
+    enqueueDebouncedGeneration,
+    queue: {
+      enqueueGeneration,
+      enqueueDebouncedGeneration,
+    } as unknown as RecoQueue,
+  };
+}
 
 /** UUID-shaped fixture ids: `artistIds`/`albumIds` are now validated as UUIDs
  * before ever reaching the (fake) Prisma client. */
@@ -277,14 +292,16 @@ function createFakePrisma(): {
 describe("OnboardingService", () => {
   let service: OnboardingService;
   let fake: ReturnType<typeof createFakePrisma>;
+  let recoQueue: ReturnType<typeof createRecoQueueStub>;
 
   beforeEach(() => {
     fake = createFakePrisma();
+    recoQueue = createRecoQueueStub();
     fake.users.set("clerk_1", "local_1");
     fake.artists.set(ARTIST_1_ID, { id: ARTIST_1_ID, name: "Radiohead" });
     fake.artists.set(ARTIST_2_ID, { id: ARTIST_2_ID, name: "Portishead" });
     fake.albums.set(ALBUM_1_ID, { id: ALBUM_1_ID, title: "OK Computer" });
-    service = new OnboardingService(fake.service);
+    service = new OnboardingService(fake.service, recoQueue.queue);
   });
 
   it("serves the fixed genre taxonomy", () => {
@@ -316,6 +333,28 @@ describe("OnboardingService", () => {
     expect(fake.genres.has("rock")).toBe(true);
     expect(fake.genrePrefs.size).toBe(3);
     expect(fake.artistFavs.size).toBe(1);
+  });
+
+  it("triggers recommendation generation for the local user on completion (PR11 cold-start trigger)", async () => {
+    await service.complete("clerk_1", {
+      genreSlugs: ["rock", "jazz", "electronic"],
+      artistIds: [ARTIST_1_ID],
+    });
+
+    expect(recoQueue.enqueueGeneration).toHaveBeenCalledWith("local_1");
+  });
+
+  it("does not fail onboarding when the recommendation trigger throws (best-effort)", async () => {
+    recoQueue.enqueueGeneration.mockRejectedValueOnce(new Error("redis down"));
+
+    const status = await service.complete("clerk_1", {
+      genreSlugs: ["rock", "jazz", "electronic"],
+      artistIds: [ARTIST_1_ID],
+    });
+
+    // Onboarding still completes even though the (derived, non-critical)
+    // recommendation enqueue failed.
+    expect(status.complete).toBe(true);
   });
 
   it("accepts up to 4 optional albums", async () => {

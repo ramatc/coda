@@ -3,6 +3,7 @@ import { TrackingController } from "./tracking.controller.js";
 import { TrackingService } from "./tracking.service.js";
 import { AlbumsController } from "./albums.controller.js";
 import { AlbumDetailService } from "./album-detail.service.js";
+import { RecommendationsModule } from "../recommendations/recommendations.module.js";
 
 /**
  * Album-tracking module (PR8 + PR9). The write side (PR8) — listen / rating /
@@ -14,6 +15,7 @@ import { AlbumDetailService } from "./album-detail.service.js";
  * `PrismaService` comes from the global PrismaModule.
  */
 @Module({
+  imports: [RecommendationsModule],
   controllers: [TrackingController, AlbumsController],
   providers: [TrackingService, AlbumDetailService],
 })

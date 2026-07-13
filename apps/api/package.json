@@ -14,6 +14,7 @@
     "dev": "tsx watch src/main.ts",
     "seed:catalog": "tsx src/catalog-import/seed.script.ts",
     "worker:catalog": "tsx src/catalog-import/catalog-worker.ts",
+    "worker:reco": "tsx src/recommendations/reco-worker.ts",
     "reindex:search": "tsx src/search/search-reindex.script.ts"
   },
   "dependencies": {

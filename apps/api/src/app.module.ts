@@ -9,6 +9,7 @@ import { CatalogImportModule } from "./catalog-import/catalog-import.module.js";
 import { SearchModule } from "./search/search.module.js";
 import { TrackingModule } from "./tracking/tracking.module.js";
 import { ActivityModule } from "./activity/activity.module.js";
+import { RecommendationsModule } from "./recommendations/recommendations.module.js";
 
 /**
  * Root module for the Coda API. Fase 1 wires the global PrismaModule (first real
@@ -17,9 +18,10 @@ import { ActivityModule } from "./activity/activity.module.js";
  * (profile edit + R2 avatar upload), the onboarding module (preference capture +
  * gate), the catalog-import module (Spotify bulk seed — admin trigger + BullMQ
  * producer), the search module (Meilisearch sync + `GET /search`), the tracking
- * module (listen/rating/review + delete paths), and the activity module (the
- * personal `GET /me/activity` stream). Remaining domain feature modules land in
- * later PR slices.
+ * module (listen/rating/review + delete paths), the activity module (the
+ * personal `GET /me/activity` stream), and the recommendations module (heuristic
+ * `Recommendation` generation + `GET /recommendations` / dismiss for `/home`).
+ * This is the final Fase 1 MVP slice — all 11 capability modules are now wired.
  */
 @Module({
   imports: [
@@ -36,6 +38,7 @@ import { ActivityModule } from "./activity/activity.module.js";
     SearchModule,
     TrackingModule,
     ActivityModule,
+    RecommendationsModule,
     HealthModule,
   ],
 })

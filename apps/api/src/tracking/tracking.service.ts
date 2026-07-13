@@ -1,10 +1,12 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { ActivityType } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { RecoQueue } from "../recommendations/reco.queue.js";
 import {
   isRecordNotFound,
   isUniqueConstraintViolation,
@@ -78,7 +80,34 @@ export interface ReviewResult {
  */
 @Injectable()
 export class TrackingService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(TrackingService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly recoQueue: RecoQueue,
+  ) {}
+
+  /**
+   * Best-effort DEBOUNCED enqueue of a recommendation regeneration for the user
+   * after a positive taste signal (a new listen, a rating, or a review) — the
+   * "debounced after N tracking events" trigger (design task 11.2). Debounce is
+   * the queue's own doing: the deterministic per-user job id + delay coalesces a
+   * burst of writes into a single regeneration (see `RecoQueue`). Non-fatal: a
+   * Redis/queue hiccup must never fail the tracking write itself — the nightly
+   * refresh and the synchronous cold-read fallback still keep recommendations
+   * current. Only positive-signal writes trigger here; deletes rely on the
+   * nightly/cold-read regeneration to drop a now-tracked album from candidates.
+   */
+  private async enqueueRecoGeneration(userId: string): Promise<void> {
+    try {
+      await this.recoQueue.enqueueDebouncedGeneration(userId);
+    } catch (err) {
+      this.logger.warn(
+        `Could not enqueue recommendation regeneration for user ${userId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   /**
    * Marks an album as listened. Idempotent per (user, album): if a `Listen`
@@ -125,6 +154,9 @@ export class TrackingService {
       });
       return created;
     });
+
+    // New listen = a fresh taste signal → debounced recommendation refresh.
+    await this.enqueueRecoGeneration(userId);
 
     return {
       id: listen.id,
@@ -290,6 +322,9 @@ export class TrackingService {
         throw err;
       }
     }
+
+    // A rating (new or edited) shifts taste → debounced recommendation refresh.
+    await this.enqueueRecoGeneration(userId);
 
     const aggregate = await this.computeAggregate(albumId);
     return { albumId, score: rating.score, aggregate, created };
@@ -493,6 +528,9 @@ export class TrackingService {
         throw err;
       }
     }
+
+    // A review is a positive taste signal → debounced recommendation refresh.
+    await this.enqueueRecoGeneration(userId);
 
     return {
       id: review.id,

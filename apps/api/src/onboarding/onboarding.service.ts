@@ -2,9 +2,11 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { RecoQueue } from "../recommendations/reco.queue.js";
 import {
   extractUniqueConstraintField,
   isUniqueConstraintViolation,
@@ -61,7 +63,12 @@ export interface CompleteOnboardingInput {
  */
 @Injectable()
 export class OnboardingService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(OnboardingService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly recoQueue: RecoQueue,
+  ) {}
 
   /** The fixed genre taxonomy offered by the onboarding genre picker. */
   listGenres(): readonly GenreSeed[] {
@@ -260,7 +267,27 @@ export class OnboardingService {
       throw err;
     }
 
+    // Kick off recommendation generation now that preferences exist — the
+    // cold-start trigger (design task 11.2), so a freshly-onboarded user gets
+    // recommendations on their first `/home` visit. Best-effort: a Redis/queue
+    // hiccup must never fail onboarding itself (recommendations are a derived
+    // side-effect, regenerable by the nightly refresh and the synchronous
+    // cold-read fallback in RecommendationsService).
+    await this.enqueueRecoGeneration(userId);
+
     return this.getStatusByUserId(userId);
+  }
+
+  /** Best-effort enqueue of a recommendation generation for the user. */
+  private async enqueueRecoGeneration(userId: string): Promise<void> {
+    try {
+      await this.recoQueue.enqueueGeneration(userId);
+    } catch (err) {
+      this.logger.warn(
+        `Could not enqueue recommendation generation for user ${userId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /** Resolves the local `User.id` for a Clerk user id, or throws 404. */
