@@ -10,6 +10,7 @@ import { SearchModule } from "./search/search.module.js";
 import { TrackingModule } from "./tracking/tracking.module.js";
 import { ActivityModule } from "./activity/activity.module.js";
 import { RecommendationsModule } from "./recommendations/recommendations.module.js";
+import { SocialModule } from "./social/social.module.js";
 
 /**
  * Root module for the Coda API. Fase 1 wires the global PrismaModule (first real
@@ -21,7 +22,8 @@ import { RecommendationsModule } from "./recommendations/recommendations.module.
  * module (listen/rating/review + delete paths), the activity module (the
  * personal `GET /me/activity` stream), and the recommendations module (heuristic
  * `Recommendation` generation + `GET /recommendations` / dismiss for `/home`).
- * This is the final Fase 1 MVP slice — all 11 capability modules are now wired.
+ * Fase 1 wired all 11 MVP capability modules; Fase 2 slice 1 adds the social
+ * module (follow/unfollow + follower/following counts on a profile).
  */
 @Module({
   imports: [
@@ -39,6 +41,7 @@ import { RecommendationsModule } from "./recommendations/recommendations.module.
     TrackingModule,
     ActivityModule,
     RecommendationsModule,
+    SocialModule,
     HealthModule,
   ],
 })
