@@ -3,7 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { ActivityType } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
+import {
+  DEFAULT_FEED_LIMIT,
+  MAX_FEED_LIMIT,
+  UUID_PATTERN,
+} from "./social.constants.js";
 
 /** Result of a follow/unfollow mutation — the caller's resulting follow state. */
 export interface FollowResult {
@@ -19,6 +25,75 @@ export interface SocialStats {
   followingCount: number;
   /** Whether the authenticated caller currently follows this profile. */
   isFollowing: boolean;
+}
+
+/** Query options accepted by {@link SocialService.getFeed}. */
+export interface FeedQuery {
+  /** Opaque cursor (a previous item's `id`); returns the page AFTER it. */
+  cursor?: string;
+  /** Requested page size (clamped to [1, {@link MAX_FEED_LIMIT}]). */
+  limit?: string | number;
+}
+
+/** The user who produced a feed event (the followed author). */
+export interface FeedActor {
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+/** The album a feed event refers to (always present — a required FK). */
+export interface FeedItemAlbum {
+  id: string;
+  title: string;
+  coverUrl: string | null;
+  primaryArtistName: string;
+}
+
+/**
+ * One entry in the followed-activity feed. Shares the personal-stream item shape
+ * (`GET /me/activity`) — same orphan-safe `score`/`reviewBody` rendering — plus
+ * an `actor` identifying which followed user produced the event.
+ */
+export interface FeedItem {
+  id: string;
+  type: ActivityType;
+  occurredAt: string;
+  album: FeedItemAlbum;
+  /** RATING score from the event's `payload` snapshot, else `null`. */
+  score: number | null;
+  /** REVIEW body from the `SetNull` relation, degrading to `null`. */
+  reviewBody: string | null;
+  /** The followed user who produced this event. */
+  actor: FeedActor;
+}
+
+/** A single cursor-paginated page of followed-activity events. */
+export interface FeedPage {
+  items: FeedItem[];
+  /** Cursor for the next (older) page, or `null` when this is the last page. */
+  nextCursor: string | null;
+}
+
+interface FeedEventRow {
+  id: string;
+  type: ActivityType;
+  occurredAt: Date;
+  payload: unknown;
+  album: {
+    id: string;
+    title: string;
+    coverUrl: string | null;
+    primaryArtist: { name: string };
+  };
+  review: { body: string } | null;
+  user: {
+    profile: {
+      username: string;
+      displayName: string;
+      avatarUrl: string | null;
+    } | null;
+  };
 }
 
 /**
@@ -113,6 +188,148 @@ export class SocialService {
   }
 
   /**
+   * Followed-activity feed backing `GET /feed`: the `ActivityEvent`s of every
+   * user the caller follows, reverse-chronological and cursor-paginated. It fans
+   * IN over the follow graph — the inverse of the personal stream
+   * (`GET /me/activity`), which shows only the caller's own events — but reuses
+   * that endpoint's exact pagination contract (`[occurredAt desc, id desc]`
+   * tie-break, `take limit+1`, opaque `id` cursor), so pages never skip or repeat
+   * a row.
+   *
+   * The query is two-step by design (Decision "Feed query"): resolve the small
+   * `followingId[]` set from `Follow`, then `ActivityEvent where userId IN (...)`.
+   * An empty follow set (or an unsynced caller with no local `User` row) short-
+   * circuits to an empty page rather than issuing an `IN ()` scan or a 404 —
+   * mirroring the activity stream's degrade-to-empty behavior. The model is open:
+   * no reciprocity or privacy check beyond "the event's owner is followed."
+   *
+   * Rendering is orphan-safe, identical to the personal stream: the RATING score
+   * comes from the event's own `payload` snapshot and the REVIEW body from a
+   * `SetNull` relation, so a stranded event degrades gracefully instead of
+   * crashing the feed. Each item additionally carries its `actor` (the followed
+   * author), fetched in the same query via a nested profile select (no N+1).
+   */
+  async getFeed(
+    clerkUserId: string,
+    query: FeedQuery = {},
+  ): Promise<FeedPage> {
+    const limit = this.resolveLimit(query.limit);
+    const cursor = this.resolveCursor(query.cursor);
+
+    const followerId = await this.resolveUserId(clerkUserId);
+    if (followerId === null) {
+      // Local user row not synced yet — no follow graph, so nothing to show.
+      return { items: [], nextCursor: null };
+    }
+
+    const following = await this.prisma.client.follow.findMany({
+      where: { followerId },
+      select: { followingId: true },
+    });
+    const followingIds = following.map((f) => f.followingId);
+    if (followingIds.length === 0) {
+      // Following nobody — short-circuit before an `IN ()` fan-in query.
+      return { items: [], nextCursor: null };
+    }
+
+    // Fetch one extra row to detect a further page without a second count query.
+    // The secondary `id` sort makes ordering deterministic when two events share
+    // the same `occurredAt`, so the cursor never skips or repeats across page
+    // boundaries — the same contract proven for `GET /me/activity`.
+    const rows = (await this.prisma.client.activityEvent.findMany({
+      where: { userId: { in: followingIds } },
+      orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        type: true,
+        occurredAt: true,
+        payload: true,
+        album: {
+          select: {
+            id: true,
+            title: true,
+            coverUrl: true,
+            primaryArtist: { select: { name: true } },
+          },
+        },
+        review: { select: { body: true } },
+        user: {
+          select: {
+            profile: {
+              select: {
+                username: true,
+                displayName: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+      },
+    })) as FeedEventRow[];
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const last = page[page.length - 1];
+
+    return {
+      items: page.map((row) => this.toFeedItem(row)),
+      nextCursor: hasMore && last ? last.id : null,
+    };
+  }
+
+  private toFeedItem(row: FeedEventRow): FeedItem {
+    const profile = row.user.profile;
+    return {
+      id: row.id,
+      type: row.type,
+      occurredAt: row.occurredAt.toISOString(),
+      album: {
+        id: row.album.id,
+        title: row.album.title,
+        coverUrl: row.album.coverUrl,
+        primaryArtistName: row.album.primaryArtist.name,
+      },
+      score:
+        row.type === ActivityType.RATING ? extractScore(row.payload) : null,
+      reviewBody: row.review?.body ?? null,
+      // A followed user always has a profile (you follow by username), but the
+      // relation is nullable in the schema, so degrade defensively rather than
+      // throw — consistent with the feed's orphan-safe rendering ethos.
+      actor: {
+        username: profile?.username ?? "",
+        displayName: profile?.displayName ?? "",
+        avatarUrl: profile?.avatarUrl ?? null,
+      },
+    };
+  }
+
+  /** Clamps the requested page size to [1, MAX], defaulting when unspecified. */
+  private resolveLimit(value: string | number | undefined): number {
+    if (value === undefined || value === "") {
+      return DEFAULT_FEED_LIMIT;
+    }
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new BadRequestException("limit must be a positive integer.");
+    }
+    return Math.min(parsed, MAX_FEED_LIMIT);
+  }
+
+  /** Validates the cursor's UUID shape (clean 400) before it reaches Postgres. */
+  private resolveCursor(value: string | undefined): string | null {
+    if (value === undefined || value === "") {
+      return null;
+    }
+    const trimmed = value.trim();
+    if (!UUID_PATTERN.test(trimmed)) {
+      throw new BadRequestException("cursor must be a valid id.");
+    }
+    return trimmed;
+  }
+
+  /**
    * Resolves the caller's local `User.id`, throwing 404 when no local row exists
    * yet (write paths require a synced account — same convention as the tracking
    * module's write flows).
@@ -150,4 +367,21 @@ export class SocialService {
     }
     return profile.userId;
   }
+}
+
+/**
+ * Reads a numeric `score` off an event's JSON `payload` snapshot, tolerating a
+ * null/absent/malformed payload — a stranded RATING event whose payload never
+ * carried a score simply renders without one rather than throwing. Kept local to
+ * the social module (the activity module has its own copy) so the two feature
+ * modules stay decoupled, matching the codebase's per-module constant duplication.
+ */
+function extractScore(payload: unknown): number | null {
+  if (payload && typeof payload === "object" && "score" in payload) {
+    const score = (payload as { score: unknown }).score;
+    if (typeof score === "number" && Number.isFinite(score)) {
+      return score;
+    }
+  }
+  return null;
 }

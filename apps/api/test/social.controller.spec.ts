@@ -12,6 +12,7 @@ describe("SocialController", () => {
   let follow: ReturnType<typeof vi.fn>;
   let unfollow: ReturnType<typeof vi.fn>;
   let getSocialStats: ReturnType<typeof vi.fn>;
+  let getFeed: ReturnType<typeof vi.fn>;
   let controller: SocialController;
 
   beforeEach(() => {
@@ -22,10 +23,12 @@ describe("SocialController", () => {
       followingCount: 5,
       isFollowing: true,
     });
+    getFeed = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
     const service = {
       follow,
       unfollow,
       getSocialStats,
+      getFeed,
     } as unknown as SocialService;
     controller = new SocialController(service);
   });
@@ -52,6 +55,31 @@ describe("SocialController", () => {
       followerCount: 3,
       followingCount: 5,
       isFollowing: true,
+    });
+  });
+
+  it("GET feed forwards caller id plus cursor and limit query params", async () => {
+    const page = {
+      items: [{ id: "e1" }],
+      nextCursor: "e1",
+    };
+    getFeed.mockResolvedValueOnce(page);
+
+    const result = await controller.getFeed("clerk_1", "cursor-abc", "10");
+
+    expect(getFeed).toHaveBeenCalledWith("clerk_1", {
+      cursor: "cursor-abc",
+      limit: "10",
+    });
+    expect(result).toBe(page);
+  });
+
+  it("GET feed forwards undefined cursor/limit when the query params are absent", async () => {
+    await controller.getFeed("clerk_1");
+
+    expect(getFeed).toHaveBeenCalledWith("clerk_1", {
+      cursor: undefined,
+      limit: undefined,
     });
   });
 });
