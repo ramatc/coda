@@ -2,8 +2,10 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getApiBaseUrl } from "../../../lib/api-client";
 import { fetchOnboardingStatus, resolveOnboardingRedirect } from "../../../lib/onboarding";
+import { fetchSocialStats } from "../../../lib/social";
 import { ProfileView, type ProfileDto } from "./profile-view";
 import { AvatarUpload } from "./avatar-upload";
+import { FollowButton } from "./follow-button";
 
 interface PublicProfileDto extends ProfileDto {
   isOwnProfile: boolean;
@@ -30,13 +32,17 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
     redirect(redirectTo);
   }
 
-  const response = await fetch(
-    `${getApiBaseUrl()}/profile/${encodeURIComponent(username)}`,
-    {
+  // Fetch the profile and social stats in parallel — one round-trip latency
+  // instead of two. `fetchSocialStats` fails safe to zero-counts, so a stats
+  // hiccup never blocks the profile render; the profile fetch alone drives the
+  // 404/error control flow below.
+  const [response, stats] = await Promise.all([
+    fetch(`${getApiBaseUrl()}/profile/${encodeURIComponent(username)}`, {
       headers: { Authorization: `Bearer ${token ?? ""}` },
       cache: "no-store",
-    },
-  );
+    }),
+    fetchSocialStats(token, username),
+  ]);
 
   if (response.status === 404) {
     notFound();
@@ -49,7 +55,17 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
   const isOwnProfile = profile.isOwnProfile;
 
   return (
-    <ProfileView profile={profile} isOwnProfile={isOwnProfile}>
+    <ProfileView
+      profile={profile}
+      isOwnProfile={isOwnProfile}
+      stats={stats}
+      followButton={
+        <FollowButton
+          username={profile.username}
+          initialFollowing={stats.isFollowing}
+        />
+      }
+    >
       <AvatarUpload />
     </ProfileView>
   );

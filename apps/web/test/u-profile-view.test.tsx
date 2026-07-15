@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ProfileView,
   type ProfileDto,
+  type ProfileSocialStats,
 } from "../app/u/[username]/profile-view";
 
 /**
@@ -20,10 +21,20 @@ const baseProfile: ProfileDto = {
   isPrivate: false,
 };
 
+const baseStats: ProfileSocialStats = {
+  followerCount: 0,
+  followingCount: 0,
+  isFollowing: false,
+};
+
 describe("ProfileView", () => {
   it("renders the username, display name, bio and avatar", () => {
     const html = renderToStaticMarkup(
-      <ProfileView profile={baseProfile} isOwnProfile={false} />,
+      <ProfileView
+        profile={baseProfile}
+        isOwnProfile={false}
+        stats={baseStats}
+      />,
     );
 
     expect(html).toContain("Ada Lovelace");
@@ -37,6 +48,7 @@ describe("ProfileView", () => {
       <ProfileView
         profile={{ ...baseProfile, avatarUrl: null }}
         isOwnProfile={false}
+        stats={baseStats}
       />,
     );
 
@@ -46,17 +58,71 @@ describe("ProfileView", () => {
 
   it("renders the owner-only upload island only for the profile owner", () => {
     const ownerHtml = renderToStaticMarkup(
-      <ProfileView profile={baseProfile} isOwnProfile>
+      <ProfileView profile={baseProfile} isOwnProfile stats={baseStats}>
         <button>upload-island</button>
       </ProfileView>,
     );
     expect(ownerHtml).toContain("upload-island");
 
     const visitorHtml = renderToStaticMarkup(
-      <ProfileView profile={baseProfile} isOwnProfile={false}>
+      <ProfileView
+        profile={baseProfile}
+        isOwnProfile={false}
+        stats={baseStats}
+      >
         <button>upload-island</button>
       </ProfileView>,
     );
     expect(visitorHtml).not.toContain("upload-island");
+  });
+
+  it("renders follower and following counts from the stats", () => {
+    const html = renderToStaticMarkup(
+      <ProfileView
+        profile={baseProfile}
+        isOwnProfile={false}
+        stats={{ followerCount: 3, followingCount: 5, isFollowing: false }}
+      />,
+    );
+
+    expect(html).toContain("<strong>3</strong> followers");
+    expect(html).toContain("<strong>5</strong> following");
+  });
+
+  it("renders the follow-button slot only when viewing another user's profile", () => {
+    const visitorHtml = renderToStaticMarkup(
+      <ProfileView
+        profile={baseProfile}
+        isOwnProfile={false}
+        stats={baseStats}
+        followButton={<button>follow-island</button>}
+      />,
+    );
+    expect(visitorHtml).toContain("follow-island");
+
+    const ownerHtml = renderToStaticMarkup(
+      <ProfileView
+        profile={baseProfile}
+        isOwnProfile
+        stats={baseStats}
+        followButton={<button>follow-island</button>}
+      />,
+    );
+    expect(ownerHtml).not.toContain("follow-island");
+  });
+
+  it("still shows counts on the owner's own profile even though the follow button is hidden", () => {
+    const html = renderToStaticMarkup(
+      <ProfileView
+        profile={baseProfile}
+        isOwnProfile
+        stats={{ followerCount: 2, followingCount: 4, isFollowing: false }}
+        followButton={<button>follow-island</button>}
+      />,
+    );
+
+    expect(html).toContain("<strong>2</strong> followers");
+    expect(html).toContain("<strong>4</strong> following");
+    expect(html).not.toContain("follow-island");
   });
 });
