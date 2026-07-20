@@ -143,8 +143,8 @@ Scripts útiles: `pnpm build` · `pnpm lint` · `pnpm typecheck` · `pnpm test`.
 | Fase | Objetivo | Estado |
 |---|---|---|
 | **F0** | Setup, diseño y CI/CD | ✅ Hecho |
-| **F1** | MVP: auth, onboarding, catálogo, tracking, perfil, reco v1 | 🚧 En curso |
-| **F2** | Social y listas: follows, feed, reseñas con likes | 🔜 |
+| **F1** | MVP: auth, onboarding, catálogo, tracking, perfil, reco v1 | ✅ Hecho |
+| **F2** | Social y listas: follows, feed, reseñas con likes | 🚧 En curso (slice 1/5 — follows + feed — hecho) |
 | **F3** | Reco v2: servicio Python, embeddings, explicabilidad | 🔜 |
 | **F4** | Gamificación: rachas, insignias, "Tu año en Coda" | 🔜 |
 | **F5** | Mobile nativo (Expo) | 🔜 |
