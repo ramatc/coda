@@ -34,3 +34,6 @@ Thumbs.db
 
 # Coverage
 coverage/
+
+# Gentle AI tooling cache (local only)
+.atl/

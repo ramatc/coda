@@ -34,6 +34,10 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/activity(.*)");
   });
 
+  it("protects the followed-activity feed route (PR4)", () => {
+    expect(protectedRoutePatterns).toContain("/feed(.*)");
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");

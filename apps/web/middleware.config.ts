@@ -10,9 +10,10 @@
  * Fase 1 (PR3) adds the profile pages at `/u/[username]`, PR4 adds the
  * onboarding flow (`/onboarding`) plus the app home (`/home`), PR7 adds the
  * discover/search page (`/search`), PR9 adds the album detail page
- * (`/albums/[id]`), and PR10 adds the personal activity stream (`/activity`) —
- * all require a signed-in session. `/home`, the album page, and the activity
- * page additionally run the onboarding-complete gate server-side (see
+ * (`/albums/[id]`), PR10 adds the personal activity stream (`/activity`), and
+ * Fase 2 PR4 adds the followed-activity feed (`/feed`) — all require a
+ * signed-in session. `/home`, the album page, and the activity page
+ * additionally run the onboarding-complete gate server-side (see
  * `lib/onboarding.ts`), redirecting unonboarded users to `/onboarding`.
  */
 export const protectedRoutePatterns = [
@@ -23,4 +24,5 @@ export const protectedRoutePatterns = [
   "/search(.*)",
   "/albums(.*)",
   "/activity(.*)",
+  "/feed(.*)",
 ] as const;
