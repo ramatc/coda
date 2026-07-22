@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@coda/db";
 import { ListsService } from "../src/lists/lists.service.js";
 import {
   MAX_DESCRIPTION_LENGTH,
@@ -17,9 +19,16 @@ const OWNER_USERNAME = "owner";
 const OTHER_CLERK = "clerk_other";
 const OTHER_ID = "22222222-2222-4222-8222-222222222222";
 const ALBUM_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const ALBUM_ID_2 = "abababab-abab-4bab-8bab-abababababab";
+const ALBUM_ID_3 = "acacacac-acac-4cac-8cac-acacacacacac";
 const PUBLIC_LIST_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const PRIVATE_LIST_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const UNKNOWN_LIST_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const OTHER_LIST_ID = "baba1111-baba-4bab-8bab-babababababa";
+const ITEM_ID_1 = "10000000-0000-4000-8000-000000000001";
+const ITEM_ID_2 = "10000000-0000-4000-8000-000000000002";
+const ITEM_ID_3 = "10000000-0000-4000-8000-000000000003";
+const UNKNOWN_ITEM_ID = "10000000-0000-4000-8000-0000000000ff";
 
 interface StoredList {
   id: string;
@@ -46,6 +55,18 @@ const ALBUM = {
   coverUrl: "https://cdn.coda.test/ok.jpg",
   primaryArtist: { name: "Radiohead" },
 };
+
+/**
+ * Builds a P2002 unique-constraint error shaped like this project's Prisma 7
+ * client, so {@link isUniqueConstraintViolation} recognizes it and the duplicate
+ * item-add path maps it to a 409 (not a 500).
+ */
+function uniqueConstraintError(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    "Unique constraint failed on the fields: (`list_id`,`album_id`)",
+    { code: "P2002", clientVersion: "test" },
+  );
+}
 
 /**
  * In-memory Prisma stand-in honouring the exact queries {@link ListsService}
@@ -185,6 +206,72 @@ function createFakePrisma() {
             _count: { items: items.filter((i) => i.listId === l.id).length },
           }));
       },
+    },
+    listItem: {
+      async findMany(args: {
+        where: { listId: string };
+      }): Promise<{ id: string; position: number }[]> {
+        return items
+          .filter((i) => i.listId === args.where.listId)
+          .sort((a, b) => a.position - b.position)
+          .map((i) => ({ id: i.id, position: i.position }));
+      },
+      async create(args: {
+        data: {
+          listId: string;
+          albumId: string;
+          position: number;
+          note: string | null;
+        };
+      }): Promise<StoredItem> {
+        const duplicate = items.some(
+          (i) =>
+            i.listId === args.data.listId && i.albumId === args.data.albumId,
+        );
+        if (duplicate) {
+          throw uniqueConstraintError();
+        }
+        const item: StoredItem = {
+          id: nextId(),
+          listId: args.data.listId,
+          albumId: args.data.albumId,
+          position: args.data.position,
+          note: args.data.note,
+        };
+        items.push(item);
+        return item;
+      },
+      async deleteMany(args: {
+        where: { id: string; listId: string };
+      }): Promise<{ count: number }> {
+        const before = items.length;
+        for (let i = items.length - 1; i >= 0; i -= 1) {
+          if (
+            items[i].id === args.where.id &&
+            items[i].listId === args.where.listId
+          ) {
+            items.splice(i, 1);
+          }
+        }
+        return { count: before - items.length };
+      },
+      async update(args: {
+        where: { id: string };
+        data: { position: number };
+      }): Promise<StoredItem> {
+        const item = items.find((i) => i.id === args.where.id);
+        if (!item) {
+          throw new Prisma.PrismaClientKnownRequestError("Record not found", {
+            code: "P2025",
+            clientVersion: "test",
+          });
+        }
+        item.position = args.data.position;
+        return item;
+      },
+    },
+    async $transaction<T>(fn: (tx: typeof client) => Promise<T>): Promise<T> {
+      return fn(client);
     },
   };
 
@@ -585,6 +672,179 @@ describe("ListsService", () => {
     it("throws 404 for an unknown username", async () => {
       await expect(
         service.getUserLists(OWNER_CLERK, "ghost"),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  function seedItem(overrides: Partial<StoredItem> = {}): StoredItem {
+    const item: StoredItem = {
+      id: overrides.id ?? ITEM_ID_1,
+      listId: overrides.listId ?? PUBLIC_LIST_ID,
+      albumId: overrides.albumId ?? ALBUM_ID,
+      position: overrides.position ?? 1,
+      note: overrides.note ?? null,
+    };
+    fake.items.push(item);
+    return item;
+  }
+
+  describe("addItem", () => {
+    it("appends the first album at position 1 and returns the detail", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      const detail = await service.addItem(OWNER_CLERK, PUBLIC_LIST_ID, {
+        albumId: ALBUM_ID,
+      });
+
+      expect(detail.items).toHaveLength(1);
+      expect(detail.items[0].position).toBe(1);
+      expect(fake.items).toHaveLength(1);
+      expect(fake.items[0]).toMatchObject({
+        listId: PUBLIC_LIST_ID,
+        albumId: ALBUM_ID,
+        position: 1,
+      });
+    });
+
+    it("appends a second album at position 2, keeping positions contiguous", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+      seedItem({ id: ITEM_ID_1, albumId: ALBUM_ID, position: 1 });
+
+      const detail = await service.addItem(OWNER_CLERK, PUBLIC_LIST_ID, {
+        albumId: ALBUM_ID_2,
+      });
+
+      expect(detail.items.map((i) => i.position)).toEqual([1, 2]);
+      expect(fake.items).toHaveLength(2);
+    });
+
+    it("stores a trimmed note and null for a blank note", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await service.addItem(OWNER_CLERK, PUBLIC_LIST_ID, {
+        albumId: ALBUM_ID,
+        note: "  opener  ",
+      });
+      await service.addItem(OWNER_CLERK, PUBLIC_LIST_ID, {
+        albumId: ALBUM_ID_2,
+        note: "   ",
+      });
+
+      expect(fake.items[0].note).toBe("opener");
+      expect(fake.items[1].note).toBeNull();
+    });
+
+    it("rejects a duplicate album with a 409 (unique-constraint violation)", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+      seedItem({ id: ITEM_ID_1, albumId: ALBUM_ID, position: 1 });
+
+      await expect(
+        service.addItem(OWNER_CLERK, PUBLIC_LIST_ID, { albumId: ALBUM_ID }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(fake.items).toHaveLength(1);
+    });
+
+    it("rejects a non-owner adding to a PUBLIC list with a 403", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+
+      await expect(
+        service.addItem(OTHER_CLERK, PUBLIC_LIST_ID, { albumId: ALBUM_ID }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(fake.items).toHaveLength(0);
+    });
+
+    it("returns 404 (not 403) when a non-owner adds to a PRIVATE list", async () => {
+      seedList({ id: PRIVATE_LIST_ID, isPublic: false });
+
+      await expect(
+        service.addItem(OTHER_CLERK, PRIVATE_LIST_ID, { albumId: ALBUM_ID }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.items).toHaveLength(0);
+    });
+
+    it("rejects an unsynced caller with a 404", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.addItem("unsynced_clerk", PUBLIC_LIST_ID, { albumId: ALBUM_ID }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.items).toHaveLength(0);
+    });
+
+    it("rejects a malformed albumId with a 400", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.addItem(OWNER_CLERK, PUBLIC_LIST_ID, { albumId: "not-a-uuid" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.items).toHaveLength(0);
+    });
+  });
+
+  describe("removeItem", () => {
+    beforeEach(() => {
+      seedList({ id: PUBLIC_LIST_ID });
+      seedItem({ id: ITEM_ID_1, albumId: ALBUM_ID, position: 1 });
+      seedItem({ id: ITEM_ID_2, albumId: ALBUM_ID_2, position: 2 });
+      seedItem({ id: ITEM_ID_3, albumId: ALBUM_ID_3, position: 3 });
+    });
+
+    it("removes the middle item and renumbers the rest to contiguous 1,2", async () => {
+      const detail = await service.removeItem(
+        OWNER_CLERK,
+        PUBLIC_LIST_ID,
+        ITEM_ID_2,
+      );
+
+      expect(detail.items).toHaveLength(2);
+      expect(detail.items.map((i) => i.position)).toEqual([1, 2]);
+      expect(detail.items.map((i) => i.id)).toEqual([ITEM_ID_1, ITEM_ID_3]);
+    });
+
+    it("returns 404 for an unknown item id", async () => {
+      await expect(
+        service.removeItem(OWNER_CLERK, PUBLIC_LIST_ID, UNKNOWN_ITEM_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.items).toHaveLength(3);
+    });
+
+    it("returns 404 when the item belongs to a DIFFERENT list (scoped delete)", async () => {
+      seedList({ id: OTHER_LIST_ID, isPublic: true });
+      const foreign = seedItem({
+        id: "20000000-0000-4000-8000-000000000001",
+        listId: OTHER_LIST_ID,
+        albumId: ALBUM_ID,
+        position: 1,
+      });
+
+      await expect(
+        service.removeItem(OWNER_CLERK, PUBLIC_LIST_ID, foreign.id),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.items.some((i) => i.id === foreign.id)).toBe(true);
+    });
+
+    it("rejects a non-owner removing from a PUBLIC list with a 403", async () => {
+      await expect(
+        service.removeItem(OTHER_CLERK, PUBLIC_LIST_ID, ITEM_ID_1),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(fake.items).toHaveLength(3);
+    });
+
+    it("returns 404 (not 403) when a non-owner removes from a PRIVATE list", async () => {
+      seedList({ id: PRIVATE_LIST_ID, isPublic: false });
+      seedItem({
+        id: "30000000-0000-4000-8000-000000000001",
+        listId: PRIVATE_LIST_ID,
+        albumId: ALBUM_ID,
+        position: 1,
+      });
+
+      await expect(
+        service.removeItem(
+          OTHER_CLERK,
+          PRIVATE_LIST_ID,
+          "30000000-0000-4000-8000-000000000001",
+        ),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
