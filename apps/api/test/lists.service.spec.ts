@@ -5,6 +5,10 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { ListsService } from "../src/lists/lists.service.js";
+import {
+  MAX_DESCRIPTION_LENGTH,
+  MAX_TITLE_LENGTH,
+} from "../src/lists/lists.constants.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
 
 const OWNER_CLERK = "clerk_owner";
@@ -262,6 +266,44 @@ describe("ListsService", () => {
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(fake.lists).toHaveLength(0);
     });
+
+    it("rejects a title longer than MAX_TITLE_LENGTH with a 400", async () => {
+      await expect(
+        service.createList(OWNER_CLERK, { title: "a".repeat(MAX_TITLE_LENGTH + 1) }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.lists).toHaveLength(0);
+    });
+
+    it("rejects a non-string description with a 400", async () => {
+      await expect(
+        service.createList(OWNER_CLERK, { title: "OK", description: 123 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.lists).toHaveLength(0);
+    });
+
+    it("rejects a description longer than MAX_DESCRIPTION_LENGTH with a 400", async () => {
+      await expect(
+        service.createList(OWNER_CLERK, {
+          title: "OK",
+          description: "a".repeat(MAX_DESCRIPTION_LENGTH + 1),
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.lists).toHaveLength(0);
+    });
+
+    it("rejects a non-boolean isRanked (string 'true') with a 400", async () => {
+      await expect(
+        service.createList(OWNER_CLERK, { title: "OK", isRanked: "true" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.lists).toHaveLength(0);
+    });
+
+    it("rejects a non-boolean isPublic (string 'true') with a 400", async () => {
+      await expect(
+        service.createList(OWNER_CLERK, { title: "OK", isPublic: "true" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.lists).toHaveLength(0);
+    });
   });
 
   describe("getList", () => {
@@ -298,6 +340,15 @@ describe("ListsService", () => {
       seedList({ id: PUBLIC_LIST_ID, isPublic: true });
 
       const detail = await service.getList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      expect(detail.id).toBe(PUBLIC_LIST_ID);
+      expect(detail.userId).toBe(OWNER_ID);
+    });
+
+    it("lets an UNSYNCED caller read a PUBLIC list (read-only unsynced access)", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+
+      const detail = await service.getList("unsynced_clerk", PUBLIC_LIST_ID);
 
       expect(detail.id).toBe(PUBLIC_LIST_ID);
       expect(detail.userId).toBe(OWNER_ID);
@@ -361,6 +412,68 @@ describe("ListsService", () => {
         service.updateList(OWNER_CLERK, UNKNOWN_LIST_ID, { title: "x" }),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
+
+    it("rejects an unsynced caller with a 404", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.updateList("unsynced_clerk", PUBLIC_LIST_ID, { title: "x" }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.lists[0].title).toBe("Best of 2026");
+    });
+
+    it("rejects an empty patch (no updatable fields) with a 400", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.updateList(OWNER_CLERK, PUBLIC_LIST_ID, {}),
+      ).rejects.toThrow("No fields to update.");
+    });
+
+    it("rejects a title longer than MAX_TITLE_LENGTH with a 400", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.updateList(OWNER_CLERK, PUBLIC_LIST_ID, {
+          title: "a".repeat(MAX_TITLE_LENGTH + 1),
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.lists[0].title).toBe("Best of 2026");
+    });
+
+    it("rejects a non-string description with a 400", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.updateList(OWNER_CLERK, PUBLIC_LIST_ID, { description: 123 }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a description longer than MAX_DESCRIPTION_LENGTH with a 400", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.updateList(OWNER_CLERK, PUBLIC_LIST_ID, {
+          description: "a".repeat(MAX_DESCRIPTION_LENGTH + 1),
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a non-boolean isRanked (string 'true') with a 400", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.updateList(OWNER_CLERK, PUBLIC_LIST_ID, { isRanked: "true" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a non-boolean isPublic (string 'true') with a 400", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.updateList(OWNER_CLERK, PUBLIC_LIST_ID, { isPublic: "true" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   describe("deleteList", () => {
@@ -387,6 +500,15 @@ describe("ListsService", () => {
 
       await expect(
         service.deleteList(OTHER_CLERK, PRIVATE_LIST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.lists).toHaveLength(1);
+    });
+
+    it("rejects an unsynced caller with a 404", async () => {
+      seedList({ id: PUBLIC_LIST_ID });
+
+      await expect(
+        service.deleteList("unsynced_clerk", PUBLIC_LIST_ID),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(fake.lists).toHaveLength(1);
     });
