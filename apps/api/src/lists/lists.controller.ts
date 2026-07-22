@@ -13,6 +13,7 @@ import {
   ListsService,
   type CreateListInput,
   type ListDetail,
+  type ListSummary,
   type UpdateListInput,
 } from "./lists.service.js";
 
@@ -21,10 +22,11 @@ import {
  * `@CurrentUser("sub")` yields the verified Clerk user id, which the service
  * maps to the local `User.id`, so a caller can only mutate their own lists.
  *
- * - `POST   /lists`      → create a list (`201`)
- * - `GET    /lists/:id`  → read a list + items (visibility-scoped)
- * - `PATCH  /lists/:id`  → edit title/description/flags (owner only)
- * - `DELETE /lists/:id`  → delete a list + items (owner only, `204`)
+ * - `POST   /lists`                 → create a list (`201`)
+ * - `GET    /lists/:id`             → read a list + items (visibility-scoped)
+ * - `PATCH  /lists/:id`             → edit title/description/flags (owner only)
+ * - `DELETE /lists/:id`             → delete a list + items (owner only, `204`)
+ * - `GET    /users/:username/lists` → profile lists (owner: all; else public)
  *
  * The controller has NO class-level prefix so the routes carry their absolute
  * paths. All validation and access logic lives in {@link ListsService}.
@@ -69,5 +71,14 @@ export class ListsController {
     @Param("id") id: string,
   ): Promise<void> {
     return this.lists.deleteList(clerkUserId, id);
+  }
+
+  /** The lists shown on `:username`'s profile (owner: all; else public only). */
+  @Get("users/:username/lists")
+  getUserLists(
+    @CurrentUser("sub") clerkUserId: string,
+    @Param("username") username: string,
+  ): Promise<ListSummary[]> {
+    return this.lists.getUserLists(clerkUserId, username);
   }
 }

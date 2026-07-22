@@ -73,4 +73,14 @@ describe("ListsController", () => {
 
     expect(deleteList).toHaveBeenCalledWith("clerk_1", "list-1");
   });
+
+  it("GET /users/:username/lists forwards caller id and username, returning summaries", async () => {
+    const summaries = [{ id: "list-1", title: "Best of 2026" }];
+    getUserLists.mockResolvedValueOnce(summaries);
+
+    const result = await controller.getUserLists("clerk_1", "bob");
+
+    expect(getUserLists).toHaveBeenCalledWith("clerk_1", "bob");
+    expect(result).toBe(summaries);
+  });
 });
