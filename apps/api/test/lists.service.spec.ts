@@ -848,4 +848,104 @@ describe("ListsService", () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  describe("reorder", () => {
+    beforeEach(() => {
+      seedList({ id: PUBLIC_LIST_ID });
+      seedItem({ id: ITEM_ID_1, albumId: ALBUM_ID, position: 1 });
+      seedItem({ id: ITEM_ID_2, albumId: ALBUM_ID_2, position: 2 });
+      seedItem({ id: ITEM_ID_3, albumId: ALBUM_ID_3, position: 3 });
+    });
+
+    it("renumbers to the requested order, contiguous and unique", async () => {
+      const detail = await service.reorder(OWNER_CLERK, PUBLIC_LIST_ID, {
+        itemIds: [ITEM_ID_3, ITEM_ID_1, ITEM_ID_2],
+      });
+
+      expect(detail.items.map((i) => i.id)).toEqual([
+        ITEM_ID_3,
+        ITEM_ID_1,
+        ITEM_ID_2,
+      ]);
+      expect(detail.items.map((i) => i.position)).toEqual([1, 2, 3]);
+    });
+
+    it("is a no-op for a single-item list", async () => {
+      fake.items.length = 0;
+      seedItem({ id: ITEM_ID_1, albumId: ALBUM_ID, position: 1 });
+
+      const detail = await service.reorder(OWNER_CLERK, PUBLIC_LIST_ID, {
+        itemIds: [ITEM_ID_1],
+      });
+
+      expect(detail.items).toHaveLength(1);
+      expect(detail.items[0]).toMatchObject({ id: ITEM_ID_1, position: 1 });
+    });
+
+    it("rejects an itemIds shorter than the list (dropped item) with a 400", async () => {
+      await expect(
+        service.reorder(OWNER_CLERK, PUBLIC_LIST_ID, {
+          itemIds: [ITEM_ID_1, ITEM_ID_2],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fake.items.map((i) => i.position).sort()).toEqual([1, 2, 3]);
+    });
+
+    it("rejects a duplicate-ID array that masks a dropped item with a 400", async () => {
+      await expect(
+        service.reorder(OWNER_CLERK, PUBLIC_LIST_ID, {
+          itemIds: [ITEM_ID_1, ITEM_ID_1, ITEM_ID_2],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects an array containing an id not on the list with a 400", async () => {
+      await expect(
+        service.reorder(OWNER_CLERK, PUBLIC_LIST_ID, {
+          itemIds: [ITEM_ID_1, ITEM_ID_2, UNKNOWN_ITEM_ID],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a non-array itemIds with a 400", async () => {
+      await expect(
+        service.reorder(OWNER_CLERK, PUBLIC_LIST_ID, {
+          itemIds: "not-an-array",
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a malformed id element with a 400", async () => {
+      await expect(
+        service.reorder(OWNER_CLERK, PUBLIC_LIST_ID, {
+          itemIds: [ITEM_ID_1, ITEM_ID_2, "not-a-uuid"],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("rejects a non-owner reordering a PUBLIC list with a 403", async () => {
+      await expect(
+        service.reorder(OTHER_CLERK, PUBLIC_LIST_ID, {
+          itemIds: [ITEM_ID_3, ITEM_ID_2, ITEM_ID_1],
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(fake.items.map((i) => i.position)).toEqual([1, 2, 3]);
+    });
+
+    it("returns 404 (not 403) when a non-owner reorders a PRIVATE list", async () => {
+      seedList({ id: PRIVATE_LIST_ID, isPublic: false });
+      seedItem({
+        id: "40000000-0000-4000-8000-000000000001",
+        listId: PRIVATE_LIST_ID,
+        albumId: ALBUM_ID,
+        position: 1,
+      });
+
+      await expect(
+        service.reorder(OTHER_CLERK, PRIVATE_LIST_ID, {
+          itemIds: ["40000000-0000-4000-8000-000000000001"],
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
 });
