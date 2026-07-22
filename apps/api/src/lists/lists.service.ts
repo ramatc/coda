@@ -321,6 +321,58 @@ export class ListsService {
   }
 
   /**
+   * Reorders the caller's own list to the exact order given by `itemIds`. The
+   * client (dnd-kit) sends the FULL desired order; the service validates that the
+   * array is a permutation of the list's current items — same length, every
+   * element unique, and set-equal to the stored ids (set equality alone is
+   * insufficient: `[id1, id1, id2]` on a 3-item list must be rejected because the
+   * duplicate masks a dropped item). A valid order assigns `position = index + 1`
+   * per row in one transaction. A single-item list is a valid no-op. Non-owner
+   * access is rejected by {@link loadListForOwnerAction} (403 public / 404
+   * private) before any write.
+   */
+  async reorder(
+    clerkUserId: string,
+    listId: unknown,
+    input: ReorderInput,
+  ): Promise<ListDetail> {
+    const id = this.validateListId(listId);
+    const userId = await this.requireCallerId(clerkUserId);
+    await this.loadListForOwnerAction(userId, id);
+    const itemIds = this.validateItemIds(input.itemIds);
+
+    await this.prisma.client.$transaction(async (tx) => {
+      const existing = await tx.listItem.findMany({
+        where: { listId: id },
+        select: { id: true },
+      });
+      const existingIds = new Set(existing.map((item) => item.id));
+      const requestedIds = new Set(itemIds);
+
+      const isPermutation =
+        itemIds.length === existing.length &&
+        requestedIds.size === itemIds.length &&
+        itemIds.every((itemId) => existingIds.has(itemId));
+      if (!isPermutation) {
+        throw new BadRequestException(
+          "itemIds must list every item on the list exactly once.",
+        );
+      }
+
+      let position = 1;
+      for (const itemId of itemIds) {
+        await tx.listItem.update({
+          where: { id: itemId },
+          data: { position },
+        });
+        position += 1;
+      }
+    });
+
+    return this.getListByIdOrThrow(id);
+  }
+
+  /**
    * READ access: resolves a list for a viewer. `null` → 404 (unknown); owner or
    * public → ok; private + non-owner → 404 (hides existence, never 403).
    */
@@ -522,6 +574,14 @@ export class ListsService {
   /** Validates an item id path/array element (clean 400). */
   private validateItemId(value: unknown): string {
     return this.validateUuid(value, "item id");
+  }
+
+  /** Validates the reorder payload is an array of UUID-shaped item ids (clean 400). */
+  private validateItemIds(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      throw new BadRequestException("itemIds must be an array.");
+    }
+    return value.map((entry) => this.validateItemId(entry));
   }
 
   /** Shared UUID-shape guard producing a clean 400 with a field-specific message. */
