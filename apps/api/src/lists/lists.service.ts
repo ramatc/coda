@@ -1,12 +1,16 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import type { Prisma } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { isUniqueConstraintViolation } from "../prisma/prisma-error.util.js";
 import {
   MAX_DESCRIPTION_LENGTH,
+  MAX_NOTE_LENGTH,
   MAX_TITLE_LENGTH,
   UUID_PATTERN,
 } from "./lists.constants.js";
@@ -25,6 +29,17 @@ export interface UpdateListInput {
   description?: unknown;
   isRanked?: unknown;
   isPublic?: unknown;
+}
+
+/** Payload accepted by {@link ListsService.addItem}. */
+export interface AddItemInput {
+  albumId?: unknown;
+  note?: unknown;
+}
+
+/** Payload accepted by {@link ListsService.reorder}. */
+export interface ReorderInput {
+  itemIds?: unknown;
 }
 
 /** One item on a list's detail view, with its album denormalized for render. */
@@ -234,6 +249,78 @@ export class ListsService {
   }
 
   /**
+   * Adds an album to the caller's own list. Non-owner access is rejected by
+   * {@link loadListForOwnerAction} (403 public / 404 private) before any write.
+   * A duplicate album violates `@@unique([listId, albumId])` (P2002) and is
+   * mapped to a 409. Positions are renumbered to a contiguous `1..n` inside the
+   * transaction so the list stays gap-free.
+   */
+  async addItem(
+    clerkUserId: string,
+    listId: unknown,
+    input: AddItemInput,
+  ): Promise<ListDetail> {
+    const id = this.validateListId(listId);
+    const userId = await this.requireCallerId(clerkUserId);
+    await this.loadListForOwnerAction(userId, id);
+    const albumId = this.validateAlbumId(input.albumId);
+    const note = this.validateNote(input.note);
+
+    try {
+      await this.prisma.client.$transaction(async (tx) => {
+        const existing = await tx.listItem.findMany({
+          where: { listId: id },
+          orderBy: { position: "asc" },
+          select: { id: true },
+        });
+        await tx.listItem.create({
+          data: { listId: id, albumId, note, position: existing.length + 1 },
+        });
+        await this.renumberItems(tx, id);
+      });
+    } catch (err) {
+      if (isUniqueConstraintViolation(err)) {
+        throw new ConflictException("This album is already on the list.");
+      }
+      throw err;
+    }
+
+    return this.getListByIdOrThrow(id);
+  }
+
+  /**
+   * Removes an item from the caller's own list. Non-owner access is rejected by
+   * {@link loadListForOwnerAction} (403 public / 404 private) before the delete.
+   * The delete is scoped by both `id` AND `listId` (`deleteMany` + `count === 0
+   * → 404`) so an owner cannot delete an item that belongs to a different list
+   * by supplying its id directly, and a lost delete race surfaces as 404 rather
+   * than an unhandled P2025 (500). Remaining items are renumbered to contiguous
+   * `1..n`, preserving their relative order.
+   */
+  async removeItem(
+    clerkUserId: string,
+    listId: unknown,
+    itemId: unknown,
+  ): Promise<ListDetail> {
+    const id = this.validateListId(listId);
+    const targetItemId = this.validateItemId(itemId);
+    const userId = await this.requireCallerId(clerkUserId);
+    await this.loadListForOwnerAction(userId, id);
+
+    await this.prisma.client.$transaction(async (tx) => {
+      const { count } = await tx.listItem.deleteMany({
+        where: { id: targetItemId, listId: id },
+      });
+      if (count === 0) {
+        throw new NotFoundException("List item not found.");
+      }
+      await this.renumberItems(tx, id);
+    });
+
+    return this.getListByIdOrThrow(id);
+  }
+
+  /**
    * READ access: resolves a list for a viewer. `null` → 404 (unknown); owner or
    * public → ok; private + non-owner → 404 (hides existence, never 403).
    */
@@ -277,6 +364,31 @@ export class ListsService {
       throw new NotFoundException("List not found.");
     }
     return list;
+  }
+
+  /**
+   * Reassigns every item's `position` to a contiguous `1..n` sequence, ordered
+   * by the current `position` (preserving relative order). The `position` column
+   * has NO unique constraint, so per-row updates are collision-free and need no
+   * two-phase temp-position dance. Runs inside the caller's `$transaction`.
+   */
+  private async renumberItems(
+    tx: Prisma.TransactionClient,
+    listId: string,
+  ): Promise<void> {
+    const items = await tx.listItem.findMany({
+      where: { listId },
+      orderBy: { position: "asc" },
+      select: { id: true },
+    });
+    let position = 1;
+    for (const item of items) {
+      await tx.listItem.update({
+        where: { id: item.id },
+        data: { position },
+      });
+      position += 1;
+    }
   }
 
   /** Re-reads a full list detail by id after a mutation (owner already authorized). */
@@ -399,13 +511,48 @@ export class ListsService {
 
   /** Validates a UUID-shaped id before it reaches Postgres (clean 400). */
   private validateListId(value: unknown): string {
+    return this.validateUuid(value, "list id");
+  }
+
+  /** Validates the `albumId` supplied when adding an item (clean 400). */
+  private validateAlbumId(value: unknown): string {
+    return this.validateUuid(value, "albumId");
+  }
+
+  /** Validates an item id path/array element (clean 400). */
+  private validateItemId(value: unknown): string {
+    return this.validateUuid(value, "item id");
+  }
+
+  /** Shared UUID-shape guard producing a clean 400 with a field-specific message. */
+  private validateUuid(value: unknown, field: string): string {
     if (typeof value === "string") {
       const trimmed = value.trim();
       if (UUID_PATTERN.test(trimmed)) {
         return trimmed;
       }
     }
-    throw new BadRequestException("list id must be a valid id.");
+    throw new BadRequestException(`${field} must be a valid id.`);
+  }
+
+  /** An optional item note: `null`/empty → `null`; else a bounded, trimmed string. */
+  private validateNote(value: unknown): string | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (typeof value !== "string") {
+      throw new BadRequestException("note must be a string.");
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    if (trimmed.length > MAX_NOTE_LENGTH) {
+      throw new BadRequestException(
+        `note must be at most ${MAX_NOTE_LENGTH} characters.`,
+      );
+    }
+    return trimmed;
   }
 
   /**
