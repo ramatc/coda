@@ -391,4 +391,79 @@ describe("ListsService", () => {
       expect(fake.lists).toHaveLength(1);
     });
   });
+
+  describe("getUserLists", () => {
+    beforeEach(() => {
+      seedList({
+        id: PUBLIC_LIST_ID,
+        title: "Public picks",
+        isPublic: true,
+        createdAt: new Date("2026-07-02T00:00:00.000Z"),
+      });
+      seedList({
+        id: PRIVATE_LIST_ID,
+        title: "Secret stash",
+        isPublic: false,
+        createdAt: new Date("2026-07-03T00:00:00.000Z"),
+      });
+    });
+
+    it("shows the owner ALL their lists (public and private), newest first", async () => {
+      const summaries = await service.getUserLists(OWNER_CLERK, OWNER_USERNAME);
+
+      expect(summaries.map((s) => s.id)).toEqual([
+        PRIVATE_LIST_ID,
+        PUBLIC_LIST_ID,
+      ]);
+      expect(summaries.map((s) => s.isPublic)).toEqual([false, true]);
+    });
+
+    it("shows a non-owner ONLY the public lists", async () => {
+      const summaries = await service.getUserLists(OTHER_CLERK, OWNER_USERNAME);
+
+      expect(summaries.map((s) => s.id)).toEqual([PUBLIC_LIST_ID]);
+      expect(summaries[0].isPublic).toBe(true);
+    });
+
+    it("shows a non-owner only public lists even when the caller is unsynced", async () => {
+      const summaries = await service.getUserLists("unsynced_clerk", OWNER_USERNAME);
+
+      expect(summaries.map((s) => s.id)).toEqual([PUBLIC_LIST_ID]);
+    });
+
+    it("reports each list's item count", async () => {
+      fake.items.push({
+        id: "item-1",
+        listId: PUBLIC_LIST_ID,
+        albumId: ALBUM_ID,
+        position: 1,
+        note: null,
+      });
+      fake.items.push({
+        id: "item-2",
+        listId: PUBLIC_LIST_ID,
+        albumId: ALBUM_ID,
+        position: 2,
+        note: null,
+      });
+
+      const summaries = await service.getUserLists(OTHER_CLERK, OWNER_USERNAME);
+
+      expect(summaries[0].itemCount).toBe(2);
+    });
+
+    it("returns an empty array for a profile with no lists (not an error)", async () => {
+      fake.usersByUsername.set("empty", OTHER_ID);
+
+      const summaries = await service.getUserLists(OWNER_CLERK, "empty");
+
+      expect(summaries).toEqual([]);
+    });
+
+    it("throws 404 for an unknown username", async () => {
+      await expect(
+        service.getUserLists(OWNER_CLERK, "ghost"),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
 });

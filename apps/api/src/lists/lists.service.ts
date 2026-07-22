@@ -53,18 +53,6 @@ export interface ListDetail {
   items: ListItemView[];
 }
 
-/** A compact list row for the profile Lists section (no items, just a count). */
-export interface ListSummary {
-  id: string;
-  title: string;
-  description: string | null;
-  isRanked: boolean;
-  isPublic: boolean;
-  itemCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
 /** Access-check projection of a list: just what the visibility branch needs. */
 interface ListAccessRow {
   userId: string;
@@ -191,46 +179,6 @@ export class ListsService {
     if (count === 0) {
       throw new NotFoundException("List not found.");
     }
-  }
-
-  /**
-   * Returns the lists shown on `username`'s profile: the owner sees ALL their
-   * lists (public and private); anyone else sees only the public ones. An
-   * unknown username is a 404; an unsynced caller simply is not the owner.
-   */
-  async getUserLists(
-    clerkUserId: string,
-    username: string,
-  ): Promise<ListSummary[]> {
-    const targetId = await this.requireTargetId(username);
-    const callerId = await this.resolveUserId(clerkUserId);
-    const isOwner = callerId !== null && callerId === targetId;
-
-    const rows = await this.prisma.client.list.findMany({
-      where: { userId: targetId, ...(isOwner ? {} : { isPublic: true }) },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        isRanked: true,
-        isPublic: true,
-        createdAt: true,
-        updatedAt: true,
-        _count: { select: { items: true } },
-      },
-    });
-
-    return (rows as unknown as ListSummaryRow[]).map((row) => ({
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      isRanked: row.isRanked,
-      isPublic: row.isPublic,
-      itemCount: row._count.items,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    }));
   }
 
   /**
@@ -429,22 +377,6 @@ export class ListsService {
     });
     return user?.id ?? null;
   }
-
-  /**
-   * Resolves the target user's local `User.id` from a `username`, throwing 404
-   * when no profile matches. Usernames are canonicalized to lowercase, matching
-   * the profile module's storage convention.
-   */
-  private async requireTargetId(username: string): Promise<string> {
-    const profile = await this.prisma.client.profile.findUnique({
-      where: { username: username.trim().toLowerCase() },
-      select: { userId: true },
-    });
-    if (!profile) {
-      throw new NotFoundException(`No user found for username ${username}.`);
-    }
-    return profile.userId;
-  }
 }
 
 /** The Prisma `select` for a full list detail (list + ordered items + album). */
@@ -496,16 +428,4 @@ interface ListRow {
       primaryArtist: { name: string };
     };
   }[];
-}
-
-/** Row shape returned by the {@link ListsService.getUserLists} select. */
-interface ListSummaryRow {
-  id: string;
-  title: string;
-  description: string | null;
-  isRanked: boolean;
-  isPublic: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  _count: { items: number };
 }
