@@ -1,12 +1,21 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import type { Prisma } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
 import {
+  extractUniqueConstraintField,
+  isForeignKeyViolation,
+  isRecordNotFound,
+  isUniqueConstraintViolation,
+} from "../prisma/prisma-error.util.js";
+import {
   MAX_DESCRIPTION_LENGTH,
+  MAX_NOTE_LENGTH,
   MAX_TITLE_LENGTH,
   UUID_PATTERN,
 } from "./lists.constants.js";
@@ -25,6 +34,17 @@ export interface UpdateListInput {
   description?: unknown;
   isRanked?: unknown;
   isPublic?: unknown;
+}
+
+/** Payload accepted by {@link ListsService.addItem}. */
+export interface AddItemInput {
+  albumId?: unknown;
+  note?: unknown;
+}
+
+/** Payload accepted by {@link ListsService.reorder}. */
+export interface ReorderInput {
+  itemIds?: unknown;
 }
 
 /** One item on a list's detail view, with its album denormalized for render. */
@@ -234,6 +254,164 @@ export class ListsService {
   }
 
   /**
+   * Adds an album to the caller's own list. Non-owner access is rejected by
+   * {@link loadListForOwnerAction} (403 public / 404 private) before any write.
+   * A duplicate album violates `@@unique([listId, albumId])` (P2002) and is
+   * mapped to a 409. The new item is appended at `existing.length + 1`, which is
+   * already a contiguous position since it's added to an already-contiguous set
+   * — no renumbering needed. An `albumId` that doesn't reference a real `Album`
+   * violates the `ListItem.albumId` FK (P2003) and is mapped to a 404.
+   */
+  async addItem(
+    clerkUserId: string,
+    listId: unknown,
+    input: AddItemInput,
+  ): Promise<ListDetail> {
+    const id = this.validateListId(listId);
+    const userId = await this.requireCallerId(clerkUserId);
+    await this.loadListForOwnerAction(userId, id);
+    const albumId = this.validateAlbumId(input.albumId);
+    const note = this.validateNote(input.note);
+
+    try {
+      await this.prisma.client.$transaction(async (tx) => {
+        const existing = await tx.listItem.findMany({
+          where: { listId: id },
+          orderBy: { position: "asc" },
+          select: { id: true },
+        });
+        await tx.listItem.create({
+          data: { listId: id, albumId, note, position: existing.length + 1 },
+        });
+      });
+    } catch (err) {
+      if (
+        isUniqueConstraintViolation(err) &&
+        extractUniqueConstraintField(err) === "list_id"
+      ) {
+        throw new ConflictException("This album is already on the list.");
+      }
+      if (isForeignKeyViolation(err)) {
+        throw new NotFoundException("Album not found.");
+      }
+      throw err;
+    }
+
+    return this.getListByIdOrThrow(id);
+  }
+
+  /**
+   * Removes an item from the caller's own list. Non-owner access is rejected by
+   * {@link loadListForOwnerAction} (403 public / 404 private) before the delete.
+   * The delete is scoped by both `id` AND `listId` (`deleteMany` + `count === 0
+   * → 404`) so an owner cannot delete an item that belongs to a different list
+   * by supplying its id directly, and a lost delete race surfaces as 404 rather
+   * than an unhandled P2025 (500). Remaining items are renumbered to contiguous
+   * `1..n`, preserving their relative order.
+   */
+  async removeItem(
+    clerkUserId: string,
+    listId: unknown,
+    itemId: unknown,
+  ): Promise<ListDetail> {
+    const id = this.validateListId(listId);
+    const targetItemId = this.validateItemId(itemId);
+    const userId = await this.requireCallerId(clerkUserId);
+    await this.loadListForOwnerAction(userId, id);
+
+    await this.prisma.client.$transaction(async (tx) => {
+      const { count } = await tx.listItem.deleteMany({
+        where: { id: targetItemId, listId: id },
+      });
+      if (count === 0) {
+        throw new NotFoundException("List item not found.");
+      }
+      await this.renumberItems(tx, id);
+    });
+
+    return this.getListByIdOrThrow(id);
+  }
+
+  /**
+   * Reorders the caller's own list to the exact order given by `itemIds`. The
+   * client (dnd-kit) sends the FULL desired order; the service validates that the
+   * array is a permutation of the list's current items — same length, every
+   * element unique, and set-equal to the stored ids (set equality alone is
+   * insufficient: `[id1, id1, id2]` on a 3-item list must be rejected because the
+   * duplicate masks a dropped item). The cheap length check runs BEFORE the
+   * per-element UUID-shape validation so a length mismatch short-circuits with a
+   * 400 immediately, without validating every element of an arbitrarily large
+   * array. A valid order assigns `position = index + 1` per row in one
+   * transaction; the per-row updates run in canonical `id` ascending order
+   * (rather than the caller-supplied order) so two concurrent reorder requests
+   * on the same list always acquire row locks in the same sequence, avoiding a
+   * lock-order deadlock (Postgres 55P03). A per-row update racing a concurrent
+   * delete/move (P2025) is mapped to a 409 rather than an uncaught 500. A
+   * single-item list is a valid no-op. Non-owner access is rejected by
+   * {@link loadListForOwnerAction} (403 public / 404 private) before any write.
+   */
+  async reorder(
+    clerkUserId: string,
+    listId: unknown,
+    input: ReorderInput,
+  ): Promise<ListDetail> {
+    const id = this.validateListId(listId);
+    const userId = await this.requireCallerId(clerkUserId);
+    await this.loadListForOwnerAction(userId, id);
+    const rawItemIds = this.validateItemIdsShape(input.itemIds);
+
+    await this.prisma.client.$transaction(async (tx) => {
+      const existing = await tx.listItem.findMany({
+        where: { listId: id },
+        select: { id: true },
+      });
+
+      if (rawItemIds.length !== existing.length) {
+        throw new BadRequestException(
+          "itemIds must list every item on the list exactly once.",
+        );
+      }
+
+      const itemIds = rawItemIds.map((entry) => this.validateItemId(entry));
+      const existingIds = new Set(existing.map((item) => item.id));
+      const requestedIds = new Set(itemIds);
+
+      const isPermutation =
+        requestedIds.size === itemIds.length &&
+        itemIds.every((itemId) => existingIds.has(itemId));
+      if (!isPermutation) {
+        throw new BadRequestException(
+          "itemIds must list every item on the list exactly once.",
+        );
+      }
+
+      const positionByItemId = new Map<string, number>();
+      itemIds.forEach((itemId, index) => {
+        positionByItemId.set(itemId, index + 1);
+      });
+
+      const canonicalOrder = [...itemIds].sort();
+      for (const itemId of canonicalOrder) {
+        try {
+          await tx.listItem.update({
+            where: { id: itemId },
+            data: { position: positionByItemId.get(itemId) },
+          });
+        } catch (err) {
+          if (isRecordNotFound(err)) {
+            throw new ConflictException(
+              "The list changed concurrently. Please retry.",
+            );
+          }
+          throw err;
+        }
+      }
+    });
+
+    return this.getListByIdOrThrow(id);
+  }
+
+  /**
    * READ access: resolves a list for a viewer. `null` → 404 (unknown); owner or
    * public → ok; private + non-owner → 404 (hides existence, never 403).
    */
@@ -277,6 +455,43 @@ export class ListsService {
       throw new NotFoundException("List not found.");
     }
     return list;
+  }
+
+  /**
+   * Reassigns every item's `position` to a contiguous `1..n` sequence, ordered
+   * by the current `position` (preserving relative order), with `id` as a
+   * secondary tiebreak so ordering stays deterministic if two rows transiently
+   * share the same `position` (the column has no unique constraint). Per-row
+   * updates are collision-free and need no two-phase temp-position dance. Runs
+   * inside the caller's `$transaction`. A per-row update racing a concurrent
+   * delete/move (P2025) is mapped to a 409 rather than an uncaught 500.
+   */
+  private async renumberItems(
+    tx: Prisma.TransactionClient,
+    listId: string,
+  ): Promise<void> {
+    const items = await tx.listItem.findMany({
+      where: { listId },
+      orderBy: [{ position: "asc" }, { id: "asc" }],
+      select: { id: true },
+    });
+    let position = 1;
+    for (const item of items) {
+      try {
+        await tx.listItem.update({
+          where: { id: item.id },
+          data: { position },
+        });
+      } catch (err) {
+        if (isRecordNotFound(err)) {
+          throw new ConflictException(
+            "The list changed concurrently. Please retry.",
+          );
+        }
+        throw err;
+      }
+      position += 1;
+    }
   }
 
   /** Re-reads a full list detail by id after a mutation (owner already authorized). */
@@ -399,13 +614,62 @@ export class ListsService {
 
   /** Validates a UUID-shaped id before it reaches Postgres (clean 400). */
   private validateListId(value: unknown): string {
+    return this.validateUuid(value, "list id");
+  }
+
+  /** Validates the `albumId` supplied when adding an item (clean 400). */
+  private validateAlbumId(value: unknown): string {
+    return this.validateUuid(value, "albumId");
+  }
+
+  /** Validates an item id path/array element (clean 400). */
+  private validateItemId(value: unknown): string {
+    return this.validateUuid(value, "item id");
+  }
+
+  /**
+   * Validates the reorder payload is an array, without validating each
+   * element's UUID shape yet. {@link reorder} checks this array's length
+   * against the list's actual item count BEFORE running the (relatively
+   * expensive, per-element) UUID-shape validation, so a length mismatch on an
+   * arbitrarily large array short-circuits with a 400 immediately.
+   */
+  private validateItemIdsShape(value: unknown): unknown[] {
+    if (!Array.isArray(value)) {
+      throw new BadRequestException("itemIds must be an array.");
+    }
+    return value;
+  }
+
+  /** Shared UUID-shape guard producing a clean 400 with a field-specific message. */
+  private validateUuid(value: unknown, field: string): string {
     if (typeof value === "string") {
       const trimmed = value.trim();
       if (UUID_PATTERN.test(trimmed)) {
         return trimmed;
       }
     }
-    throw new BadRequestException("list id must be a valid id.");
+    throw new BadRequestException(`${field} must be a valid id.`);
+  }
+
+  /** An optional item note: `null`/empty → `null`; else a bounded, trimmed string. */
+  private validateNote(value: unknown): string | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (typeof value !== "string") {
+      throw new BadRequestException("note must be a string.");
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    if (trimmed.length > MAX_NOTE_LENGTH) {
+      throw new BadRequestException(
+        `note must be at most ${MAX_NOTE_LENGTH} characters.`,
+      );
+    }
+    return trimmed;
   }
 
   /**

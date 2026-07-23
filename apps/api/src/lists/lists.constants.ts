@@ -6,6 +6,9 @@ export const MAX_TITLE_LENGTH = 120;
 /** Maximum length of a list description (trimmed), beyond which a 400 is returned. */
 export const MAX_DESCRIPTION_LENGTH = 2000;
 
+/** Maximum length of a per-item note (trimmed), beyond which a 400 is returned. */
+export const MAX_NOTE_LENGTH = 2000;
+
 /**
  * UUID shape guard applied to a `:id` path param BEFORE it reaches a Prisma
  * query, so a malformed id surfaces as a clean 400 instead of Postgres' raw
