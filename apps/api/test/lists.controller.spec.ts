@@ -15,6 +15,9 @@ describe("ListsController", () => {
   let updateList: ReturnType<typeof vi.fn>;
   let deleteList: ReturnType<typeof vi.fn>;
   let getUserLists: ReturnType<typeof vi.fn>;
+  let addItem: ReturnType<typeof vi.fn>;
+  let removeItem: ReturnType<typeof vi.fn>;
+  let reorder: ReturnType<typeof vi.fn>;
   let controller: ListsController;
 
   const detail = {
@@ -35,12 +38,18 @@ describe("ListsController", () => {
     updateList = vi.fn().mockResolvedValue({ ...detail, title: "Renamed" });
     deleteList = vi.fn().mockResolvedValue(undefined);
     getUserLists = vi.fn().mockResolvedValue([]);
+    addItem = vi.fn().mockResolvedValue({ ...detail, items: [{ id: "item-1" }] });
+    removeItem = vi.fn().mockResolvedValue(detail);
+    reorder = vi.fn().mockResolvedValue(detail);
     const service = {
       createList,
       getList,
       updateList,
       deleteList,
       getUserLists,
+      addItem,
+      removeItem,
+      reorder,
     } as unknown as ListsService;
     controller = new ListsController(service);
   });
@@ -82,5 +91,28 @@ describe("ListsController", () => {
 
     expect(getUserLists).toHaveBeenCalledWith("clerk_1", "bob");
     expect(result).toBe(summaries);
+  });
+
+  it("POST /lists/:id/items forwards caller id, list id and body", async () => {
+    const body = { albumId: "album-1", note: "opener" };
+    const result = await controller.addItem("clerk_1", "list-1", body);
+
+    expect(addItem).toHaveBeenCalledWith("clerk_1", "list-1", body);
+    expect(result).toEqual({ ...detail, items: [{ id: "item-1" }] });
+  });
+
+  it("DELETE /lists/:id/items/:itemId forwards caller id, list id and item id", async () => {
+    const result = await controller.removeItem("clerk_1", "list-1", "item-1");
+
+    expect(removeItem).toHaveBeenCalledWith("clerk_1", "list-1", "item-1");
+    expect(result).toBe(detail);
+  });
+
+  it("PATCH /lists/:id/items/reorder forwards caller id, list id and body", async () => {
+    const body = { itemIds: ["item-2", "item-1"] };
+    const result = await controller.reorder("clerk_1", "list-1", body);
+
+    expect(reorder).toHaveBeenCalledWith("clerk_1", "list-1", body);
+    expect(result).toBe(detail);
   });
 });

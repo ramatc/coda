@@ -11,9 +11,11 @@ import {
 import { CurrentUser } from "../auth/current-user.decorator.js";
 import {
   ListsService,
+  type AddItemInput,
   type CreateListInput,
   type ListDetail,
   type ListSummary,
+  type ReorderInput,
   type UpdateListInput,
 } from "./lists.service.js";
 
@@ -22,11 +24,14 @@ import {
  * `@CurrentUser("sub")` yields the verified Clerk user id, which the service
  * maps to the local `User.id`, so a caller can only mutate their own lists.
  *
- * - `POST   /lists`                 → create a list (`201`)
- * - `GET    /lists/:id`             → read a list + items (visibility-scoped)
- * - `PATCH  /lists/:id`             → edit title/description/flags (owner only)
- * - `DELETE /lists/:id`             → delete a list + items (owner only, `204`)
- * - `GET    /users/:username/lists` → profile lists (owner: all; else public)
+ * - `POST   /lists`                      → create a list (`201`)
+ * - `GET    /lists/:id`                  → read a list + items (visibility-scoped)
+ * - `PATCH  /lists/:id`                  → edit title/description/flags (owner only)
+ * - `DELETE /lists/:id`                  → delete a list + items (owner only, `204`)
+ * - `GET    /users/:username/lists`      → profile lists (owner: all; else public)
+ * - `POST   /lists/:id/items`            → add an album (owner only; dup → `409`, `200`)
+ * - `DELETE /lists/:id/items/:itemId`    → remove an item, renumber (owner only)
+ * - `PATCH  /lists/:id/items/reorder`    → reorder items to the given order (owner only)
  *
  * The controller has NO class-level prefix so the routes carry their absolute
  * paths. All validation and access logic lives in {@link ListsService}.
@@ -80,5 +85,40 @@ export class ListsController {
     @Param("username") username: string,
   ): Promise<ListSummary[]> {
     return this.lists.getUserLists(clerkUserId, username);
+  }
+
+  /** Adds an album to the caller's own list (duplicate → 409). */
+  @Post("lists/:id/items")
+  @HttpCode(200)
+  addItem(
+    @CurrentUser("sub") clerkUserId: string,
+    @Param("id") id: string,
+    @Body() body: AddItemInput,
+  ): Promise<ListDetail> {
+    return this.lists.addItem(clerkUserId, id, body);
+  }
+
+  /**
+   * Reorders the caller's own list to the exact order in the body. Declared
+   * before the `:itemId` delete route is irrelevant (different verb), but the
+   * literal `reorder` segment keeps this endpoint distinct from item deletes.
+   */
+  @Patch("lists/:id/items/reorder")
+  reorder(
+    @CurrentUser("sub") clerkUserId: string,
+    @Param("id") id: string,
+    @Body() body: ReorderInput,
+  ): Promise<ListDetail> {
+    return this.lists.reorder(clerkUserId, id, body);
+  }
+
+  /** Removes an item from the caller's own list, renumbering the remainder. */
+  @Delete("lists/:id/items/:itemId")
+  removeItem(
+    @CurrentUser("sub") clerkUserId: string,
+    @Param("id") id: string,
+    @Param("itemId") itemId: string,
+  ): Promise<ListDetail> {
+    return this.lists.removeItem(clerkUserId, id, itemId);
   }
 }
