@@ -62,7 +62,8 @@ const ALBUM = {
  * `meta.driverAdapterError.cause.constraint.fields`, NOT the classic
  * `meta.target` this client never populates — Decision #14), so
  * {@link isUniqueConstraintViolation} recognizes it, {@link
- * extractUniqueConstraintField} resolves the `listId` column from
+ * extractUniqueConstraintField} resolves the raw `list_id` DB column (mapped
+ * from `ListItem.listId` via `@map("list_id")`) from
  * `@@unique([listId, albumId])`, and the duplicate item-add path maps it to a
  * 409 (not a 500).
  */
@@ -76,7 +77,7 @@ function uniqueConstraintError(): Prisma.PrismaClientKnownRequestError {
         driverAdapterError: {
           cause: {
             kind: "UniqueConstraintViolation",
-            constraint: { fields: ["listId"] },
+            constraint: { fields: ["list_id"] },
           },
         },
       },

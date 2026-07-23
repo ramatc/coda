@@ -287,7 +287,7 @@ export class ListsService {
     } catch (err) {
       if (
         isUniqueConstraintViolation(err) &&
-        extractUniqueConstraintField(err) === "listId"
+        extractUniqueConstraintField(err) === "list_id"
       ) {
         throw new ConflictException("This album is already on the list.");
       }
