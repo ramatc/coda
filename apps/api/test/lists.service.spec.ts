@@ -58,13 +58,29 @@ const ALBUM = {
 
 /**
  * Builds a P2002 unique-constraint error shaped like this project's Prisma 7
- * client, so {@link isUniqueConstraintViolation} recognizes it and the duplicate
- * item-add path maps it to a 409 (not a 500).
+ * client (the REAL `@prisma/adapter-pg` driver-adapter shape: fields live on
+ * `meta.driverAdapterError.cause.constraint.fields`, NOT the classic
+ * `meta.target` this client never populates — Decision #14), so
+ * {@link isUniqueConstraintViolation} recognizes it, {@link
+ * extractUniqueConstraintField} resolves the `listId` column from
+ * `@@unique([listId, albumId])`, and the duplicate item-add path maps it to a
+ * 409 (not a 500).
  */
 function uniqueConstraintError(): Prisma.PrismaClientKnownRequestError {
   return new Prisma.PrismaClientKnownRequestError(
     "Unique constraint failed on the fields: (`list_id`,`album_id`)",
-    { code: "P2002", clientVersion: "test" },
+    {
+      code: "P2002",
+      clientVersion: "test",
+      meta: {
+        driverAdapterError: {
+          cause: {
+            kind: "UniqueConstraintViolation",
+            constraint: { fields: ["listId"] },
+          },
+        },
+      },
+    },
   );
 }
 

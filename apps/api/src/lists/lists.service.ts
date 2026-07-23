@@ -7,7 +7,12 @@ import {
 } from "@nestjs/common";
 import type { Prisma } from "@coda/db";
 import { PrismaService } from "../prisma/prisma.service.js";
-import { isUniqueConstraintViolation } from "../prisma/prisma-error.util.js";
+import {
+  extractUniqueConstraintField,
+  isForeignKeyViolation,
+  isRecordNotFound,
+  isUniqueConstraintViolation,
+} from "../prisma/prisma-error.util.js";
 import {
   MAX_DESCRIPTION_LENGTH,
   MAX_NOTE_LENGTH,
@@ -252,8 +257,10 @@ export class ListsService {
    * Adds an album to the caller's own list. Non-owner access is rejected by
    * {@link loadListForOwnerAction} (403 public / 404 private) before any write.
    * A duplicate album violates `@@unique([listId, albumId])` (P2002) and is
-   * mapped to a 409. Positions are renumbered to a contiguous `1..n` inside the
-   * transaction so the list stays gap-free.
+   * mapped to a 409. The new item is appended at `existing.length + 1`, which is
+   * already a contiguous position since it's added to an already-contiguous set
+   * — no renumbering needed. An `albumId` that doesn't reference a real `Album`
+   * violates the `ListItem.albumId` FK (P2003) and is mapped to a 404.
    */
   async addItem(
     clerkUserId: string,
@@ -276,11 +283,16 @@ export class ListsService {
         await tx.listItem.create({
           data: { listId: id, albumId, note, position: existing.length + 1 },
         });
-        await this.renumberItems(tx, id);
       });
     } catch (err) {
-      if (isUniqueConstraintViolation(err)) {
+      if (
+        isUniqueConstraintViolation(err) &&
+        extractUniqueConstraintField(err) === "listId"
+      ) {
         throw new ConflictException("This album is already on the list.");
+      }
+      if (isForeignKeyViolation(err)) {
+        throw new NotFoundException("Album not found.");
       }
       throw err;
     }
