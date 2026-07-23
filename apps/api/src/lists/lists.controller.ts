@@ -29,7 +29,7 @@ import {
  * - `PATCH  /lists/:id`                  → edit title/description/flags (owner only)
  * - `DELETE /lists/:id`                  → delete a list + items (owner only, `204`)
  * - `GET    /users/:username/lists`      → profile lists (owner: all; else public)
- * - `POST   /lists/:id/items`            → add an album (owner only; dup → `409`)
+ * - `POST   /lists/:id/items`            → add an album (owner only; dup → `409`, `200`)
  * - `DELETE /lists/:id/items/:itemId`    → remove an item, renumber (owner only)
  * - `PATCH  /lists/:id/items/reorder`    → reorder items to the given order (owner only)
  *
@@ -89,6 +89,7 @@ export class ListsController {
 
   /** Adds an album to the caller's own list (duplicate → 409). */
   @Post("lists/:id/items")
+  @HttpCode(200)
   addItem(
     @CurrentUser("sub") clerkUserId: string,
     @Param("id") id: string,
