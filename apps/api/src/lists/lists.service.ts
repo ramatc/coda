@@ -338,10 +338,17 @@ export class ListsService {
    * array is a permutation of the list's current items — same length, every
    * element unique, and set-equal to the stored ids (set equality alone is
    * insufficient: `[id1, id1, id2]` on a 3-item list must be rejected because the
-   * duplicate masks a dropped item). A valid order assigns `position = index + 1`
-   * per row in one transaction. A single-item list is a valid no-op. Non-owner
-   * access is rejected by {@link loadListForOwnerAction} (403 public / 404
-   * private) before any write.
+   * duplicate masks a dropped item). The cheap length check runs BEFORE the
+   * per-element UUID-shape validation so a length mismatch short-circuits with a
+   * 400 immediately, without validating every element of an arbitrarily large
+   * array. A valid order assigns `position = index + 1` per row in one
+   * transaction; the per-row updates run in canonical `id` ascending order
+   * (rather than the caller-supplied order) so two concurrent reorder requests
+   * on the same list always acquire row locks in the same sequence, avoiding a
+   * lock-order deadlock (Postgres 55P03). A per-row update racing a concurrent
+   * delete/move (P2025) is mapped to a 409 rather than an uncaught 500. A
+   * single-item list is a valid no-op. Non-owner access is rejected by
+   * {@link loadListForOwnerAction} (403 public / 404 private) before any write.
    */
   async reorder(
     clerkUserId: string,
@@ -351,18 +358,25 @@ export class ListsService {
     const id = this.validateListId(listId);
     const userId = await this.requireCallerId(clerkUserId);
     await this.loadListForOwnerAction(userId, id);
-    const itemIds = this.validateItemIds(input.itemIds);
+    const rawItemIds = this.validateItemIdsShape(input.itemIds);
 
     await this.prisma.client.$transaction(async (tx) => {
       const existing = await tx.listItem.findMany({
         where: { listId: id },
         select: { id: true },
       });
+
+      if (rawItemIds.length !== existing.length) {
+        throw new BadRequestException(
+          "itemIds must list every item on the list exactly once.",
+        );
+      }
+
+      const itemIds = rawItemIds.map((entry) => this.validateItemId(entry));
       const existingIds = new Set(existing.map((item) => item.id));
       const requestedIds = new Set(itemIds);
 
       const isPermutation =
-        itemIds.length === existing.length &&
         requestedIds.size === itemIds.length &&
         itemIds.every((itemId) => existingIds.has(itemId));
       if (!isPermutation) {
@@ -371,13 +385,26 @@ export class ListsService {
         );
       }
 
-      let position = 1;
-      for (const itemId of itemIds) {
-        await tx.listItem.update({
-          where: { id: itemId },
-          data: { position },
-        });
-        position += 1;
+      const positionByItemId = new Map<string, number>();
+      itemIds.forEach((itemId, index) => {
+        positionByItemId.set(itemId, index + 1);
+      });
+
+      const canonicalOrder = [...itemIds].sort();
+      for (const itemId of canonicalOrder) {
+        try {
+          await tx.listItem.update({
+            where: { id: itemId },
+            data: { position: positionByItemId.get(itemId) },
+          });
+        } catch (err) {
+          if (isRecordNotFound(err)) {
+            throw new ConflictException(
+              "The list changed concurrently. Please retry.",
+            );
+          }
+          throw err;
+        }
       }
     });
 
@@ -432,9 +459,12 @@ export class ListsService {
 
   /**
    * Reassigns every item's `position` to a contiguous `1..n` sequence, ordered
-   * by the current `position` (preserving relative order). The `position` column
-   * has NO unique constraint, so per-row updates are collision-free and need no
-   * two-phase temp-position dance. Runs inside the caller's `$transaction`.
+   * by the current `position` (preserving relative order), with `id` as a
+   * secondary tiebreak so ordering stays deterministic if two rows transiently
+   * share the same `position` (the column has no unique constraint). Per-row
+   * updates are collision-free and need no two-phase temp-position dance. Runs
+   * inside the caller's `$transaction`. A per-row update racing a concurrent
+   * delete/move (P2025) is mapped to a 409 rather than an uncaught 500.
    */
   private async renumberItems(
     tx: Prisma.TransactionClient,
@@ -442,15 +472,24 @@ export class ListsService {
   ): Promise<void> {
     const items = await tx.listItem.findMany({
       where: { listId },
-      orderBy: { position: "asc" },
+      orderBy: [{ position: "asc" }, { id: "asc" }],
       select: { id: true },
     });
     let position = 1;
     for (const item of items) {
-      await tx.listItem.update({
-        where: { id: item.id },
-        data: { position },
-      });
+      try {
+        await tx.listItem.update({
+          where: { id: item.id },
+          data: { position },
+        });
+      } catch (err) {
+        if (isRecordNotFound(err)) {
+          throw new ConflictException(
+            "The list changed concurrently. Please retry.",
+          );
+        }
+        throw err;
+      }
       position += 1;
     }
   }
@@ -588,12 +627,18 @@ export class ListsService {
     return this.validateUuid(value, "item id");
   }
 
-  /** Validates the reorder payload is an array of UUID-shaped item ids (clean 400). */
-  private validateItemIds(value: unknown): string[] {
+  /**
+   * Validates the reorder payload is an array, without validating each
+   * element's UUID shape yet. {@link reorder} checks this array's length
+   * against the list's actual item count BEFORE running the (relatively
+   * expensive, per-element) UUID-shape validation, so a length mismatch on an
+   * arbitrarily large array short-circuits with a 400 immediately.
+   */
+  private validateItemIdsShape(value: unknown): unknown[] {
     if (!Array.isArray(value)) {
       throw new BadRequestException("itemIds must be an array.");
     }
-    return value.map((entry) => this.validateItemId(entry));
+    return value;
   }
 
   /** Shared UUID-shape guard producing a clean 400 with a field-specific message. */
