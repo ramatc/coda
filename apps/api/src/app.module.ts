@@ -12,6 +12,7 @@ import { ActivityModule } from "./activity/activity.module.js";
 import { RecommendationsModule } from "./recommendations/recommendations.module.js";
 import { SocialModule } from "./social/social.module.js";
 import { ListsModule } from "./lists/lists.module.js";
+import { WantToListenModule } from "./want-to-listen/want-to-listen.module.js";
 
 /**
  * Root module for the Coda API. Fase 1 wires the global PrismaModule (first real
@@ -25,7 +26,8 @@ import { ListsModule } from "./lists/lists.module.js";
  * `Recommendation` generation + `GET /recommendations` / dismiss for `/home`).
  * Fase 1 wired all 11 MVP capability modules; Fase 2 slice 1 adds the social
  * module (follow/unfollow + follower/following counts on a profile). Fase 2
- * slice 2 adds the lists module (curated-list CRUD + profile Lists section).
+ * slice 2 adds the lists module (curated-list CRUD + profile Lists section) and
+ * the want-to-listen module (manual backlog + read-time auto-resolve).
  */
 @Module({
   imports: [
@@ -45,6 +47,7 @@ import { ListsModule } from "./lists/lists.module.js";
     RecommendationsModule,
     SocialModule,
     ListsModule,
+    WantToListenModule,
     HealthModule,
   ],
 })
