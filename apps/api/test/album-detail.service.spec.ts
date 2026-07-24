@@ -54,6 +54,7 @@ function createFakePrisma() {
   const ratings: RatingRow[] = [];
   const reviews: ReviewRow[] = [];
   const listens: ListenRow[] = [];
+  const wantToListen: { id: string; userId: string; albumId: string }[] = [];
 
   const client = {
     user: {
@@ -118,6 +119,17 @@ function createFakePrisma() {
         return rows[0] ? { id: rows[0].id } : null;
       },
     },
+    wantToListen: {
+      async findUnique(args: {
+        where: { userId_albumId: { userId: string; albumId: string } };
+      }): Promise<{ id: string } | null> {
+        const { userId, albumId } = args.where.userId_albumId;
+        const row = wantToListen.find(
+          (w) => w.userId === userId && w.albumId === albumId,
+        );
+        return row ? { id: row.id } : null;
+      },
+    },
   };
 
   return {
@@ -127,6 +139,7 @@ function createFakePrisma() {
     ratings,
     reviews,
     listens,
+    wantToListen,
   };
 }
 
@@ -217,6 +230,8 @@ describe("AlbumDetailService", () => {
       listenId: "listen-1",
       score: 8,
       review: "A landmark record.",
+      resolved: true,
+      wantToListenId: null,
     });
   });
 
@@ -231,6 +246,8 @@ describe("AlbumDetailService", () => {
       listenId: null,
       score: null,
       review: null,
+      resolved: false,
+      wantToListenId: null,
     });
     expect(detail.aggregateRating).toEqual({ average: null, count: 0 });
   });
@@ -289,9 +306,83 @@ describe("AlbumDetailService", () => {
       listenId: "listen-a",
       score: 6,
       review: "User A's take.",
+      resolved: true,
+      wantToListenId: null,
     });
     // The aggregate still reflects both users' ratings.
     expect(detail.aggregateRating).toEqual({ average: 8, count: 2 });
+  });
+
+  it("marks the album resolved when the viewer has RATED it without a Listen", async () => {
+    seedAlbum(fake);
+    fake.users.set(CLERK_ID, USER_ID);
+    // Rated but never listened — rateAlbum has no Listen prerequisite.
+    fake.ratings.push({ userId: USER_ID, albumId: ALBUM_ID, score: 7 });
+
+    const detail = await service.getAlbumDetail(CLERK_ID, ALBUM_ID);
+
+    expect(detail.viewer.listened).toBe(false);
+    expect(detail.viewer.resolved).toBe(true);
+    expect(detail.viewer.wantToListenId).toBeNull();
+  });
+
+  it("marks the album unresolved when the viewer has neither listened nor rated", async () => {
+    seedAlbum(fake);
+    fake.users.set(CLERK_ID, USER_ID);
+
+    const detail = await service.getAlbumDetail(CLERK_ID, ALBUM_ID);
+
+    expect(detail.viewer.resolved).toBe(false);
+  });
+
+  it("exposes wantToListenId for an unresolved album with a WantToListen row (independent of resolved)", async () => {
+    seedAlbum(fake);
+    fake.users.set(CLERK_ID, USER_ID);
+    fake.wantToListen.push({ id: "wtl-1", userId: USER_ID, albumId: ALBUM_ID });
+
+    const detail = await service.getAlbumDetail(CLERK_ID, ALBUM_ID);
+
+    // No Listen and no Rating → not resolved, but the raw row exists.
+    expect(detail.viewer.resolved).toBe(false);
+    expect(detail.viewer.wantToListenId).toBe("wtl-1");
+  });
+
+  it("keeps wantToListenId non-null even when resolved (row never deleted on resolve → hide wins)", async () => {
+    seedAlbum(fake);
+    fake.users.set(CLERK_ID, USER_ID);
+    // Both a resolving Listen AND a still-existing WantToListen row.
+    fake.listens.push({
+      id: "listen-1",
+      userId: USER_ID,
+      albumId: ALBUM_ID,
+      listenedAt: new Date("2026-07-01T00:00:00.000Z"),
+    });
+    fake.wantToListen.push({ id: "wtl-1", userId: USER_ID, albumId: ALBUM_ID });
+
+    const detail = await service.getAlbumDetail(CLERK_ID, ALBUM_ID);
+
+    // resolved=true drives the button to HIDE, but the raw id is still present
+    // because a WantToListen row is never deleted on read-time resolve.
+    expect(detail.viewer.resolved).toBe(true);
+    expect(detail.viewer.wantToListenId).toBe("wtl-1");
+  });
+
+  it("scopes wantToListenId to the resolved viewer, never another user's row", async () => {
+    seedAlbum(fake);
+    const OTHER_CLERK_ID = "clerk_2";
+    const OTHER_USER_ID = "55555555-5555-4555-8555-555555555555";
+    fake.users.set(CLERK_ID, USER_ID);
+    fake.users.set(OTHER_CLERK_ID, OTHER_USER_ID);
+    // Only the OTHER user has this album marked.
+    fake.wantToListen.push({
+      id: "wtl-other",
+      userId: OTHER_USER_ID,
+      albumId: ALBUM_ID,
+    });
+
+    const detail = await service.getAlbumDetail(CLERK_ID, ALBUM_ID);
+
+    expect(detail.viewer.wantToListenId).toBeNull();
   });
 
   it("throws 404 for an unknown album", async () => {
