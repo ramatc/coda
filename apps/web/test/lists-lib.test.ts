@@ -139,6 +139,30 @@ describe("fetchViewerUserId", () => {
 
     expect(await fetchViewerUserId(null)).toBeNull();
   });
+
+  it("retries once after a transient failure and resolves to the real user id", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ userId: "user-1", username: "ada" }), {
+          status: 200,
+        }),
+      );
+
+    expect(await fetchViewerUserId("test-token")).toBe("user-1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("still fails safe to null after two consecutive transient failures", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(errorResponse(500));
+
+    expect(await fetchViewerUserId("test-token")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("createList", () => {

@@ -150,35 +150,60 @@ export async function fetchList(
 }
 
 /**
- * Resolves the viewer's own local `User.id` from `GET /profile`, the only
- * endpoint that exposes it (Clerk's `auth()` yields a Clerk id, and
- * `ListDetail.userId` is a local id — they are not comparable). The list page
- * needs it to decide owner-vs-visitor rendering.
- *
- * Fails safe to `null` (→ the page renders as a VISITOR, hiding owner-only
- * controls) rather than throwing during render: degrading to read-only is the
- * safe direction, since every owner action is re-authorized server-side anyway.
- * A `null` here (network error, non-OK response, or a malformed body) is
- * indistinguishable from a legitimate "not the owner" to {@link isListOwner},
- * so the list page treats it as "ownership unverified" and surfaces a visible
- * notice rather than silently rendering as a definitive visitor.
+ * One attempt at `GET /profile`. Distinguishes a transient failure (network
+ * error or non-2xx) — worth retrying — from a successful-but-unparseable body,
+ * which is not transient and should not be retried.
  */
-export async function fetchViewerUserId(
+async function attemptFetchViewerUserId(
   token: string | null,
-): Promise<string | null> {
+): Promise<{ transientFailure: true } | { transientFailure: false; userId: string | null }> {
   try {
     const response = await fetch(`${getApiBaseUrl()}/profile`, {
       headers: authHeaders(token),
       cache: "no-store",
     });
     if (!response.ok) {
-      return null;
+      return { transientFailure: true };
     }
     const profile = (await response.json()) as { userId?: unknown };
-    return typeof profile.userId === "string" ? profile.userId : null;
+    return {
+      transientFailure: false,
+      userId: typeof profile.userId === "string" ? profile.userId : null,
+    };
   } catch {
-    return null;
+    return { transientFailure: true };
   }
+}
+
+/**
+ * Resolves the viewer's own local `User.id` from `GET /profile`, the only
+ * endpoint that exposes it (Clerk's `auth()` yields a Clerk id, and
+ * `ListDetail.userId` is a local id — they are not comparable). The list page
+ * needs it to decide owner-vs-visitor rendering.
+ *
+ * Retries once on a transient failure (network error or non-2xx from the
+ * profile endpoint) before giving up, so a single blip doesn't needlessly
+ * flip every viewer — owner and visitor alike — into "ownership unverified".
+ * A successful-but-unparseable body is not retried (it isn't transient).
+ *
+ * Fails safe to `null` (→ the page renders as a VISITOR, hiding owner-only
+ * controls) rather than throwing during render: degrading to read-only is the
+ * safe direction, since every owner action is re-authorized server-side anyway.
+ * A `null` here (persistent network error, non-OK response, or a malformed
+ * body) is indistinguishable from a legitimate "not the owner" to
+ * {@link isListOwner}, so the list page treats it as "ownership unverified"
+ * and surfaces a visible notice rather than silently rendering as a
+ * definitive visitor.
+ */
+export async function fetchViewerUserId(
+  token: string | null,
+): Promise<string | null> {
+  const first = await attemptFetchViewerUserId(token);
+  if (!first.transientFailure) {
+    return first.userId;
+  }
+  const second = await attemptFetchViewerUserId(token);
+  return second.transientFailure ? null : second.userId;
 }
 
 /** Creates a list owned by the caller. Throws with the API's message on failure. */
