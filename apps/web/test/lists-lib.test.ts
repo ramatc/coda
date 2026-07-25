@@ -134,6 +134,27 @@ describe("fetchViewerUserId", () => {
     expect(await fetchViewerUserId("test-token")).toBeNull();
   });
 
+  it.each([401, 403, 404])(
+    "does not retry a deterministic %i response — it is not transient",
+    async (status) => {
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(errorResponse(status));
+
+      expect(await fetchViewerUserId("test-token")).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not retry a successful response with an unparseable body", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("not json", { status: 200 }));
+
+    expect(await fetchViewerUserId("test-token")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("fails safe to null on a network error", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
 

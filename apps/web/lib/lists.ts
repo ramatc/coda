@@ -151,27 +151,39 @@ export async function fetchList(
 
 /**
  * One attempt at `GET /profile`. Distinguishes a transient failure (network
- * error or non-2xx) — worth retrying — from a successful-but-unparseable body,
- * which is not transient and should not be retried.
+ * error, or a 5xx) — worth retrying — from a deterministic one. A 4xx
+ * (401/403/404/...) would return the identical result on a second attempt,
+ * so it is treated as definitive, not transient. A successful-but-unparseable
+ * body is likewise not transient and should not be retried.
  */
 async function attemptFetchViewerUserId(
   token: string | null,
 ): Promise<{ transientFailure: true } | { transientFailure: false; userId: string | null }> {
+  let response: Response;
   try {
-    const response = await fetch(`${getApiBaseUrl()}/profile`, {
+    response = await fetch(`${getApiBaseUrl()}/profile`, {
       headers: authHeaders(token),
       cache: "no-store",
     });
-    if (!response.ok) {
+  } catch {
+    return { transientFailure: true };
+  }
+  if (!response.ok) {
+    // Only a 5xx is worth a second attempt; a 4xx is deterministic and
+    // retrying it would just add latency for the identical result.
+    if (response.status >= 500) {
       return { transientFailure: true };
     }
+    return { transientFailure: false, userId: null };
+  }
+  try {
     const profile = (await response.json()) as { userId?: unknown };
     return {
       transientFailure: false,
       userId: typeof profile.userId === "string" ? profile.userId : null,
     };
   } catch {
-    return { transientFailure: true };
+    return { transientFailure: false, userId: null };
   }
 }
 
@@ -181,10 +193,11 @@ async function attemptFetchViewerUserId(
  * `ListDetail.userId` is a local id — they are not comparable). The list page
  * needs it to decide owner-vs-visitor rendering.
  *
- * Retries once on a transient failure (network error or non-2xx from the
+ * Retries once on a transient failure (network error or a 5xx from the
  * profile endpoint) before giving up, so a single blip doesn't needlessly
  * flip every viewer — owner and visitor alike — into "ownership unverified".
- * A successful-but-unparseable body is not retried (it isn't transient).
+ * A 4xx (deterministic) or a successful-but-unparseable body is not retried
+ * (neither is transient).
  *
  * Fails safe to `null` (→ the page renders as a VISITOR, hiding owner-only
  * controls) rather than throwing during render: degrading to read-only is the
