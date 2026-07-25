@@ -158,6 +158,10 @@ export async function fetchList(
  * Fails safe to `null` (→ the page renders as a VISITOR, hiding owner-only
  * controls) rather than throwing during render: degrading to read-only is the
  * safe direction, since every owner action is re-authorized server-side anyway.
+ * A `null` here (network error, non-OK response, or a malformed body) is
+ * indistinguishable from a legitimate "not the owner" to {@link isListOwner},
+ * so the list page treats it as "ownership unverified" and surfaces a visible
+ * notice rather than silently rendering as a definitive visitor.
  */
 export async function fetchViewerUserId(
   token: string | null,

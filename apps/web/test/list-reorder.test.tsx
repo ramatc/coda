@@ -207,7 +207,48 @@ describe("ListReorder", () => {
     render(<ListReorder listId={LIST_ID} items={ITEMS} />);
 
     expect(
-      screen.getByRole("button", { name: "Reorder Amnesiac" }),
+      screen.getByRole("button", {
+        name: "Reorder Amnesiac by Radiohead, position 2",
+      }),
+    ).not.toBeNull();
+  });
+
+  it("gives duplicate-titled rows distinct drag-handle labels", () => {
+    const duplicateTitleItems: ListItem[] = [
+      {
+        id: "x",
+        position: 1,
+        note: null,
+        album: {
+          id: "album-x",
+          title: "Greatest Hits",
+          coverUrl: null,
+          primaryArtistName: "Artist One",
+        },
+      },
+      {
+        id: "y",
+        position: 2,
+        note: null,
+        album: {
+          id: "album-y",
+          title: "Greatest Hits",
+          coverUrl: null,
+          primaryArtistName: "Artist Two",
+        },
+      },
+    ];
+    render(<ListReorder listId={LIST_ID} items={duplicateTitleItems} />);
+
+    expect(
+      screen.getByRole("button", {
+        name: "Reorder Greatest Hits by Artist One, position 1",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "Reorder Greatest Hits by Artist Two, position 2",
+      }),
     ).not.toBeNull();
   });
 

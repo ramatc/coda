@@ -11,6 +11,14 @@ interface ListDetailViewProps {
   /** Whether the viewer owns this list — drives the owner-vs-visitor render. */
   isOwner: boolean;
   /**
+   * True when the server page could not resolve the viewer's own local user id
+   * (a transient `GET /profile` failure), so `isOwner` is a fail-safe `false`
+   * rather than a definitive answer. Surfaced as a visible notice so a real
+   * owner hit by a transient error sees WHY their controls are missing, instead
+   * of the page silently looking like a read-only visitor view.
+   */
+  ownershipUnverified?: boolean;
+  /**
    * The owner-only reorder island. Rendered IN PLACE OF the read-only item list
    * (never alongside it), and only for the owner — the server page hands it
    * down unconditionally, the same way `/u/[username]` hands down its
@@ -37,10 +45,17 @@ function albumCountLabel(count: number): string {
 export function ListDetailView({
   list,
   isOwner,
+  ownershipUnverified,
   children,
 }: ListDetailViewProps) {
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
+      {ownershipUnverified ? (
+        <p className="text-sm text-red-600" role="alert">
+          Could not verify ownership of this list — refresh to retry.
+        </p>
+      ) : null}
+
       <header className="flex flex-col gap-2">
         <h1 className="text-3xl font-semibold">{list.title}</h1>
         <p className="text-sm opacity-70" data-testid="list-summary">

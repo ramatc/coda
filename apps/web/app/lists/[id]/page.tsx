@@ -49,8 +49,20 @@ export default async function ListPage({ params }: ListPageProps) {
     notFound();
   }
 
+  // `viewerUserId` is only `null` when `fetchViewerUserId` could not resolve the
+  // viewer's own id (a transient `GET /profile` failure — this page is already
+  // behind the Clerk/onboarding gate, so a signed-in, synced viewer always has
+  // one). That is indistinguishable from "not the owner" for `isListOwner`, so
+  // it is surfaced separately here to tell the page's degraded rendering apart
+  // from a definitive visitor.
+  const ownershipUnverified = viewerUserId === null;
+
   return (
-    <ListDetailView list={list} isOwner={isListOwner(list, viewerUserId)}>
+    <ListDetailView
+      list={list}
+      isOwner={isListOwner(list, viewerUserId)}
+      ownershipUnverified={ownershipUnverified}
+    >
       <ListReorder listId={list.id} items={list.items} />
     </ListDetailView>
   );

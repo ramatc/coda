@@ -162,4 +162,20 @@ describe("ListDetailView", () => {
 
     expect(renderedTitles()).toEqual(["Kid A", "Amnesiac"]);
   });
+
+  it("surfaces a notice when ownership could not be verified", () => {
+    render(
+      <ListDetailView list={list()} isOwner={false} ownershipUnverified={true} />,
+    );
+
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Could not verify ownership of this list — refresh to retry.",
+    );
+  });
+
+  it("shows no ownership notice once ownership is resolved either way", () => {
+    render(<ListDetailView list={list()} isOwner={false} />);
+
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

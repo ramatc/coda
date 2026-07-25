@@ -216,7 +216,7 @@ function SortableRow({ item, position, disabled }: SortableRowProps) {
       </span>
       <button
         type="button"
-        aria-label={`Reorder ${item.album.title}`}
+        aria-label={`Reorder ${item.album.title} by ${item.album.primaryArtistName}, position ${position}`}
         disabled={disabled}
         className="cursor-grab rounded-card border border-brand-200 px-2 py-1 opacity-70"
         {...attributes}
