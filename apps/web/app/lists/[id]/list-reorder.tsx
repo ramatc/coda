@@ -20,7 +20,11 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { reorderListItems, type ListItem } from "../../../lib/lists";
+import {
+  EMPTY_LIST_MESSAGE,
+  reorderListItems,
+  type ListItem,
+} from "../../../lib/lists";
 
 interface ListReorderProps {
   /** The list being reordered (path param for the API call). */
@@ -130,7 +134,7 @@ export function ListReorder({ listId, items }: ListReorderProps) {
 
   if (order.length === 0) {
     return (
-      <p className="text-sm italic opacity-50">No albums on this list yet.</p>
+      <p className="text-sm italic opacity-50">{EMPTY_LIST_MESSAGE}</p>
     );
   }
 

@@ -55,6 +55,28 @@ export interface UpdateListInput {
  */
 export const LIST_NOT_FOUND = Symbol("list-not-found");
 
+/**
+ * Empty-state copy for a list with no albums. Shared by the visitor's read-only
+ * rendering and the owner's reorder island so the two never drift, and kept
+ * HERE (rather than in either component) because those two live on opposite
+ * sides of the server/client boundary.
+ */
+export const EMPTY_LIST_MESSAGE = "No albums on this list yet.";
+
+/**
+ * True when the viewer owns the list. `viewerUserId` is the viewer's LOCAL
+ * `User.id` (see {@link fetchViewerUserId}), which is what `ListDetail.userId`
+ * carries — a Clerk id would never match. An unresolved viewer (`null`) is
+ * deliberately NOT the owner, so the UI degrades to read-only rather than
+ * offering controls the API would reject.
+ */
+export function isListOwner(
+  list: Pick<ListDetail, "userId">,
+  viewerUserId: string | null,
+): boolean {
+  return viewerUserId !== null && viewerUserId === list.userId;
+}
+
 /** Auth-only headers for reads. */
 function authHeaders(token: string | null): Record<string, string> {
   return { Authorization: `Bearer ${token ?? ""}` };
