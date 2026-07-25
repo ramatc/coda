@@ -38,6 +38,10 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/feed(.*)");
   });
 
+  it("protects the list routes (Fase 2 slice 2 PR4)", () => {
+    expect(protectedRoutePatterns).toContain("/lists(.*)");
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");
