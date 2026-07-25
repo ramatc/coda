@@ -52,7 +52,7 @@ export function ListDetailView({
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
       {ownershipUnverified ? (
         <p className="text-sm text-red-600" role="alert">
-          Could not verify ownership of this list — refresh to retry.
+          Some features may be unavailable right now — refresh to retry.
         </p>
       ) : null}
 

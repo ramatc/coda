@@ -169,7 +169,7 @@ describe("ListDetailView", () => {
     );
 
     expect(screen.getByRole("alert").textContent).toBe(
-      "Could not verify ownership of this list — refresh to retry.",
+      "Some features may be unavailable right now — refresh to retry.",
     );
   });
 
