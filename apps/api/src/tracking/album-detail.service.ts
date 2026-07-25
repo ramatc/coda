@@ -39,6 +39,23 @@ export interface AlbumViewerState {
   score: number | null;
   /** The viewer's own plain-text review body, or `null` if unreviewed. */
   review: string | null;
+  /**
+   * Whether this album is "resolved" for the viewer — i.e. it is in the viewer's
+   * Listens OR Ratings. This is the SAME unified predicate as the anti-join used
+   * by the want-to-listen read path, so it covers BOTH a listened album and a
+   * rated-without-listened album (a rating has no Listen prerequisite). The
+   * `album-actions` island hides the "+ Quiero escuchar" control entirely when
+   * this is `true` — it takes precedence over {@link wantToListenId}.
+   */
+  resolved: boolean;
+  /**
+   * Id of the viewer's `WantToListen` row for this album, or `null` if none
+   * exists — RAW row existence, INDEPENDENT of {@link resolved} (the row is
+   * never deleted on read-time resolve). Drives the want-to-listen button's
+   * remove-vs-add branches: non-null → "remove", null → "add" (only consulted
+   * when {@link resolved} is `false`).
+   */
+  wantToListenId: string | null;
 }
 
 /** The full album-detail payload consumed by `apps/web/app/albums/[id]`. */
@@ -143,6 +160,8 @@ export class AlbumDetailService {
       listenId: null,
       score: null,
       review: null,
+      resolved: false,
+      wantToListenId: null,
     };
 
     const user = await this.prisma.client.user.findUnique({
@@ -153,7 +172,7 @@ export class AlbumDetailService {
       return empty;
     }
 
-    const [listen, rating, review] = await Promise.all([
+    const [listen, rating, review, want] = await Promise.all([
       this.prisma.client.listen.findFirst({
         where: { userId: user.id, albumId },
         orderBy: { listenedAt: "desc" },
@@ -167,6 +186,10 @@ export class AlbumDetailService {
         where: { userId_albumId: { userId: user.id, albumId } },
         select: { body: true },
       }),
+      this.prisma.client.wantToListen.findUnique({
+        where: { userId_albumId: { userId: user.id, albumId } },
+        select: { id: true },
+      }),
     ]);
 
     return {
@@ -174,6 +197,11 @@ export class AlbumDetailService {
       listenId: listen?.id ?? null,
       score: rating?.score ?? null,
       review: review?.body ?? null,
+      // Unified anti-join predicate: listened OR rated (a rating has no Listen
+      // prerequisite, so rated-without-listened must still count as resolved).
+      resolved: listen !== null || rating !== null,
+      // Raw row existence — independent of `resolved` (never deleted on resolve).
+      wantToListenId: want?.id ?? null,
     };
   }
 
