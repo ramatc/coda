@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import {
+  act,
   cleanup,
-  fireEvent,
   render,
   screen,
   waitFor,
@@ -97,9 +97,19 @@ const ITEMS: ListItem[] = [
   item("c", 3, "In Rainbows"),
 ];
 
-/** A dnd-kit-shaped drag-end event for dropping `activeId` onto `overId`. */
-function dragEnd(activeId: string, overId: string | null) {
-  return { active: { id: activeId }, over: overId ? { id: overId } : null };
+/**
+ * Fires a dnd-kit-shaped drag-end for dropping `activeId` onto `overId`. Wrapped
+ * in `act` because the handler is invoked directly (not through `fireEvent`), so
+ * the OPTIMISTIC state update it makes before its first `await` would otherwise
+ * not be flushed to the DOM by the time the next assertion runs.
+ */
+function dropOn(activeId: string, overId: string | null): void {
+  act(() => {
+    dnd.onDragEnd?.({
+      active: { id: activeId },
+      over: overId ? { id: overId } : null,
+    });
+  });
 }
 
 /** The album titles currently rendered, in row order. */
@@ -204,8 +214,7 @@ describe("ListReorder", () => {
   it("reorders optimistically, PATCHes the full new order, then refreshes", async () => {
     render(<ListReorder listId={LIST_ID} items={ITEMS} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Reorder In Rainbows" }));
-    dnd.onDragEnd?.(dragEnd("c", "a"));
+    dropOn("c", "a");
 
     // Optimistic: the new order (and its renumbering) is on screen before the
     // request settles.
@@ -229,7 +238,7 @@ describe("ListReorder", () => {
     );
     render(<ListReorder listId={LIST_ID} items={ITEMS} />);
 
-    dnd.onDragEnd?.(dragEnd("c", "a"));
+    dropOn("c", "a");
 
     expect(renderedTitles()).toEqual(["In Rainbows", "Kid A", "Amnesiac"]);
 
@@ -246,7 +255,7 @@ describe("ListReorder", () => {
   it("does not call the API when an item is dropped on itself", async () => {
     render(<ListReorder listId={LIST_ID} items={ITEMS} />);
 
-    dnd.onDragEnd?.(dragEnd("b", "b"));
+    dropOn("b", "b");
 
     await waitFor(() => expect(renderedTitles()).toEqual([
       "Kid A",
@@ -260,7 +269,7 @@ describe("ListReorder", () => {
   it("does not call the API when the drag is cancelled outside any target", async () => {
     render(<ListReorder listId={LIST_ID} items={ITEMS} />);
 
-    dnd.onDragEnd?.(dragEnd("c", null));
+    dropOn("c", null);
 
     await waitFor(() => expect(renderedTitles()).toEqual([
       "Kid A",
@@ -298,7 +307,7 @@ describe("ListReorder", () => {
     const { rerender } = render(
       <ListReorder listId={LIST_ID} items={ITEMS} />,
     );
-    dnd.onDragEnd?.(dragEnd("c", "a"));
+    dropOn("c", "a");
     expect(renderedTitles()).toEqual(["In Rainbows", "Kid A", "Amnesiac"]);
 
     await waitFor(() => expect(reorderListItems).toHaveBeenCalled());
