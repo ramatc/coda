@@ -335,6 +335,24 @@ export async function fetchUserLists(
   }
 }
 
+/**
+ * The lists the VIEWER may add an album to: their own, public and private
+ * alike. Chains {@link fetchViewerProfile} (to learn the viewer's username,
+ * which no client-side source exposes) into {@link fetchUserLists} keyed by that
+ * username. An unresolved viewer short-circuits to an empty array WITHOUT a
+ * second request — there would be no username to build a URL from.
+ *
+ * Composed here rather than in the album page so the "unresolved viewer → empty
+ * picker" rule is testable on its own and stays identical wherever a caller's
+ * own lists are needed. Never throws: the album page must render regardless.
+ */
+export async function fetchViewerOwnLists(
+  token: string | null,
+): Promise<ListSummary[]> {
+  const profile = await fetchViewerProfile(token);
+  return profile === null ? [] : fetchUserLists(token, profile.username);
+}
+
 /** Creates a list owned by the caller. Throws with the API's message on failure. */
 export async function createList(
   token: string | null,

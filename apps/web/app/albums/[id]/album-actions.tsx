@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { buttonVariants, cn } from "@coda/ui";
@@ -18,11 +19,21 @@ import {
   markWantToListen,
   unmarkWantToListen,
 } from "../../../lib/want-to-listen";
+import { addListItem, type ListSummary } from "../../../lib/lists";
 
 interface AlbumActionsProps {
   albumId: string;
   /** The viewer's current tracking state (server-fetched initial values). */
   viewer: AlbumViewerState;
+  /**
+   * The viewer's OWN lists (public and private), server-fetched, to populate
+   * the "add to list" picker. Empty when the viewer has none — or when their
+   * profile could not be resolved — in which case the picker gives way to a
+   * hint pointing at the create-list page. Ownership here is per-LIST, not
+   * per-album: any authenticated viewer may add any album to any of their own
+   * lists, so this prop is never gated on who "owns" the album page.
+   */
+  ownLists: ListSummary[];
 }
 
 type Status = "idle" | "saving" | "error";
@@ -50,11 +61,19 @@ const RATING_OPTIONS = Array.from(
  * therefore wins over remove: resolving never deletes the row, so a resolved
  * album can still carry a surviving `wantToListenId`.
  */
-export function AlbumActions({ albumId, viewer }: AlbumActionsProps) {
+export function AlbumActions({
+  albumId,
+  viewer,
+  ownLists,
+}: AlbumActionsProps) {
   const { getToken } = useAuth();
   const router = useRouter();
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
+  // The only action here whose success leaves NO visible trace on this page —
+  // the album's own tracking state is unchanged by joining a list — so it says
+  // so explicitly instead of snapping the picker back in silence.
+  const [addedTo, setAddedTo] = useState<string | null>(null);
   const [reviewDraft, setReviewDraft] = useState(viewer.review ?? "");
   // Set right before `router.refresh()` (review save/update only, see `run`
   // below) and cleared only once the refreshed server props actually land —
@@ -93,13 +112,20 @@ export function AlbumActions({ albumId, viewer }: AlbumActionsProps) {
    * before the refetch completes and have those keystrokes silently
    * overwritten once the (now-stale) server value arrives. The other actions
    * (listen, rating) have no locally-editable draft at risk, so they skip it.
+   *
+   * Returns whether the mutation succeeded, so a caller that owns extra
+   * feedback (the list picker's confirmation) can react without duplicating
+   * the try/catch — every other caller ignores it.
    */
   async function run(
     action: (token: string | null) => Promise<void>,
     affectsReviewDraft = false,
-  ) {
+  ): Promise<boolean> {
     setStatus("saving");
     setError(null);
+    // Any new action invalidates the previous confirmation, so a stale "Added
+    // to X." can never sit next to an unrelated result.
+    setAddedTo(null);
     try {
       const token = await getToken();
       await action(token);
@@ -108,9 +134,27 @@ export function AlbumActions({ albumId, viewer }: AlbumActionsProps) {
         setPendingRefresh(true);
       }
       router.refresh();
+      return true;
     } catch (err) {
       setStatus("error");
       setError(err instanceof Error ? err.message : "Something went wrong.");
+      return false;
+    }
+  }
+
+  /**
+   * Adds this album to one of the viewer's own lists. The picker is a pure
+   * trigger, never a selection: it is bound to the empty placeholder so it
+   * snaps back after every choice, leaving the same list pickable again once
+   * the confirmation or the API's duplicate-add 409 has been read.
+   */
+  async function addToList(listId: string) {
+    const target = ownLists.find((list) => list.id === listId);
+    const succeeded = await run(async (t) => {
+      await addListItem(t, listId, albumId);
+    });
+    if (succeeded && target) {
+      setAddedTo(target.title);
     }
   }
 
@@ -198,6 +242,42 @@ export function AlbumActions({ albumId, viewer }: AlbumActionsProps) {
             ))}
           </select>
         </label>
+
+        {ownLists.length === 0 ? (
+          // Shown rather than hidden: a viewer with no lists is exactly who
+          // needs to hear that lists exist.
+          <p className="text-sm opacity-70">
+            You have no lists yet —{" "}
+            <Link href="/lists/new" className="underline">
+              create one
+            </Link>
+          </p>
+        ) : (
+          <label className="flex items-center gap-2 text-sm">
+            <span className="opacity-70">Add to list</span>
+            <select
+              aria-label="Add to list"
+              disabled={busy}
+              // Always the placeholder: picking a list is an ACTION, not a
+              // selection this control holds on to.
+              value=""
+              onChange={(e) => {
+                const listId = e.target.value;
+                if (listId !== "") {
+                  void addToList(listId);
+                }
+              }}
+              className="rounded-card border border-brand-200 px-3 py-2"
+            >
+              <option value="">Add to list…</option>
+              {ownLists.map((list) => (
+                <option key={list.id} value={list.id}>
+                  {list.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -232,6 +312,12 @@ export function AlbumActions({ albumId, viewer }: AlbumActionsProps) {
       {status === "error" && error ? (
         <p className="text-sm text-red-600" role="alert">
           {error}
+        </p>
+      ) : null}
+
+      {addedTo ? (
+        <p className="text-sm opacity-70" role="status">
+          Added to {addedTo}.
         </p>
       ) : null}
     </div>
