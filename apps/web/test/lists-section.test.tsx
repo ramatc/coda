@@ -49,6 +49,16 @@ function renderedTitles(): string[] {
     .map((row) => within(row).getByRole("link").textContent ?? "");
 }
 
+/** The Nth rendered row, asserted present so a short render fails loudly here. */
+function row(index: number): HTMLElement {
+  const rows = screen.getAllByRole("listitem");
+  const found = rows[index];
+  if (found === undefined) {
+    throw new Error(`Expected a row at index ${index}, got ${rows.length}.`);
+  }
+  return found;
+}
+
 describe("ListsSection", () => {
   it("renders every list in the order the API returned it, each linked to its detail page", () => {
     render(<ListsSection lists={LISTS} isOwnProfile={false} />);
@@ -76,10 +86,9 @@ describe("ListsSection", () => {
   it("summarizes each list with its ranking and its album count, singularized", () => {
     render(<ListsSection lists={LISTS} isOwnProfile={false} />);
 
-    const [ranked, single, empty] = screen.getAllByRole("listitem");
-    expect(within(ranked).getByText("Ranked · 3 albums")).not.toBeNull();
-    expect(within(single).getByText("Unranked · 1 album")).not.toBeNull();
-    expect(within(empty).getByText("Unranked · 0 albums")).not.toBeNull();
+    expect(within(row(0)).getByText("Ranked · 3 albums")).not.toBeNull();
+    expect(within(row(1)).getByText("Unranked · 1 album")).not.toBeNull();
+    expect(within(row(2)).getByText("Unranked · 0 albums")).not.toBeNull();
   });
 
   it("shows a list's description when it has one and stays quiet when it does not", () => {
@@ -93,11 +102,10 @@ describe("ListsSection", () => {
       />,
     );
 
-    const [described, bare] = screen.getAllByRole("listitem");
-    expect(within(described).getByText("A ranked year.")).not.toBeNull();
+    expect(within(row(0)).getByText("A ranked year.")).not.toBeNull();
     // A profile card must not carry the list page's "No description yet."
     // placeholder — a bare row is quieter than a row full of absences.
-    expect(bare.textContent).toBe("Rainy dayUnranked · 0 albums");
+    expect(row(1).textContent).toBe("Rainy dayUnranked · 0 albums");
   });
 
   it("marks the owner's own private lists as private", () => {
@@ -111,9 +119,10 @@ describe("ListsSection", () => {
       />,
     );
 
-    const [priv, pub] = screen.getAllByRole("listitem");
-    expect(within(priv).getByText("Unranked · 2 albums · Private")).not.toBeNull();
-    expect(within(pub).getByText("Unranked · 2 albums")).not.toBeNull();
+    expect(
+      within(row(0)).getByText("Unranked · 2 albums · Private"),
+    ).not.toBeNull();
+    expect(within(row(1)).getByText("Unranked · 2 albums")).not.toBeNull();
   });
 
   it("never renders the private marker on someone else's profile", () => {
