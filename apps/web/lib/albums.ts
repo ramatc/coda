@@ -27,6 +27,21 @@ export interface AlbumViewerState {
   listenId: string | null;
   score: number | null;
   review: string | null;
+  /**
+   * Whether the album is already in the viewer's Listens OR Ratings — the same
+   * predicate the want-to-listen backlog anti-joins on. It is deliberately NOT
+   * `listened`: `rateAlbum` has no prerequisite Listen, so a rated-but-never-
+   * listened album resolves the backlog entry while `listened` stays `false`.
+   * Drives the want-to-listen action's HIDE branch.
+   */
+  resolved: boolean;
+  /**
+   * The id of the viewer's `WantToListen` row for this album, or `null` when
+   * none exists. RAW existence, independent of {@link AlbumViewerState.resolved}
+   * — read-time auto-resolve never deletes the row, so a resolved album can
+   * still report a non-null id. Drives the action's remove-vs-add branch.
+   */
+  wantToListenId: string | null;
 }
 
 /** The album-detail payload from `GET /albums/:id`. */

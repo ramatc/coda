@@ -48,16 +48,29 @@ beforeEach(() => {
 
 const ALBUM_ID = "album-1";
 
-function renderActions(viewer: AlbumViewerState) {
-  return render(<AlbumActions albumId={ALBUM_ID} viewer={viewer} />);
-}
-
 const UNTRACKED: AlbumViewerState = {
   listened: false,
   listenId: null,
   score: null,
   review: null,
+  resolved: false,
+  wantToListenId: null,
 };
+
+/**
+ * Builds a viewer state from {@link UNTRACKED} with the given overrides applied,
+ * mirroring the `list(overrides)` helper in `list-detail.test.tsx`, so each test
+ * states only the fields it cares about.
+ */
+function viewerState(overrides: Partial<AlbumViewerState> = {}): AlbumViewerState {
+  return { ...UNTRACKED, ...overrides };
+}
+
+function renderActions(overrides: Partial<AlbumViewerState>) {
+  return render(
+    <AlbumActions albumId={ALBUM_ID} viewer={viewerState(overrides)} />,
+  );
+}
 
 describe("AlbumActions", () => {
   it("reflects the viewer's existing rating and review when they have tracked the album", () => {
@@ -225,12 +238,7 @@ describe("AlbumActions", () => {
     rerender(
       <AlbumActions
         albumId={ALBUM_ID}
-        viewer={{
-          listened: false,
-          listenId: null,
-          score: 8,
-          review: "Updated review.",
-        }}
+        viewer={viewerState({ score: 8, review: "Updated review." })}
       />,
     );
 
@@ -256,7 +264,7 @@ describe("AlbumActions", () => {
     rerender(
       <AlbumActions
         albumId={ALBUM_ID}
-        viewer={{ listened: false, listenId: null, score: null, review: null }}
+        viewer={viewerState()}
       />,
     );
 

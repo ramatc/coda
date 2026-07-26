@@ -23,7 +23,14 @@ const baseAlbum: AlbumDetail = {
     { id: "t2", position: 2, title: "Paranoid Android", durationMs: 383000 },
   ],
   aggregateRating: { average: 8.5, count: 4 },
-  viewer: { listened: false, listenId: null, score: null, review: null },
+  viewer: {
+    listened: false,
+    listenId: null,
+    score: null,
+    review: null,
+    resolved: false,
+    wantToListenId: null,
+  },
 };
 
 describe("AlbumDetailView", () => {
