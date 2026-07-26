@@ -14,6 +14,10 @@ import {
   writeReview,
   type AlbumViewerState,
 } from "../../../lib/albums";
+import {
+  markWantToListen,
+  unmarkWantToListen,
+} from "../../../lib/want-to-listen";
 
 interface AlbumActionsProps {
   albumId: string;
@@ -29,13 +33,22 @@ const RATING_OPTIONS = Array.from(
 );
 
 /**
- * Album action island (client): mark listened, rate (1-10), and write/edit a
- * plain-text review — reflecting the viewer's current tracking state from the
- * server. After each mutation it calls `router.refresh()` so the server page
- * re-fetches and re-renders with the new aggregate + viewer state (same
+ * Album action island (client): mark listened, rate (1-10), write/edit a
+ * plain-text review, and toggle the album on the viewer's want-to-listen
+ * backlog — reflecting the viewer's current tracking state from the server.
+ * After each mutation it calls `router.refresh()` so the server page re-fetches
+ * and re-renders with the new aggregate + viewer state (same
  * server-authoritative pattern as the avatar-upload island). The review control
  * is gated on a present rating because the API subordinates a review to a
  * rating (a review on an unrated album is a 400).
+ *
+ * The want-to-listen control reads TWO independent viewer fields. `resolved`
+ * (the album is already in this viewer's Listens OR Ratings) hides the control
+ * outright — a backlog entry for an album you have already heard is meaningless,
+ * and the API's read-time filter drops it anyway. Only when it is NOT resolved
+ * does `wantToListenId` decide between the remove and add states. Hide
+ * therefore wins over remove: resolving never deletes the row, so a resolved
+ * album can still carry a surviving `wantToListenId`.
  */
 export function AlbumActions({ albumId, viewer }: AlbumActionsProps) {
   const { getToken } = useAuth();
@@ -132,6 +145,32 @@ export function AlbumActions({ albumId, viewer }: AlbumActionsProps) {
             className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
           >
             Mark as listened
+          </button>
+        )}
+
+        {viewer.resolved ? null : viewer.wantToListenId ? (
+          <button
+            type="button"
+            disabled={busy}
+            // Addressed by ALBUM id: the API scopes the delete to the caller's
+            // own row for that album, so `wantToListenId` never reaches the URL.
+            onClick={() => void run((t) => unmarkWantToListen(t, albumId))}
+            className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+          >
+            Want to listen ✓ — remove
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void run(async (t) => {
+                await markWantToListen(t, albumId);
+              })
+            }
+            className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+          >
+            + Want to listen
           </button>
         )}
 
