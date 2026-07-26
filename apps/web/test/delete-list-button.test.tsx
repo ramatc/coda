@@ -27,11 +27,12 @@ vi.mock("../lib/lists", async (importOriginal) => {
 
 const LIST = { id: "list-1", title: "Best of 2026" };
 
-/** The delete trigger, disabled once a delete is under way. */
+/**
+ * The island's only button. Queried without a name so the same helper works
+ * after its label switches to the in-flight one.
+ */
 function deleteButton(): HTMLButtonElement {
-  return screen.getByRole("button", {
-    name: "Delete list",
-  }) as HTMLButtonElement;
+  return screen.getByRole("button") as HTMLButtonElement;
 }
 
 let confirmMock: ReturnType<typeof vi.spyOn>;
@@ -52,6 +53,8 @@ beforeEach(() => {
 describe("DeleteListButton", () => {
   it("asks for confirmation, naming the list and its items", () => {
     render(<DeleteListButton list={LIST} />);
+
+    expect(deleteButton().textContent).toBe("Delete list");
 
     fireEvent.click(deleteButton());
 

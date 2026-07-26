@@ -10,6 +10,7 @@ import {
   fetchOnboardingStatus,
   resolveOnboardingRedirect,
 } from "../../../lib/onboarding";
+import { DeleteListButton } from "./delete-list-button";
 import { EditListForm } from "./edit-list-form";
 import { ListDetailView } from "./list-detail";
 import { ListReorder } from "./list-reorder";
@@ -28,8 +29,8 @@ interface ListPageProps {
  *
  * A 404 covers both an unknown list and a private list the viewer may not see,
  * so `notFound()` never leaks a private list's existence. The owner islands
- * (edit, reorder) are always handed down; {@link ListDetailView} renders them
- * only for the owner.
+ * (edit, delete, reorder) are always handed down; {@link ListDetailView} renders
+ * them only for the owner.
  */
 export default async function ListPage({ params }: ListPageProps) {
   const { id } = await params;
@@ -64,7 +65,12 @@ export default async function ListPage({ params }: ListPageProps) {
       list={list}
       isOwner={isListOwner(list, viewerUserId)}
       ownershipUnverified={ownershipUnverified}
-      ownerActions={<EditListForm list={list} />}
+      ownerActions={
+        <>
+          <EditListForm list={list} />
+          <DeleteListButton list={list} />
+        </>
+      }
     >
       <ListReorder listId={list.id} items={list.items} />
     </ListDetailView>
