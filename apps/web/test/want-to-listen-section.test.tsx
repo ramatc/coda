@@ -206,7 +206,7 @@ describe("WantToListenSection", () => {
     // read-time auto-resolve dropped it from the backlog.
     rerender(
       <WantToListenSection
-        entries={[ENTRIES[0], ENTRIES[2]]}
+        entries={[entry("a", "Kid A"), entry("c", "In Rainbows")]}
         isOwnProfile={true}
       />,
     );
