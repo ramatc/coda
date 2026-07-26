@@ -8,7 +8,7 @@ import {
   rateAlbum,
   writeReview,
 } from "../lib/albums";
-import type { AlbumDetail } from "../lib/albums";
+import type { AlbumDetail, AlbumViewerState } from "../lib/albums";
 
 /**
  * Unit tests for the albums lib's fetch helpers, mirroring `search-lib.test.ts`'s
@@ -27,6 +27,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const UNTRACKED_VIEWER: AlbumViewerState = {
+  listened: false,
+  listenId: null,
+  score: null,
+  review: null,
+  resolved: false,
+  wantToListenId: null,
+};
+
 const ALBUM: AlbumDetail = {
   id: "album-1",
   title: "OK Computer",
@@ -38,8 +47,16 @@ const ALBUM: AlbumDetail = {
   genres: [],
   tracks: [],
   aggregateRating: { average: 9, count: 1 },
-  viewer: { listened: false, listenId: null, score: null, review: null },
+  viewer: UNTRACKED_VIEWER,
 };
+
+/** Stubs `fetch` with a 200 carrying `album`. */
+function stubAlbumResponse(album: AlbumDetail): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ status: 200, ok: true, json: async () => album }),
+  );
+}
 
 describe("fetchAlbumDetail", () => {
   it("returns ALBUM_NOT_FOUND on a 404", async () => {
@@ -48,15 +65,50 @@ describe("fetchAlbumDetail", () => {
   });
 
   it("returns the parsed album on success", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        status: 200,
-        ok: true,
-        json: async () => ALBUM,
-      }),
-    );
+    stubAlbumResponse(ALBUM);
     expect(await fetchAlbumDetail("t", "album-1")).toEqual(ALBUM);
+  });
+
+  it("surfaces a pending want-to-listen row on an album the viewer has not resolved", async () => {
+    // The "remove" branch of the want-to-listen button: no Listen and no Rating
+    // (`resolved: false`), but a `WantToListen` row exists.
+    const pending: AlbumDetail = {
+      ...ALBUM,
+      viewer: { ...UNTRACKED_VIEWER, resolved: false, wantToListenId: "wtl-1" },
+    };
+    stubAlbumResponse(pending);
+
+    const result = await fetchAlbumDetail("t", "album-1");
+
+    expect(result).not.toBe(ALBUM_NOT_FOUND);
+    expect((result as AlbumDetail).viewer.resolved).toBe(false);
+    expect((result as AlbumDetail).viewer.wantToListenId).toBe("wtl-1");
+  });
+
+  it("carries `resolved` independently of a want-to-listen row that survived resolution", async () => {
+    // Read-time auto-resolve never deletes the row, so a rated-or-listened album
+    // reports `resolved: true` while `wantToListenId` is still non-null. The two
+    // fields answer different questions and must not be collapsed into one.
+    const resolvedButMarked: AlbumDetail = {
+      ...ALBUM,
+      viewer: {
+        listened: false,
+        listenId: null,
+        score: 9,
+        review: null,
+        resolved: true,
+        wantToListenId: "wtl-1",
+      },
+    };
+    stubAlbumResponse(resolvedButMarked);
+
+    const result = await fetchAlbumDetail("t", "album-1");
+
+    expect((result as AlbumDetail).viewer.resolved).toBe(true);
+    expect((result as AlbumDetail).viewer.wantToListenId).toBe("wtl-1");
+    // `listened` keeps its own raw meaning — a rating alone resolves the
+    // backlog entry without producing a Listen row.
+    expect((result as AlbumDetail).viewer.listened).toBe(false);
   });
 
   it("throws for a non-404 non-OK response", async () => {
