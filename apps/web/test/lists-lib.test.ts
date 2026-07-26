@@ -5,11 +5,14 @@ import {
   createList,
   deleteList,
   fetchList,
+  fetchUserLists,
+  fetchViewerProfile,
   fetchViewerUserId,
   removeListItem,
   reorderListItems,
   updateList,
   type ListDetail,
+  type ListSummary,
 } from "../lib/lists";
 
 const LIST_ID = "11111111-1111-4111-8111-111111111111";
@@ -39,6 +42,30 @@ const LIST: ListDetail = {
     },
   ],
 };
+
+/** The compact rows `GET /users/:username/lists` returns for a profile. */
+const SUMMARIES: ListSummary[] = [
+  {
+    id: LIST_ID,
+    title: "Best of 2026",
+    description: "A ranked run through the year.",
+    isRanked: true,
+    isPublic: true,
+    itemCount: 3,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-02T00:00:00.000Z",
+  },
+  {
+    id: "55555555-5555-4555-8555-555555555555",
+    title: "Private drafts",
+    description: null,
+    isRanked: false,
+    isPublic: false,
+    itemCount: 0,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+  },
+];
 
 /** A JSON `Response` carrying the API's list-detail payload. */
 function listResponse(status = 200): Response {
@@ -183,6 +210,123 @@ describe("fetchViewerUserId", () => {
 
     expect(await fetchViewerUserId("test-token")).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("fetchViewerProfile", () => {
+  it("returns the caller's local id AND username from their own profile", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ userId: "user-1", username: "ada" }), {
+        status: 200,
+      }),
+    );
+
+    expect(await fetchViewerProfile("test-token")).toEqual({
+      userId: "user-1",
+      username: "ada",
+    });
+    expect(urlOf(fetchMock)).toContain("/profile");
+    expect(
+      (initOf(fetchMock).headers as Record<string, string>).Authorization,
+    ).toBe("Bearer test-token");
+  });
+
+  it("fails safe to null on a non-OK response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(errorResponse(404));
+
+    expect(await fetchViewerProfile("test-token")).toBeNull();
+  });
+
+  it("fails safe to null on a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+
+    expect(await fetchViewerProfile(null)).toBeNull();
+  });
+
+  it("fails safe to null when the body carries an id but no username", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ userId: "user-1" }), { status: 200 }),
+    );
+
+    expect(await fetchViewerProfile("test-token")).toBeNull();
+  });
+
+  it("retries once after a transient failure, like fetchViewerUserId", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ userId: "user-1", username: "ada" }), {
+          status: 200,
+        }),
+      );
+
+    expect(await fetchViewerProfile("test-token")).toEqual({
+      userId: "user-1",
+      username: "ada",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a deterministic 401 — it is not transient", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(errorResponse(401));
+
+    expect(await fetchViewerProfile("test-token")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fetchUserLists", () => {
+  it("returns the profile's list summaries, public and private alike", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify(SUMMARIES), { status: 200 }),
+      );
+
+    const result = await fetchUserLists("test-token", "ada");
+
+    expect(result).toEqual(SUMMARIES);
+    expect(result.map((summary) => summary.title)).toEqual([
+      "Best of 2026",
+      "Private drafts",
+    ]);
+    expect(urlOf(fetchMock)).toContain("/users/ada/lists");
+    expect(
+      (initOf(fetchMock).headers as Record<string, string>).Authorization,
+    ).toBe("Bearer test-token");
+  });
+
+  it("encodes a username that needs escaping into the path", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    await fetchUserLists("test-token", "a da");
+
+    expect(urlOf(fetchMock)).toContain("/users/a%20da/lists");
+  });
+
+  it("fails safe to an empty picker on a non-OK response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(errorResponse(404));
+
+    expect(await fetchUserLists("test-token", "ghost")).toEqual([]);
+  });
+
+  it("fails safe to an empty picker on a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+
+    expect(await fetchUserLists("test-token", "ada")).toEqual([]);
+  });
+
+  it("fails safe to an empty picker when the body is not an array", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ lists: [] }), { status: 200 }),
+    );
+
+    expect(await fetchUserLists("test-token", "ada")).toEqual([]);
   });
 });
 
