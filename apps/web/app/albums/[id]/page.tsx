@@ -8,6 +8,7 @@ import {
   fetchOnboardingStatus,
   resolveOnboardingRedirect,
 } from "../../../lib/onboarding";
+import { fetchViewerOwnLists } from "../../../lib/lists";
 import { AlbumDetailView } from "./album-detail";
 import { AlbumActions } from "./album-actions";
 
@@ -23,6 +24,11 @@ interface AlbumPageProps {
  * + tracklist + aggregate rating + the viewer's own tracking state), then
  * renders the pure {@link AlbumDetailView} composed with the viewer's action
  * island. An unknown album 404s.
+ *
+ * The viewer's own lists are fetched IN PARALLEL with the album detail (they
+ * populate the action island's "add to list" picker) and never gate the page:
+ * an unresolved viewer or an unavailable lists endpoint degrades to an empty
+ * picker, which renders the create-a-list hint instead of failing the render.
  */
 export default async function AlbumPage({ params }: AlbumPageProps) {
   const { id } = await params;
@@ -35,14 +41,21 @@ export default async function AlbumPage({ params }: AlbumPageProps) {
     redirect(redirectTo);
   }
 
-  const album = await fetchAlbumDetail(token, id);
+  const [album, ownLists] = await Promise.all([
+    fetchAlbumDetail(token, id),
+    fetchViewerOwnLists(token),
+  ]);
   if (album === ALBUM_NOT_FOUND) {
     notFound();
   }
 
   return (
     <AlbumDetailView album={album}>
-      <AlbumActions albumId={album.id} viewer={album.viewer} />
+      <AlbumActions
+        albumId={album.id}
+        viewer={album.viewer}
+        ownLists={ownLists}
+      />
     </AlbumDetailView>
   );
 }

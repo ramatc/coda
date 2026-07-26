@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { AlbumActions } from "../app/albums/[id]/album-actions";
 import type { AlbumViewerState } from "../lib/albums";
+import { addListItem, type ListDetail, type ListSummary } from "../lib/lists";
 import {
   deleteListen,
   deleteRating,
@@ -10,6 +19,13 @@ import {
   rateAlbum,
   writeReview,
 } from "../lib/albums";
+import { markWantToListen, unmarkWantToListen } from "../lib/want-to-listen";
+
+vi.mock("next/link", () => ({
+  default: ({ href, children }: { href: string; children: ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: vi.fn().mockResolvedValue("test-token") }),
@@ -32,6 +48,20 @@ vi.mock("../lib/albums", async (importOriginal) => {
   };
 });
 
+vi.mock("../lib/lists", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/lists")>();
+  return { ...actual, addListItem: vi.fn() };
+});
+
+vi.mock("../lib/want-to-listen", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/want-to-listen")>();
+  return {
+    ...actual,
+    markWantToListen: vi.fn(),
+    unmarkWantToListen: vi.fn(),
+  };
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -44,9 +74,49 @@ beforeEach(() => {
   vi.mocked(rateAlbum).mockReset().mockResolvedValue(undefined);
   vi.mocked(deleteRating).mockReset().mockResolvedValue(undefined);
   vi.mocked(writeReview).mockReset().mockResolvedValue(undefined);
+  vi.mocked(markWantToListen).mockReset().mockResolvedValue({
+    id: "wtl-1",
+    albumId: ALBUM_ID,
+    createdAt: "2026-07-01T00:00:00.000Z",
+  });
+  vi.mocked(unmarkWantToListen).mockReset().mockResolvedValue(undefined);
+  vi.mocked(addListItem).mockReset().mockResolvedValue(ADDED_LIST);
 });
 
 const ALBUM_ID = "album-1";
+
+/** Builds a compact list row; the title doubles as its test identity. */
+function summary(id: string, title: string, isPublic = true): ListSummary {
+  return {
+    id,
+    title,
+    description: null,
+    isRanked: false,
+    isPublic,
+    itemCount: 0,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+}
+
+/** The viewer's own lists, as the album page server-fetches them. */
+const OWN_LISTS: ListSummary[] = [
+  summary("list-1", "Best of 2026"),
+  summary("list-2", "Private drafts", false),
+];
+
+/** The refreshed list `addListItem` resolves with (the island ignores it). */
+const ADDED_LIST: ListDetail = {
+  id: "list-2",
+  userId: "user-1",
+  title: "Private drafts",
+  description: null,
+  isRanked: false,
+  isPublic: false,
+  createdAt: "2026-07-01T00:00:00.000Z",
+  updatedAt: "2026-07-01T00:00:00.000Z",
+  items: [],
+};
 
 const UNTRACKED: AlbumViewerState = {
   listened: false,
@@ -66,9 +136,16 @@ function viewerState(overrides: Partial<AlbumViewerState> = {}): AlbumViewerStat
   return { ...UNTRACKED, ...overrides };
 }
 
-function renderActions(overrides: Partial<AlbumViewerState>) {
+function renderActions(
+  overrides: Partial<AlbumViewerState>,
+  ownLists: ListSummary[] = OWN_LISTS,
+) {
   return render(
-    <AlbumActions albumId={ALBUM_ID} viewer={viewerState(overrides)} />,
+    <AlbumActions
+      albumId={ALBUM_ID}
+      viewer={viewerState(overrides)}
+      ownLists={ownLists}
+    />,
   );
 }
 
@@ -239,6 +316,7 @@ describe("AlbumActions", () => {
       <AlbumActions
         albumId={ALBUM_ID}
         viewer={viewerState({ score: 8, review: "Updated review." })}
+        ownLists={OWN_LISTS}
       />,
     );
 
@@ -265,11 +343,169 @@ describe("AlbumActions", () => {
       <AlbumActions
         albumId={ALBUM_ID}
         viewer={viewerState()}
+        ownLists={OWN_LISTS}
       />,
     );
 
     expect(
       (screen.getByLabelText("Your review") as HTMLTextAreaElement).value,
     ).toBe("");
+  });
+});
+
+describe("AlbumActions — want to listen", () => {
+  it("offers the add state when the album is neither resolved nor already marked", async () => {
+    renderActions({ resolved: false, wantToListenId: null });
+
+    fireEvent.click(screen.getByText("+ Want to listen"));
+
+    await waitFor(() =>
+      expect(markWantToListen).toHaveBeenCalledWith("test-token", ALBUM_ID),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("offers the remove state — addressed BY ALBUM — when a row already exists", async () => {
+    renderActions({ resolved: false, wantToListenId: "wtl-1" });
+
+    expect(screen.queryByText("+ Want to listen")).toBeNull();
+    fireEvent.click(screen.getByText(/Want to listen ✓/));
+
+    // The entry's own id ("wtl-1") is deliberately NOT part of the call: the
+    // API scopes `DELETE /want-to-listen/:albumId` to the caller's own row.
+    await waitFor(() =>
+      expect(unmarkWantToListen).toHaveBeenCalledWith("test-token", ALBUM_ID),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("hides the control entirely once the album is resolved, even while the row survives", () => {
+    // `resolved` covers listened OR rated; the row is never deleted on resolve,
+    // so this combination is reachable and hide must win over remove.
+    renderActions({ resolved: true, wantToListenId: "wtl-1" });
+
+    expect(screen.queryByText(/Want to listen/)).toBeNull();
+    // The other controls are untouched by the hide branch.
+    expect(screen.getByText("Mark as listened")).toBeTruthy();
+  });
+
+  it("hides the control when the album is resolved and was never marked", () => {
+    renderActions({ resolved: true, wantToListenId: null });
+
+    expect(screen.queryByText(/Want to listen/)).toBeNull();
+  });
+
+  it("surfaces the API's message when marking fails, and does not refresh", async () => {
+    vi.mocked(markWantToListen).mockRejectedValue(
+      new Error("This album is already on your want-to-listen list."),
+    );
+    renderActions({ resolved: false, wantToListenId: null });
+
+    fireEvent.click(screen.getByText("+ Want to listen"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "This album is already on your want-to-listen list.",
+      ),
+    );
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("AlbumActions — add to list", () => {
+  it("offers one option per own list, private ones included", () => {
+    renderActions({});
+
+    const picker = screen.getByLabelText("Add to list") as HTMLSelectElement;
+    const options = within(picker).getAllByRole("option");
+
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Add to list…",
+      "Best of 2026",
+      "Private drafts",
+    ]);
+  });
+
+  it("adds the album to the picked list and confirms which one", async () => {
+    renderActions({});
+
+    fireEvent.change(screen.getByLabelText("Add to list"), {
+      target: { value: "list-2" },
+    });
+
+    await waitFor(() =>
+      expect(addListItem).toHaveBeenCalledWith("test-token", "list-2", ALBUM_ID),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "Added to Private drafts.",
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("resets the picker to its placeholder so a second list can be picked", async () => {
+    renderActions({});
+
+    const picker = screen.getByLabelText("Add to list") as HTMLSelectElement;
+    fireEvent.change(picker, { target: { value: "list-1" } });
+
+    await waitFor(() =>
+      expect(addListItem).toHaveBeenCalledWith("test-token", "list-1", ALBUM_ID),
+    );
+    expect(picker.value).toBe("");
+
+    fireEvent.change(picker, { target: { value: "list-2" } });
+
+    await waitFor(() =>
+      expect(addListItem).toHaveBeenCalledWith("test-token", "list-2", ALBUM_ID),
+    );
+    expect(addListItem).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces the API's duplicate-add message instead of a confirmation", async () => {
+    vi.mocked(addListItem).mockRejectedValue(
+      new Error("This album is already on the list."),
+    );
+    renderActions({});
+
+    fireEvent.change(screen.getByLabelText("Add to list"), {
+      target: { value: "list-1" },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "This album is already on the list.",
+      ),
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("points a viewer with no lists at the create page instead of hiding the control", () => {
+    renderActions({}, []);
+
+    expect(screen.queryByLabelText("Add to list")).toBeNull();
+
+    const link = screen.getByText("create one") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/lists/new");
+    expect(screen.getByText(/You have no lists yet/)).toBeTruthy();
+  });
+
+  it("clears a stale confirmation when the next action starts", async () => {
+    renderActions({});
+
+    fireEvent.change(screen.getByLabelText("Add to list"), {
+      target: { value: "list-1" },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "Added to Best of 2026.",
+      ),
+    );
+
+    fireEvent.click(screen.getByText("Mark as listened"));
+
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 });
