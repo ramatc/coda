@@ -30,6 +30,36 @@ export interface ListDetail {
   items: ListItem[];
 }
 
+/**
+ * A compact list row from `GET /users/:username/lists` — the list WITHOUT its
+ * items, plus an `itemCount`. Mirrors the API's own `ListSummary` exactly. The
+ * album page's "add to list" picker only needs `id` + `title` to label an
+ * option, but the shape is kept faithful to the payload so the type never drifts
+ * from what the endpoint actually sends (the same posture {@link ListDetail}
+ * takes) — it is still far lighter than a `ListDetail` per list, which would
+ * mean shipping every item of every list to render a `<select>`.
+ */
+export interface ListSummary {
+  id: string;
+  title: string;
+  description: string | null;
+  isRanked: boolean;
+  isPublic: boolean;
+  itemCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * The viewer's own identity as `GET /profile` reports it: the LOCAL `User.id`
+ * (see {@link fetchViewerUserId}) plus the `username` the public routes are
+ * keyed by (`/users/:username/lists`, `/u/[username]`).
+ */
+export interface ViewerProfile {
+  userId: string;
+  username: string;
+}
+
 /** The full payload accepted by `POST /lists`. */
 export interface CreateListInput {
   title: string;
@@ -150,15 +180,31 @@ export async function fetchList(
 }
 
 /**
+ * The fields of `GET /profile` this module reads, each independently `null`
+ * when absent or not a string. Kept as two loose fields rather than a
+ * {@link ViewerProfile} so {@link fetchViewerUserId} — which needs only the id
+ * — is never made stricter by a caller that also wants the username.
+ */
+interface ParsedProfile {
+  userId: string | null;
+  username: string | null;
+}
+
+/** The unresolved profile: what every failing path degrades to. */
+const NO_PROFILE: ParsedProfile = { userId: null, username: null };
+
+/**
  * One attempt at `GET /profile`. Distinguishes a transient failure (network
  * error, or a 5xx) — worth retrying — from a deterministic one. A 4xx
  * (401/403/404/...) would return the identical result on a second attempt,
  * so it is treated as definitive, not transient. A successful-but-unparseable
  * body is likewise not transient and should not be retried.
  */
-async function attemptFetchViewerUserId(
+async function attemptFetchProfile(
   token: string | null,
-): Promise<{ transientFailure: true } | { transientFailure: false; userId: string | null }> {
+): Promise<
+  { transientFailure: true } | { transientFailure: false; profile: ParsedProfile }
+> {
   let response: Response;
   try {
     response = await fetch(`${getApiBaseUrl()}/profile`, {
@@ -174,17 +220,40 @@ async function attemptFetchViewerUserId(
     if (response.status >= 500) {
       return { transientFailure: true };
     }
-    return { transientFailure: false, userId: null };
+    return { transientFailure: false, profile: NO_PROFILE };
   }
   try {
-    const profile = (await response.json()) as { userId?: unknown };
+    const profile = (await response.json()) as {
+      userId?: unknown;
+      username?: unknown;
+    };
     return {
       transientFailure: false,
-      userId: typeof profile.userId === "string" ? profile.userId : null,
+      profile: {
+        userId: typeof profile.userId === "string" ? profile.userId : null,
+        username: typeof profile.username === "string" ? profile.username : null,
+      },
     };
   } catch {
-    return { transientFailure: false, userId: null };
+    return { transientFailure: false, profile: NO_PROFILE };
   }
+}
+
+/**
+ * Reads `GET /profile`, retrying ONCE on a transient failure (network error or
+ * a 5xx) before giving up, so a single blip doesn't needlessly degrade every
+ * caller. A 4xx (deterministic) or a successful-but-unparseable body is not
+ * retried — neither is transient. Always resolves; never throws.
+ */
+async function fetchProfileWithRetry(
+  token: string | null,
+): Promise<ParsedProfile> {
+  const first = await attemptFetchProfile(token);
+  if (!first.transientFailure) {
+    return first.profile;
+  }
+  const second = await attemptFetchProfile(token);
+  return second.transientFailure ? NO_PROFILE : second.profile;
 }
 
 /**
@@ -211,12 +280,59 @@ async function attemptFetchViewerUserId(
 export async function fetchViewerUserId(
   token: string | null,
 ): Promise<string | null> {
-  const first = await attemptFetchViewerUserId(token);
-  if (!first.transientFailure) {
-    return first.userId;
+  return (await fetchProfileWithRetry(token)).userId;
+}
+
+/**
+ * Resolves the viewer's own id AND username from the same `GET /profile` call
+ * {@link fetchViewerUserId} uses — the album page needs the username to ask
+ * `GET /users/:username/lists` for the caller's OWN lists, and Clerk's `auth()`
+ * exposes neither. Kept separate from {@link fetchViewerUserId} (rather than
+ * replacing it) because the list page only ever compares ids, and widening its
+ * contract would make it fail on a payload it currently handles fine.
+ *
+ * Fails safe to `null` — persistent network error, non-OK response, malformed
+ * body, or a body missing either field — so a profile blip degrades the album
+ * page's picker to empty instead of throwing during render. That empty state is
+ * therefore ambiguous between "you have no lists" and "we could not load them";
+ * the once-retry inherited from {@link fetchProfileWithRetry} keeps that case
+ * rare, and the hint it renders (create a list) is harmless either way.
+ */
+export async function fetchViewerProfile(
+  token: string | null,
+): Promise<ViewerProfile | null> {
+  const { userId, username } = await fetchProfileWithRetry(token);
+  return userId !== null && username !== null ? { userId, username } : null;
+}
+
+/**
+ * Fetches the lists shown on `username`'s profile: the API returns ALL of them
+ * when the caller IS that user, and only the public ones otherwise — so calling
+ * it with the viewer's own username (see {@link fetchViewerProfile}) yields
+ * exactly the lists they may add an album to.
+ *
+ * Fails safe to an EMPTY array on any failure — network error, non-OK response,
+ * or a body that isn't an array — rather than throwing during render, matching
+ * `fetchWantToListen`'s posture: a picker that is briefly empty is a far better
+ * outcome than an album page that refuses to render.
+ */
+export async function fetchUserLists(
+  token: string | null,
+  username: string,
+): Promise<ListSummary[]> {
+  try {
+    const response = await fetch(
+      `${getApiBaseUrl()}/users/${encodeURIComponent(username)}/lists`,
+      { headers: authHeaders(token), cache: "no-store" },
+    );
+    if (!response.ok) {
+      return [];
+    }
+    const body = (await response.json()) as unknown;
+    return Array.isArray(body) ? (body as ListSummary[]) : [];
+  } catch {
+    return [];
   }
-  const second = await attemptFetchViewerUserId(token);
-  return second.transientFailure ? null : second.userId;
 }
 
 /** Creates a list owned by the caller. Throws with the API's message on failure. */
