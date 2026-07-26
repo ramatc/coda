@@ -96,6 +96,11 @@ async function throwApiError(
  * is unavailable. An empty array is therefore ambiguous between "nothing marked"
  * and "could not load" — accepted deliberately, because the spec requires the
  * section to exist either way and its empty state reads correctly in both.
+ *
+ * A successful response whose body is not an array (backend hiccup,
+ * misconfigured proxy) degrades the same way — matching `fetchUserLists`'s
+ * `Array.isArray` guard in `lib/lists.ts` — so the section never throws during
+ * render just because a 200 carried an unexpected shape.
  */
 export async function fetchWantToListen(
   token: string | null,
@@ -109,7 +114,8 @@ export async function fetchWantToListen(
     if (!response.ok) {
       return EMPTY_ENTRIES;
     }
-    return (await response.json()) as WantToListenEntry[];
+    const body = (await response.json()) as unknown;
+    return Array.isArray(body) ? (body as WantToListenEntry[]) : EMPTY_ENTRIES;
   } catch {
     return EMPTY_ENTRIES;
   }
