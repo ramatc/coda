@@ -10,6 +10,7 @@ import {
   rateAlbum,
   writeReview,
 } from "../lib/albums";
+import { markWantToListen, unmarkWantToListen } from "../lib/want-to-listen";
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: vi.fn().mockResolvedValue("test-token") }),
@@ -32,6 +33,15 @@ vi.mock("../lib/albums", async (importOriginal) => {
   };
 });
 
+vi.mock("../lib/want-to-listen", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/want-to-listen")>();
+  return {
+    ...actual,
+    markWantToListen: vi.fn(),
+    unmarkWantToListen: vi.fn(),
+  };
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -44,6 +54,12 @@ beforeEach(() => {
   vi.mocked(rateAlbum).mockReset().mockResolvedValue(undefined);
   vi.mocked(deleteRating).mockReset().mockResolvedValue(undefined);
   vi.mocked(writeReview).mockReset().mockResolvedValue(undefined);
+  vi.mocked(markWantToListen).mockReset().mockResolvedValue({
+    id: "wtl-1",
+    albumId: ALBUM_ID,
+    createdAt: "2026-07-01T00:00:00.000Z",
+  });
+  vi.mocked(unmarkWantToListen).mockReset().mockResolvedValue(undefined);
 });
 
 const ALBUM_ID = "album-1";
@@ -271,5 +287,64 @@ describe("AlbumActions", () => {
     expect(
       (screen.getByLabelText("Your review") as HTMLTextAreaElement).value,
     ).toBe("");
+  });
+});
+
+describe("AlbumActions — want to listen", () => {
+  it("offers the add state when the album is neither resolved nor already marked", async () => {
+    renderActions({ resolved: false, wantToListenId: null });
+
+    fireEvent.click(screen.getByText("+ Want to listen"));
+
+    await waitFor(() =>
+      expect(markWantToListen).toHaveBeenCalledWith("test-token", ALBUM_ID),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("offers the remove state — addressed BY ALBUM — when a row already exists", async () => {
+    renderActions({ resolved: false, wantToListenId: "wtl-1" });
+
+    expect(screen.queryByText("+ Want to listen")).toBeNull();
+    fireEvent.click(screen.getByText(/Want to listen ✓/));
+
+    // The entry's own id ("wtl-1") is deliberately NOT part of the call: the
+    // API scopes `DELETE /want-to-listen/:albumId` to the caller's own row.
+    await waitFor(() =>
+      expect(unmarkWantToListen).toHaveBeenCalledWith("test-token", ALBUM_ID),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("hides the control entirely once the album is resolved, even while the row survives", () => {
+    // `resolved` covers listened OR rated; the row is never deleted on resolve,
+    // so this combination is reachable and hide must win over remove.
+    renderActions({ resolved: true, wantToListenId: "wtl-1" });
+
+    expect(screen.queryByText(/Want to listen/)).toBeNull();
+    // The other controls are untouched by the hide branch.
+    expect(screen.getByText("Mark as listened")).toBeTruthy();
+  });
+
+  it("hides the control when the album is resolved and was never marked", () => {
+    renderActions({ resolved: true, wantToListenId: null });
+
+    expect(screen.queryByText(/Want to listen/)).toBeNull();
+  });
+
+  it("surfaces the API's message when marking fails, and does not refresh", async () => {
+    vi.mocked(markWantToListen).mockRejectedValue(
+      new Error("This album is already on your want-to-listen list."),
+    );
+    renderActions({ resolved: false, wantToListenId: null });
+
+    fireEvent.click(screen.getByText("+ Want to listen"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "This album is already on your want-to-listen list.",
+      ),
+    );
+    expect(refreshMock).not.toHaveBeenCalled();
   });
 });
