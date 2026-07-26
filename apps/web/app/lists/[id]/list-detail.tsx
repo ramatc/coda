@@ -19,6 +19,13 @@ interface ListDetailViewProps {
    */
   ownershipUnverified?: boolean;
   /**
+   * The owner-only edit and delete islands, rendered under the header. Handed
+   * down unconditionally like {@link ListDetailViewProps.children} and gated on
+   * `isOwner` here, so ownership is decided in exactly ONE place — a visitor
+   * never receives controls the API would reject anyway.
+   */
+  ownerActions?: ReactNode;
+  /**
    * The owner-only reorder island. Rendered IN PLACE OF the read-only item list
    * (never alongside it), and only for the owner — the server page hands it
    * down unconditionally, the same way `/u/[username]` hands down its
@@ -46,6 +53,7 @@ export function ListDetailView({
   list,
   isOwner,
   ownershipUnverified,
+  ownerActions,
   children,
 }: ListDetailViewProps) {
   return (
@@ -75,6 +83,15 @@ export function ListDetailView({
           <p className="text-sm italic opacity-50">No description yet.</p>
         )}
       </header>
+
+      {isOwner && ownerActions ? (
+        <section
+          aria-label="List settings"
+          className="flex flex-wrap items-start gap-3"
+        >
+          {ownerActions}
+        </section>
+      ) : null}
 
       <section aria-label="List items">
         {isOwner && children ? (

@@ -163,6 +163,30 @@ describe("ListDetailView", () => {
     expect(renderedTitles()).toEqual(["Kid A", "Amnesiac"]);
   });
 
+  it("renders the owner's edit and delete controls", () => {
+    render(
+      <ListDetailView
+        list={list()}
+        isOwner={true}
+        ownerActions={<div>owner actions</div>}
+      />,
+    );
+
+    expect(screen.getByText("owner actions")).not.toBeNull();
+  });
+
+  it("never hands the owner controls to a visitor", () => {
+    render(
+      <ListDetailView
+        list={list()}
+        isOwner={false}
+        ownerActions={<div>owner actions</div>}
+      />,
+    );
+
+    expect(screen.queryByText("owner actions")).toBeNull();
+  });
+
   it("surfaces a notice when ownership could not be verified", () => {
     render(
       <ListDetailView list={list()} isOwner={false} ownershipUnverified={true} />,
