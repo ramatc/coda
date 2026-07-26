@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import {
+  albumCountLabel,
   EMPTY_LIST_MESSAGE,
   type ListDetail,
   type ListItem,
@@ -32,11 +33,6 @@ interface ListDetailViewProps {
    * owner-only avatar island.
    */
   children?: ReactNode;
-}
-
-/** `N albums`, singularized for a one-album list. */
-function albumCountLabel(count: number): string {
-  return count === 1 ? "1 album" : `${count} albums`;
 }
 
 /**
