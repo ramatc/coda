@@ -6,6 +6,7 @@ import {
   deleteList,
   fetchList,
   fetchUserLists,
+  fetchViewerOwnLists,
   fetchViewerProfile,
   fetchViewerUserId,
   removeListItem,
@@ -327,6 +328,39 @@ describe("fetchUserLists", () => {
     );
 
     expect(await fetchUserLists("test-token", "ada")).toEqual([]);
+  });
+});
+
+describe("fetchViewerOwnLists", () => {
+  it("resolves the viewer's own username, then the lists filed under it", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ userId: "user-1", username: "ada" }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(SUMMARIES), { status: 200 }),
+      );
+
+    expect(await fetchViewerOwnLists("test-token")).toEqual(SUMMARIES);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/profile");
+    // Keyed by the viewer's OWN username, so the API returns their private
+    // lists too — a visitor's username would silently drop those.
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/users/ada/lists");
+  });
+
+  it("returns an empty picker without asking for lists when the viewer is unresolved", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(errorResponse(401));
+
+    expect(await fetchViewerOwnLists("test-token")).toEqual([]);
+    // Exactly one call: with no username there is no list URL to build, and
+    // guessing one would ask the API about a user that does not exist.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

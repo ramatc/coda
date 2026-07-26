@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { AlbumActions } from "../app/albums/[id]/album-actions";
 import type { AlbumViewerState } from "../lib/albums";
+import { addListItem, type ListDetail, type ListSummary } from "../lib/lists";
 import {
   deleteListen,
   deleteRating,
@@ -11,6 +20,12 @@ import {
   writeReview,
 } from "../lib/albums";
 import { markWantToListen, unmarkWantToListen } from "../lib/want-to-listen";
+
+vi.mock("next/link", () => ({
+  default: ({ href, children }: { href: string; children: ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: vi.fn().mockResolvedValue("test-token") }),
@@ -31,6 +46,11 @@ vi.mock("../lib/albums", async (importOriginal) => {
     deleteRating: vi.fn(),
     writeReview: vi.fn(),
   };
+});
+
+vi.mock("../lib/lists", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/lists")>();
+  return { ...actual, addListItem: vi.fn() };
 });
 
 vi.mock("../lib/want-to-listen", async (importOriginal) => {
@@ -60,9 +80,43 @@ beforeEach(() => {
     createdAt: "2026-07-01T00:00:00.000Z",
   });
   vi.mocked(unmarkWantToListen).mockReset().mockResolvedValue(undefined);
+  vi.mocked(addListItem).mockReset().mockResolvedValue(ADDED_LIST);
 });
 
 const ALBUM_ID = "album-1";
+
+/** Builds a compact list row; the title doubles as its test identity. */
+function summary(id: string, title: string, isPublic = true): ListSummary {
+  return {
+    id,
+    title,
+    description: null,
+    isRanked: false,
+    isPublic,
+    itemCount: 0,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+}
+
+/** The viewer's own lists, as the album page server-fetches them. */
+const OWN_LISTS: ListSummary[] = [
+  summary("list-1", "Best of 2026"),
+  summary("list-2", "Private drafts", false),
+];
+
+/** The refreshed list `addListItem` resolves with (the island ignores it). */
+const ADDED_LIST: ListDetail = {
+  id: "list-2",
+  userId: "user-1",
+  title: "Private drafts",
+  description: null,
+  isRanked: false,
+  isPublic: false,
+  createdAt: "2026-07-01T00:00:00.000Z",
+  updatedAt: "2026-07-01T00:00:00.000Z",
+  items: [],
+};
 
 const UNTRACKED: AlbumViewerState = {
   listened: false,
@@ -82,9 +136,16 @@ function viewerState(overrides: Partial<AlbumViewerState> = {}): AlbumViewerStat
   return { ...UNTRACKED, ...overrides };
 }
 
-function renderActions(overrides: Partial<AlbumViewerState>) {
+function renderActions(
+  overrides: Partial<AlbumViewerState>,
+  ownLists: ListSummary[] = OWN_LISTS,
+) {
   return render(
-    <AlbumActions albumId={ALBUM_ID} viewer={viewerState(overrides)} />,
+    <AlbumActions
+      albumId={ALBUM_ID}
+      viewer={viewerState(overrides)}
+      ownLists={ownLists}
+    />,
   );
 }
 
@@ -255,6 +316,7 @@ describe("AlbumActions", () => {
       <AlbumActions
         albumId={ALBUM_ID}
         viewer={viewerState({ score: 8, review: "Updated review." })}
+        ownLists={OWN_LISTS}
       />,
     );
 
@@ -281,6 +343,7 @@ describe("AlbumActions", () => {
       <AlbumActions
         albumId={ALBUM_ID}
         viewer={viewerState()}
+        ownLists={OWN_LISTS}
       />,
     );
 
@@ -346,5 +409,103 @@ describe("AlbumActions — want to listen", () => {
       ),
     );
     expect(refreshMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("AlbumActions — add to list", () => {
+  it("offers one option per own list, private ones included", () => {
+    renderActions({});
+
+    const picker = screen.getByLabelText("Add to list") as HTMLSelectElement;
+    const options = within(picker).getAllByRole("option");
+
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Add to list…",
+      "Best of 2026",
+      "Private drafts",
+    ]);
+  });
+
+  it("adds the album to the picked list and confirms which one", async () => {
+    renderActions({});
+
+    fireEvent.change(screen.getByLabelText("Add to list"), {
+      target: { value: "list-2" },
+    });
+
+    await waitFor(() =>
+      expect(addListItem).toHaveBeenCalledWith("test-token", "list-2", ALBUM_ID),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "Added to Private drafts.",
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("resets the picker to its placeholder so a second list can be picked", async () => {
+    renderActions({});
+
+    const picker = screen.getByLabelText("Add to list") as HTMLSelectElement;
+    fireEvent.change(picker, { target: { value: "list-1" } });
+
+    await waitFor(() =>
+      expect(addListItem).toHaveBeenCalledWith("test-token", "list-1", ALBUM_ID),
+    );
+    expect(picker.value).toBe("");
+
+    fireEvent.change(picker, { target: { value: "list-2" } });
+
+    await waitFor(() =>
+      expect(addListItem).toHaveBeenCalledWith("test-token", "list-2", ALBUM_ID),
+    );
+    expect(addListItem).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces the API's duplicate-add message instead of a confirmation", async () => {
+    vi.mocked(addListItem).mockRejectedValue(
+      new Error("This album is already on the list."),
+    );
+    renderActions({});
+
+    fireEvent.change(screen.getByLabelText("Add to list"), {
+      target: { value: "list-1" },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "This album is already on the list.",
+      ),
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("points a viewer with no lists at the create page instead of hiding the control", () => {
+    renderActions({}, []);
+
+    expect(screen.queryByLabelText("Add to list")).toBeNull();
+
+    const link = screen.getByText("create one") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/lists/new");
+    expect(screen.getByText(/You have no lists yet/)).toBeTruthy();
+  });
+
+  it("clears a stale confirmation when the next action starts", async () => {
+    renderActions({});
+
+    fireEvent.change(screen.getByLabelText("Add to list"), {
+      target: { value: "list-1" },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "Added to Best of 2026.",
+      ),
+    );
+
+    fireEvent.click(screen.getByText("Mark as listened"));
+
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 });
