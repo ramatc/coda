@@ -94,6 +94,32 @@ export const LIST_NOT_FOUND = Symbol("list-not-found");
 export const EMPTY_LIST_MESSAGE = "No albums on this list yet.";
 
 /**
+ * Empty-state copy for the profile Lists section when the OWNER is looking at
+ * their own profile: they see every list they have, so "no lists" is the whole
+ * truth.
+ */
+export const EMPTY_LISTS_MESSAGE = "No lists yet.";
+
+/**
+ * Empty-state copy for the profile Lists section as a VISITOR sees it. Kept
+ * distinct from {@link EMPTY_LISTS_MESSAGE} because `GET /users/:username/lists`
+ * hides private lists from anyone but their owner: a visitor cannot tell a user
+ * with no lists apart from a user whose lists are all private, so the copy only
+ * claims what it can actually observe.
+ */
+export const EMPTY_PUBLIC_LISTS_MESSAGE = "No public lists yet.";
+
+/**
+ * `N albums`, singularized for a one-album list. Lives here rather than in
+ * either component because the list detail page and the profile Lists section
+ * both label the same count and sit on opposite sides of that page boundary —
+ * the same reason {@link EMPTY_LIST_MESSAGE} is shared.
+ */
+export function albumCountLabel(count: number): string {
+  return count === 1 ? "1 album" : `${count} albums`;
+}
+
+/**
  * True when the viewer owns the list. `viewerUserId` is the viewer's LOCAL
  * `User.id` (see {@link fetchViewerUserId}), which is what `ListDetail.userId`
  * carries — a Clerk id would never match. An unresolved viewer (`null`) is

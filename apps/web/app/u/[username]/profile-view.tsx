@@ -34,6 +34,18 @@ interface ProfileViewProps {
    * profile — never on the owner's own profile (no self-follow affordance).
    */
   followButton?: ReactNode;
+  /**
+   * The profile's Lists section. Rendered UNCONDITIONALLY — owner and visitor
+   * alike — because the section itself owns the empty state and the API already
+   * decided which lists this viewer may see. Gating it here would make a user
+   * with no public lists look like a user with no Lists feature.
+   */
+  listsSection?: ReactNode;
+  /**
+   * The profile's want-to-listen section. Also unconditional: the spec requires
+   * this container to exist for every user, always, so only its CONTENTS vary.
+   */
+  wantToListenSection?: ReactNode;
 }
 
 /**
@@ -48,6 +60,8 @@ export function ProfileView({
   stats,
   children,
   followButton,
+  listsSection,
+  wantToListenSection,
 }: ProfileViewProps) {
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-6 py-12">
@@ -96,6 +110,9 @@ export function ProfileView({
       )}
 
       {isOwnProfile ? <section aria-label="Edit avatar">{children}</section> : null}
+
+      {listsSection}
+      {wantToListenSection}
     </main>
   );
 }

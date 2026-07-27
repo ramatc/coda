@@ -119,6 +119,14 @@ describe("fetchWantToListen", () => {
 
     expect(await fetchWantToListen("test-token", "ada")).toEqual([]);
   });
+
+  it("fails safe to an empty section when the body is not an array", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ entries: [] }),
+    );
+
+    expect(await fetchWantToListen("test-token", "ada")).toEqual([]);
+  });
 });
 
 describe("markWantToListen", () => {
