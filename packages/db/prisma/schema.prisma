@@ -56,7 +56,10 @@ model User {
   listens          Listen[]
   ratings          Rating[]
   reviews          Review[]
+  reviewLikes      ReviewLike[]
+  reviewComments   ReviewComment[]
   lists            List[]
+  listLikes        ListLike[]
   wantToListen     WantToListen[]
   following        Follow[]              @relation("Follower")
   followers        Follow[]              @relation("Following")
@@ -248,10 +251,53 @@ model Review {
   album          Album           @relation(fields: [albumId], references: [id])
   rating         Rating          @relation(fields: [userId, albumId], references: [userId, albumId])
   activityEvents ActivityEvent[]
+  likes          ReviewLike[]
+  comments       ReviewComment[]
 
   @@unique([userId, albumId])
   @@index([albumId, createdAt(sort: Desc)])
   @@map("reviews")
+}
+
+// Review like (Fase 2 slice 3). Composite `@@id([userId, reviewId])` mirrors
+// `Follow`/`UserGenrePreference` — it is the SOLE unique constraint on the
+// table, which is what lets the service map a bare P2002 to 409 without having
+// to discriminate on the violated field. `onDelete: Cascade` on `review` is
+// load-bearing: `deleteRating` deletes the Review inside a transaction and only
+// maps P2025, so a leftover like would escape as a raw 500 (design Decision 1).
+// The extra `@@index([reviewId])` serves the `_count` aggregations, which the
+// `userId`-leading composite PK cannot.
+model ReviewLike {
+  userId    String   @map("user_id") @db.Uuid
+  reviewId  String   @map("review_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@id([userId, reviewId])
+  @@index([reviewId])
+  @@map("review_likes")
+}
+
+// Review comment (Fase 2 slice 3). Plain text only, no threading, no mentions.
+// `body` is `@db.VarChar(500)` — deliberately stricter than `Review.body`'s
+// `@db.Text` — so the 500-character bound is enforced at the DB level in
+// addition to service validation. Both FKs cascade for the same reason as
+// `ReviewLike` (design Decision 1).
+model ReviewComment {
+  id        String   @id @default(uuid()) @db.Uuid
+  reviewId  String   @map("review_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  body      String   @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId, createdAt])
+  @@map("review_comments")
 }
 
 model List {
@@ -266,6 +312,7 @@ model List {
 
   user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   items ListItem[]
+  likes ListLike[]
 
   @@index([userId, createdAt(sort: Desc)])
   @@map("lists")
@@ -284,6 +331,23 @@ model ListItem {
   @@unique([listId, albumId])
   @@index([listId, position])
   @@map("list_items")
+}
+
+// List like (Fase 2 slice 3). Same shape and rationale as `ReviewLike`. The
+// service gates it with `loadListForViewer` (design Decision 4), so private
+// lists 404 for non-owners BEFORE the insert runs — which is also why the like
+// path needs no P2003 mapping here, unlike `likeReview`.
+model ListLike {
+  userId    String   @map("user_id") @db.Uuid
+  listId    String   @map("list_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  list List @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@id([userId, listId])
+  @@index([listId])
+  @@map("list_likes")
 }
 
 // Manual "want to listen" backlog (Fase 2 slice 2). One row per (user, album) a
