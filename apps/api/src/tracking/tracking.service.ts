@@ -343,6 +343,16 @@ export class TrackingService {
    * the rating cannot be deleted while its review still exists. The review and
    * its own `ActivityEvent`s are therefore removed first, in the same
    * transaction, before the rating itself.
+   *
+   * The review's SOCIAL children (`ReviewLike`, `ReviewComment`, added in Fase 2
+   * slice 3) need no handling here: both FKs are `onDelete: Cascade`, so
+   * Postgres clears them inside this same transaction when `tx.review.delete`
+   * runs. That is deliberate, not an omission (slice 3 Decision 1) — it keeps
+   * this module ignorant of the review-social tables, and it makes the invariant
+   * structural rather than something every future review-delete site has to
+   * remember. Do NOT "fix" it by adding explicit `deleteMany` calls; note the
+   * contrast with the `ActivityEvent` FKs above, which are `SetNull` and
+   * therefore DO require the explicit cleanup.
    */
   async deleteRating(
     clerkUserId: string,
@@ -407,9 +417,12 @@ export class TrackingService {
   }
 
   /**
-   * Attaches (or edits) the caller's plain-text review for an album. Reviews
-   * are plain text only — no rich formatting, replies, likes, or comments
-   * (spec: "Basic Text Review" scope boundary). A `Review` requires an existing
+   * Attaches (or edits) the caller's plain-text review for an album. The review
+   * BODY is plain text only — no rich formatting, no threading, no @mentions.
+   * Likes and comments ON a review are no longer out of scope (Fase 2 slice 3
+   * added them), but they are owned by `ReviewsService`, not this module: this
+   * is the `albumId`-keyed write surface, that one is `reviewId`-keyed
+   * (Decision 2). A `Review` requires an existing
    * `Rating` for the same (user, album) — that FK is enforced by the frozen
    * schema, so this rejects a review on an unrated album with a clear 400
    * rather than a raw FK 500. A first review creates a REVIEW `ActivityEvent`;

@@ -93,6 +93,11 @@ function createFakePrisma() {
   const ratings: RatingRow[] = [];
   const reviews: ReviewRow[] = [];
   const activity: ActivityRow[] = [];
+  // Slice 3's review-social children. They exist here ONLY so `review.delete`
+  // can simulate their `onDelete: Cascade` FKs — `TrackingService` never reads
+  // or writes these tables (design Decision 1 keeps `tracking` ignorant of them).
+  const reviewLikes: { userId: string; reviewId: string }[] = [];
+  const reviewComments: { id: string; reviewId: string; userId: string }[] = [];
   let seq = 0;
   // Real Prisma ids are UUIDs; the service validates a `listenId` as UUID-shaped
   // before querying, so the fake must mint the same shape.
@@ -343,6 +348,18 @@ function createFakePrisma() {
           );
         }
         const [removed] = reviews.splice(index, 1);
+        // Simulates the slice-3 migration's `ON DELETE CASCADE` on
+        // `review_likes.review_id` / `review_comments.review_id`: Postgres
+        // clears the children in the SAME statement, which is exactly why
+        // `deleteRating` needs no explicit cleanup for them.
+        for (let i = reviewLikes.length - 1; i >= 0; i -= 1) {
+          if (reviewLikes[i].reviewId === removed.id) reviewLikes.splice(i, 1);
+        }
+        for (let i = reviewComments.length - 1; i >= 0; i -= 1) {
+          if (reviewComments[i].reviewId === removed.id) {
+            reviewComments.splice(i, 1);
+          }
+        }
         return removed;
       },
     },
@@ -411,6 +428,8 @@ function createFakePrisma() {
     ratings,
     reviews,
     activity,
+    reviewLikes,
+    reviewComments,
   };
 }
 
@@ -748,6 +767,36 @@ describe("TrackingService", () => {
       expect(fake.reviews).toHaveLength(0);
       expect(fake.ratings).toHaveLength(0);
       expect(fake.activity).toHaveLength(0);
+    });
+
+    it("removes a liked and commented review through the DB cascade, without touching deleteRating's logic (slice 3 Decision 1)", async () => {
+      await service.rateAlbum("clerk_1", { albumId: ALBUM_ID, score: 8 });
+      await service.writeReview("clerk_1", {
+        albumId: ALBUM_ID,
+        body: "A landmark record.",
+      });
+      const reviewId = fake.reviews[0].id;
+      // Slice 3 attaches social children to a review. `ReviewLike.review` and
+      // `ReviewComment.review` are `onDelete: Cascade`, so Postgres removes
+      // them inside the SAME transaction as `tx.review.delete` — which is why
+      // `deleteRating` needs NO explicit `deleteMany` for them (unlike the
+      // `SetNull` ActivityEvent FKs, which do). Without that cascade the
+      // leftover children would raise a P2003 that `deleteRating`'s catch (it
+      // only maps P2025) would let escape as a raw 500.
+      fake.reviewLikes.push({ userId: "user_2", reviewId });
+      fake.reviewComments.push({ id: "comment_1", reviewId, userId: "user_2" });
+
+      const result = await service.deleteRating("clerk_1", ALBUM_ID);
+
+      // The result shape is UNCHANGED by slice 3 — no new field, no new count.
+      expect(result).toEqual({
+        albumId: ALBUM_ID,
+        deletedActivityEvents: 1,
+        reviewDeleted: true,
+      });
+      expect(fake.reviews).toHaveLength(0);
+      expect(fake.reviewLikes).toHaveLength(0);
+      expect(fake.reviewComments).toHaveLength(0);
     });
 
     it("deletes the review BEFORE the rating — load-bearing for the review->rating FK's ON DELETE RESTRICT (judgment-day PR8 round 2, issue #2)", async () => {
