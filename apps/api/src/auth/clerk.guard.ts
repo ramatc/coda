@@ -48,6 +48,22 @@ export class ClerkGuard implements CanActivate {
       return true;
     }
 
+    return this.authenticate(context);
+  }
+
+  /**
+   * Verifies the request's Bearer token and attaches the payload to
+   * `request.user`. Throws `UnauthorizedException` when the token is missing,
+   * invalid, or expired — every failure path is normalized to that single
+   * exception type before it leaves this method.
+   *
+   * Extracted from `canActivate` (unchanged behavior) so `OptionalClerkGuard`
+   * can reuse the exact same verification without re-implementing it, keeping
+   * exactly ONE token-verification implementation in the app. `canActivate`'s
+   * `@Public()` short-circuit deliberately lives OUTSIDE this method: the
+   * optional-auth subclass needs the verification without the short-circuit.
+   */
+  protected async authenticate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<GuardedRequest>();
     const token = this.extractBearerToken(request);
     if (!token) {
