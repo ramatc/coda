@@ -6,6 +6,19 @@ import { OptionalClerkGuard } from "../src/auth/optional-clerk.guard.js";
 import { IS_PUBLIC_KEY } from "../src/auth/auth.types.js";
 
 const REVIEW_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const COMMENT_ID = "10000000-0000-4000-8000-000000000001";
+
+/**
+ * Every handler that mutates state. These MUST stay behind the plain
+ * fail-closed `ClerkGuard`: no `@Public()`, no `OptionalClerkGuard`.
+ */
+const WRITE_HANDLERS = [
+  "likeReview",
+  "unlikeReview",
+  "createComment",
+  "updateComment",
+  "deleteComment",
+] as const;
 
 const detail = {
   id: REVIEW_ID,
@@ -24,6 +37,15 @@ const detail = {
   commentCount: 0,
   comments: [],
   viewer: { hasLiked: false, canInteract: false },
+};
+
+const comment = {
+  id: COMMENT_ID,
+  body: "Completely agree.",
+  createdAt: "2026-07-26T09:00:00.000Z",
+  updatedAt: "2026-07-26T09:00:00.000Z",
+  author: { username: "viewer", displayName: "The Viewer", avatarUrl: null },
+  isOwn: true,
 };
 
 /** The handler names this controller currently exposes (own prototype methods). */
@@ -47,12 +69,27 @@ function handlerNames(): string[] {
  */
 describe("ReviewsController", () => {
   let getReview: ReturnType<typeof vi.fn>;
+  let likeReview: ReturnType<typeof vi.fn>;
+  let unlikeReview: ReturnType<typeof vi.fn>;
+  let createComment: ReturnType<typeof vi.fn>;
+  let updateComment: ReturnType<typeof vi.fn>;
+  let deleteComment: ReturnType<typeof vi.fn>;
   let controller: ReviewsController;
 
   beforeEach(() => {
     getReview = vi.fn().mockResolvedValue(detail);
+    likeReview = vi.fn().mockResolvedValue({ likeCount: 1, hasLiked: true });
+    unlikeReview = vi.fn().mockResolvedValue({ likeCount: 0, hasLiked: false });
+    createComment = vi.fn().mockResolvedValue(comment);
+    updateComment = vi.fn().mockResolvedValue(comment);
+    deleteComment = vi.fn().mockResolvedValue(undefined);
     controller = new ReviewsController({
       getReview,
+      likeReview,
+      unlikeReview,
+      createComment,
+      updateComment,
+      deleteComment,
     } as unknown as ReviewsService);
   });
 
@@ -94,10 +131,78 @@ describe("ReviewsController", () => {
     );
   });
 
-  it("exposes exactly one handler in the read-path slice", () => {
-    // Pinning the surface so the write-path slice (like/unlike + comment CRUD)
-    // has to extend this spec deliberately: every handler added here MUST be
-    // asserted free of @Public() and of OptionalClerkGuard.
-    expect(handlerNames()).toEqual(["getReview"]);
+  it("POST /reviews/:id/like forwards the caller and review id", async () => {
+    const result = await controller.likeReview("clerk_1", REVIEW_ID);
+
+    expect(likeReview).toHaveBeenCalledWith("clerk_1", REVIEW_ID);
+    expect(result).toEqual({ likeCount: 1, hasLiked: true });
+  });
+
+  it("DELETE /reviews/:id/like forwards the caller and review id", async () => {
+    const result = await controller.unlikeReview("clerk_1", REVIEW_ID);
+
+    expect(unlikeReview).toHaveBeenCalledWith("clerk_1", REVIEW_ID);
+    expect(result).toEqual({ likeCount: 0, hasLiked: false });
+  });
+
+  it("POST /reviews/:id/comments forwards the raw body to the service", async () => {
+    const body = { body: "Completely agree." };
+
+    const result = await controller.createComment("clerk_1", REVIEW_ID, body);
+
+    // The body stays UNVALIDATED at this layer — all validation lives in the
+    // service, which types it as `unknown` (no DTO/pipe in this codebase).
+    expect(createComment).toHaveBeenCalledWith("clerk_1", REVIEW_ID, body);
+    expect(result).toBe(comment);
+  });
+
+  it("PATCH /reviews/:id/comments/:commentId forwards both ids and the body", async () => {
+    const body = { body: "Edited." };
+
+    const result = await controller.updateComment(
+      "clerk_1",
+      REVIEW_ID,
+      COMMENT_ID,
+      body,
+    );
+
+    expect(updateComment).toHaveBeenCalledWith(
+      "clerk_1",
+      REVIEW_ID,
+      COMMENT_ID,
+      body,
+    );
+    expect(result).toBe(comment);
+  });
+
+  it("DELETE /reviews/:id/comments/:commentId forwards both ids", async () => {
+    await controller.deleteComment("clerk_1", REVIEW_ID, COMMENT_ID);
+
+    expect(deleteComment).toHaveBeenCalledWith(
+      "clerk_1",
+      REVIEW_ID,
+      COMMENT_ID,
+    );
+  });
+
+  it.each(WRITE_HANDLERS)(
+    "keeps %s fail-closed: no @Public() and no OptionalClerkGuard",
+    (name) => {
+      const handler = ReviewsController.prototype[name];
+
+      // The whole point of the dedicated module: the read's auth exemption must
+      // never leak onto a write. @Public() here would let an anonymous caller
+      // through the global guard; OptionalClerkGuard would additionally
+      // downgrade the write to anonymous-tolerant instead of 401-ing.
+      expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler)).toBe(undefined);
+      expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toBe(undefined);
+    },
+  );
+
+  it("exposes exactly the read handler plus the five write handlers", () => {
+    // Pinning the surface so any handler added here later has to extend the
+    // negative auth assertions above deliberately, rather than silently
+    // inheriting no coverage.
+    expect(handlerNames()).toEqual(["getReview", ...WRITE_HANDLERS]);
   });
 });

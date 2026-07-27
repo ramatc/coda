@@ -25,8 +25,13 @@ import {
  * data. Deletes explicitly clean up the associated `ActivityEvent` rows (the
  * FKs are `SetNull`, not cascade — design Decision #12).
  *
- * No reply/like/comment routes exist here: reviews are plain text only, with no
- * social affordances (spec "Basic Text Review" scope boundary, task 8.3/8.5).
+ * Review SOCIAL routes deliberately do NOT live here. Likes and comments are
+ * owned by `ReviewsController` (`apps/api/src/reviews/`), which is keyed by
+ * `reviewId` while this controller is keyed by `albumId`. That split is what
+ * lets the app's only auth exemption — the anonymously-readable
+ * `GET /reviews/:id` — sit in a controller where it cannot reach these
+ * uniformly authenticated write routes (Fase 2 slice 3, Decision 2). Reviews
+ * themselves remain plain text: no rich formatting, no threading, no @mentions.
  */
 @Controller()
 export class TrackingController {

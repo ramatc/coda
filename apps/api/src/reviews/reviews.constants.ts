@@ -9,6 +9,16 @@
 export const MAX_COMMENT_LENGTH = 500;
 
 /**
+ * Zero-width / format code points that `String.prototype.trim()` does NOT
+ * remove: U+200B ZERO WIDTH SPACE, U+200C ZERO WIDTH NON-JOINER, U+200D ZERO
+ * WIDTH JOINER and U+FEFF ZERO WIDTH NO-BREAK SPACE (BOM). Used ONLY to decide
+ * whether a comment body is empty — a body made solely of these renders blank
+ * but would otherwise pass a `trim().length === 0` check. Deliberately not a
+ * sanitizer: bodies that mix them with real text are stored verbatim.
+ */
+export const ZERO_WIDTH_PATTERN = /[\u200B-\u200D\uFEFF]/g;
+
+/**
  * UUID shape guard applied to a `:id` path param BEFORE it reaches a Prisma
  * query, so a malformed id surfaces as a clean 400 instead of Postgres' raw
  * "invalid input syntax for type uuid" 500 — the same guard rationale as the
