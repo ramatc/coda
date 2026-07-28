@@ -42,6 +42,23 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/lists(.*)");
   });
 
+  it("leaves the review detail route PUBLIC (Fase 2 slice 3)", () => {
+    /** Every protected pattern that would cover `prefix`. */
+    const guarding = (prefix: string) =>
+      protectedRoutePatterns.filter((route) => route.startsWith(prefix));
+
+    // The predicate DOES find a route when one is protected, so the empty
+    // result below is a real absence rather than a broken matcher.
+    expect(guarding("/lists")).toEqual(["/lists(.*)"]);
+
+    // `/reviews/[id]` is the app's only anonymously-readable page: it renders
+    // for logged-out visitors, and the API's `GET /reviews/:id` answers them 200
+    // instead of 401. Adding `/reviews(.*)` here would send every one of them to
+    // sign-in before the page ever ran — a silent regression the page itself
+    // cannot detect. This assertion is the tripwire.
+    expect(guarding("/reviews")).toEqual([]);
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");
