@@ -13,6 +13,7 @@ import {
 import { DeleteListButton } from "./delete-list-button";
 import { EditListForm } from "./edit-list-form";
 import { ListDetailView } from "./list-detail";
+import { ListLikeButton } from "./list-like-button";
 import { ListReorder } from "./list-reorder";
 
 interface ListPageProps {
@@ -31,6 +32,12 @@ interface ListPageProps {
  * so `notFound()` never leaks a private list's existence. The owner islands
  * (edit, delete, reorder) are always handed down; {@link ListDetailView} renders
  * them only for the owner.
+ *
+ * The like island is handed down the same way but is NOT owner-gated at the
+ * other end: likes follow the list's READ visibility, so anyone who can see this
+ * page may like it, its owner included. Its seed state comes straight off the
+ * payload — `viewerHasLiked` describes the caller whose token fetched it and is
+ * never derived here.
  */
 export default async function ListPage({ params }: ListPageProps) {
   const { id } = await params;
@@ -65,6 +72,13 @@ export default async function ListPage({ params }: ListPageProps) {
       list={list}
       isOwner={isListOwner(list, viewerUserId)}
       ownershipUnverified={ownershipUnverified}
+      likeAction={
+        <ListLikeButton
+          listId={list.id}
+          initialLikeCount={list.likeCount}
+          initialHasLiked={list.viewerHasLiked}
+        />
+      }
       ownerActions={
         <>
           <EditListForm list={list} />

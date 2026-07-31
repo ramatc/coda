@@ -27,6 +27,18 @@ interface ListDetailViewProps {
    */
   ownerActions?: ReactNode;
   /**
+   * The like island, rendered in the header UNCONDITIONALLY — the one slot on
+   * this view that is NOT gated on `isOwner`, and deliberately so: the API gates
+   * likes on READ visibility rather than ownership, so an owner may like their
+   * own list and every viewer who can see the list may like it. Gating it here
+   * would silently withhold a control the API would happily accept.
+   *
+   * It carries no anonymous branch either, unlike its `/reviews/[id]` twin:
+   * `/lists(.*)` is a protected route, so the viewer is always authenticated by
+   * the time this renders.
+   */
+  likeAction?: ReactNode;
+  /**
    * The owner-only reorder island. Rendered IN PLACE OF the read-only item list
    * (never alongside it), and only for the owner — the server page hands it
    * down unconditionally, the same way `/u/[username]` hands down its
@@ -50,6 +62,7 @@ export function ListDetailView({
   isOwner,
   ownershipUnverified,
   ownerActions,
+  likeAction,
   children,
 }: ListDetailViewProps) {
   return (
@@ -78,6 +91,7 @@ export function ListDetailView({
         ) : (
           <p className="text-sm italic opacity-50">No description yet.</p>
         )}
+        {likeAction}
       </header>
 
       {isOwner && ownerActions ? (
