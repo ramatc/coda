@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 
 /** The Clerk token `auth()` hands the page for the current test. */
 let token: string | null = null;
@@ -17,9 +17,34 @@ vi.mock("@clerk/nextjs/server", () => ({
   auth: () => Promise.resolve({ getToken: () => Promise.resolve(token) }),
 }));
 
+const refreshMock = vi.fn();
 vi.mock("next/navigation", () => ({
   notFound: () => notFound(),
   redirect: (url: string) => redirect(url),
+  // The islands composed into the page are client components that call
+  // `useRouter().refresh()` after a successful write.
+  useRouter: () => ({ refresh: refreshMock }),
+}));
+
+// The islands' own Clerk surface. Kept as a framework boundary only: the real
+// island components run, so this file tests COMPOSITION (which island is
+// mounted, with which props) rather than re-testing island internals.
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ getToken: vi.fn().mockResolvedValue("test-token") }),
+  SignInButton: ({
+    children,
+    forceRedirectUrl,
+  }: {
+    children: ReactNode;
+    forceRedirectUrl?: string;
+  }) => (
+    <span
+      data-testid="clerk-sign-in-button"
+      data-force-redirect-url={forceRedirectUrl}
+    >
+      {children}
+    </span>
+  ),
 }));
 
 vi.mock("next/link", () => ({
@@ -59,13 +84,28 @@ const REVIEW = {
   viewer: { hasLiked: false, canInteract: false },
 };
 
-/** A JSON `Response` carrying the review payload. */
-function reviewResponse(): Response {
-  return new Response(JSON.stringify(REVIEW), {
+/** A JSON `Response` carrying the review payload, with overrides applied. */
+function reviewResponse(overrides: Record<string, unknown> = {}): Response {
+  return new Response(JSON.stringify({ ...REVIEW, ...overrides }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
 }
+
+/** One comment on the review, owned by the viewer unless overridden. */
+function comment(id: string, isOwn: boolean) {
+  return {
+    id,
+    body: isOwn ? "Mine." : "Someone else's.",
+    createdAt: "2026-07-03T00:00:00.000Z",
+    updatedAt: "2026-07-03T00:00:00.000Z",
+    author: { username: "jonny", displayName: "Jonny", avatarUrl: null },
+    isOwn,
+  };
+}
+
+/** The viewer block of a signed-in, synced visitor. */
+const SIGNED_IN_VIEWER = { hasLiked: false, canInteract: true };
 
 /** A JSON `Response` for an unknown review. */
 function notFoundResponse(): Response {
@@ -101,6 +141,7 @@ beforeEach(() => {
   token = null;
   notFound.mockClear();
   redirect.mockClear();
+  refreshMock.mockClear();
   fetchOnboardingStatus.mockClear();
   resolveOnboardingRedirect.mockClear();
 });
@@ -154,6 +195,101 @@ describe("ReviewPage", () => {
     // such review", so it must land on the 404 page rather than throwing.
     await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
     expect(notFound).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives an anonymous visitor sign-in prompts in place of live controls", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(reviewResponse());
+
+    await renderPage();
+
+    // Both islands ARE mounted — the view hands its slots down unconditionally
+    // and each island renders its own anonymous branch. This is the composition
+    // that makes the anonymous read path safe.
+    expect(
+      screen.getByRole("button", { name: "Sign in to like" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Sign in to comment" }),
+    ).not.toBeNull();
+    // ...and no live control leaked through.
+    expect(screen.queryByTestId("like-count")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("points the sign-in journey back at the review being read", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(reviewResponse());
+
+    await renderPage();
+
+    // Proves the page actually plumbs the review's id into the islands, not
+    // merely that some prompt rendered.
+    for (const prompt of screen.getAllByTestId("clerk-sign-in-button")) {
+      expect(prompt.getAttribute("data-force-redirect-url")).toBe(
+        `/reviews/${REVIEW_ID}`,
+      );
+    }
+  });
+
+  it("gives a signed-in viewer live like and comment controls", async () => {
+    token = "test-token";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      reviewResponse({ viewer: SIGNED_IN_VIEWER, likeCount: 3 }),
+    );
+
+    await renderPage();
+
+    // The like island is seeded from the SERVER's count, so the first paint
+    // already agrees with the header rather than starting at zero.
+    expect(screen.getByTestId("like-count").textContent).toBe("3 likes");
+    expect(
+      screen.getByRole("button", { name: "Like this review" }),
+    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Post comment" })).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Sign in to like" }),
+    ).toBeNull();
+  });
+
+  it("seeds the like island with the viewer's existing like state", async () => {
+    token = "test-token";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      reviewResponse({ viewer: { hasLiked: true, canInteract: true } }),
+    );
+
+    await renderPage();
+
+    // Without `hasLiked` plumbed through, a viewer who already liked the review
+    // would be offered "Like" again and their click would 409.
+    expect(
+      screen.getByRole("button", { name: "Unlike this review" }),
+    ).not.toBeNull();
+  });
+
+  it("mounts row controls only on the viewer's own comment", async () => {
+    token = "test-token";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      reviewResponse({
+        viewer: SIGNED_IN_VIEWER,
+        commentCount: 2,
+        comments: [comment("c1", true), comment("c2", false)],
+      }),
+    );
+
+    await renderPage();
+
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    // The render prop is invoked per row with THAT row's comment, so the
+    // author-only island must land on exactly one of them.
+    expect(
+      within(rows[0]!).getByRole("button", { name: "Edit comment" }),
+    ).not.toBeNull();
+    expect(
+      within(rows[1]!).queryByRole("button", { name: "Edit comment" }),
+    ).toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: "Delete comment" }),
+    ).toHaveLength(1);
   });
 
   it("never runs the onboarding gate, which would bounce anonymous visitors", async () => {
