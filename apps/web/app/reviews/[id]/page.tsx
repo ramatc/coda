@@ -2,6 +2,9 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { REVIEW_NOT_FOUND, fetchReview } from "../../../lib/reviews";
 import { ReviewDetailView } from "./review-detail";
+import { ReviewCommentForm } from "./review-comment-form";
+import { ReviewCommentItem } from "./review-comment-item";
+import { ReviewLikeButton } from "./review-like-button";
 
 interface ReviewPageProps {
   params: Promise<{ id: string }>;
@@ -26,9 +29,15 @@ interface ReviewPageProps {
  * Authorization header entirely rather than sending a blank bearer.
  *
  * A 404 covers an unknown review and one deleted between link and click alike,
- * so `notFound()` is the whole not-found story. The like/comment islands are not
- * wired yet — this slice ships the read path; `ReviewDetailView`'s slots stay
- * empty until they land.
+ * so `notFound()` is the whole not-found story.
+ *
+ * All three islands are handed down UNCONDITIONALLY, never gated on
+ * `viewer.canInteract` here. Each island owns its own anonymous branch (a
+ * sign-in prompt in place of a live control), which keeps "may this viewer
+ * write?" as ONE decision per control instead of one here and another there. The
+ * per-row slot is a render prop, so `ReviewCommentItem` receives each comment's
+ * own `id` and server-resolved `isOwn` — and renders nothing for a row the
+ * viewer does not own.
  */
 export default async function ReviewPage({ params }: ReviewPageProps) {
   const { id } = await params;
@@ -40,5 +49,26 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
     notFound();
   }
 
-  return <ReviewDetailView review={review} />;
+  return (
+    <ReviewDetailView
+      review={review}
+      likeAction={
+        <ReviewLikeButton
+          reviewId={review.id}
+          initialLikeCount={review.likeCount}
+          initialHasLiked={review.viewer.hasLiked}
+          canInteract={review.viewer.canInteract}
+        />
+      }
+      commentForm={
+        <ReviewCommentForm
+          reviewId={review.id}
+          canInteract={review.viewer.canInteract}
+        />
+      }
+      commentAction={(entry) => (
+        <ReviewCommentItem reviewId={review.id} comment={entry} />
+      )}
+    />
+  );
 }
