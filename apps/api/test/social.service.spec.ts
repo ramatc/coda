@@ -11,6 +11,7 @@ const TARGET_ID = "22222222-2222-4222-8222-222222222222";
 const TARGET_USERNAME = "target";
 const THIRD_ID = "33333333-3333-4333-8333-333333333333";
 const FOURTH_ID = "44444444-4444-4444-8444-444444444444";
+const REVIEW_ID = "77777777-7777-4777-8777-777777777777";
 
 interface FollowRow {
   followerId: string;
@@ -30,7 +31,18 @@ interface FeedEventRow {
     coverUrl: string | null;
     primaryArtist: { name: string };
   };
-  review: { body: string } | null;
+  /**
+   * The nested `review` select, widened by slice 3 to carry the review's own id
+   * plus its `_count` aggregation of likes and comments — the same shape the
+   * personal stream selects (`activity.service.spec.ts`), so the two card
+   * surfaces cannot drift. The relation stays nullable (`SetNull`), which is
+   * what degrades all three projected fields to `null` for a stranded event.
+   */
+  review: {
+    id: string;
+    body: string;
+    _count: { likes: number; comments: number };
+  } | null;
 }
 
 interface ActorProfile {
@@ -404,7 +416,11 @@ describe("SocialService", () => {
         userId: THIRD_ID,
         type: ActivityType.REVIEW,
         occurredAt: new Date("2026-07-02T10:00:00.000Z"),
-        review: { body: "A masterpiece." },
+        review: {
+          id: REVIEW_ID,
+          body: "A masterpiece.",
+          _count: { likes: 3, comments: 2 },
+        },
       });
       // D is NOT followed and its event is the most recent — must be excluded.
       pushEvent({
@@ -441,6 +457,99 @@ describe("SocialService", () => {
       });
       expect(page.items[0].album.primaryArtistName).toBe("Radiohead");
       expect(page.nextCursor).toBeNull();
+    });
+
+    it("surfaces the review id and its like/comment counts for a REVIEW event, and leaves all three null for LISTEN and RATING", async () => {
+      fake.follows.push({ followerId: CALLER_ID, followingId: TARGET_ID });
+
+      const listen = "e8888888-8888-4888-8888-888888888881";
+      const rating = "e8888888-8888-4888-8888-888888888882";
+      const review = "e8888888-8888-4888-8888-888888888883";
+
+      pushEvent({
+        id: listen,
+        userId: TARGET_ID,
+        type: ActivityType.LISTEN,
+        occurredAt: new Date("2026-07-01T10:00:00.000Z"),
+      });
+      pushEvent({
+        id: rating,
+        userId: TARGET_ID,
+        type: ActivityType.RATING,
+        occurredAt: new Date("2026-07-02T10:00:00.000Z"),
+        payload: { score: 8 },
+      });
+      pushEvent({
+        id: review,
+        userId: TARGET_ID,
+        type: ActivityType.REVIEW,
+        occurredAt: new Date("2026-07-03T10:00:00.000Z"),
+        review: {
+          id: REVIEW_ID,
+          body: "A masterpiece.",
+          _count: { likes: 5, comments: 4 },
+        },
+      });
+
+      const page = await service.getFeed(CALLER_CLERK);
+
+      // Newest first: REVIEW, RATING, LISTEN.
+      expect(page.items.map((i) => i.id)).toEqual([review, rating, listen]);
+      expect(page.items[0].reviewId).toBe(REVIEW_ID);
+      expect(page.items[0].reviewLikeCount).toBe(5);
+      expect(page.items[0].reviewCommentCount).toBe(4);
+      // The two non-REVIEW events carry no review relation, so there is neither
+      // a target to link to nor engagement to report.
+      for (const item of [page.items[1], page.items[2]]) {
+        expect(item.reviewId).toBeNull();
+        expect(item.reviewLikeCount).toBeNull();
+        expect(item.reviewCommentCount).toBeNull();
+      }
+    });
+
+    it("reports an un-engaged review's counts as 0, never null (a live review with no likes is not a missing review)", async () => {
+      fake.follows.push({ followerId: CALLER_ID, followingId: TARGET_ID });
+      pushEvent({
+        id: "e9999999-9999-4999-8999-999999999991",
+        userId: TARGET_ID,
+        type: ActivityType.REVIEW,
+        occurredAt: new Date("2026-07-01T10:00:00.000Z"),
+        review: {
+          id: REVIEW_ID,
+          body: "Nobody has engaged with this yet.",
+          _count: { likes: 0, comments: 0 },
+        },
+      });
+
+      const page = await service.getFeed(CALLER_CLERK);
+
+      // A falsy-coalescing projection (`count || null`) would collapse both of
+      // these to null and make an unliked review indistinguishable from a
+      // deleted one on the card. Nullish coalescing is required.
+      expect(page.items[0].reviewLikeCount).toBe(0);
+      expect(page.items[0].reviewCommentCount).toBe(0);
+      expect(page.items[0].reviewId).toBe(REVIEW_ID);
+    });
+
+    it("degrades the review id and both counts to null for a stranded REVIEW event whose review was deleted", async () => {
+      fake.follows.push({ followerId: CALLER_ID, followingId: TARGET_ID });
+      // The event's Review FK is SetNull, so a review deleted after the event
+      // was emitted leaves the event behind with no relation at all.
+      pushEvent({
+        id: "e9999999-9999-4999-8999-999999999992",
+        userId: TARGET_ID,
+        type: ActivityType.REVIEW,
+        occurredAt: new Date("2026-07-01T10:00:00.000Z"),
+        review: null,
+      });
+
+      const page = await service.getFeed(CALLER_CLERK);
+
+      expect(page.items[0].type).toBe(ActivityType.REVIEW);
+      expect(page.items[0].reviewBody).toBeNull();
+      expect(page.items[0].reviewId).toBeNull();
+      expect(page.items[0].reviewLikeCount).toBeNull();
+      expect(page.items[0].reviewCommentCount).toBeNull();
     });
 
     it("does not require reciprocity: a followed user's events appear even if they do not follow back", async () => {
