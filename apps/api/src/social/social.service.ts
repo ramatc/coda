@@ -64,6 +64,22 @@ export interface FeedItem {
   score: number | null;
   /** REVIEW body from the `SetNull` relation, degrading to `null`. */
   reviewBody: string | null;
+  /**
+   * The id of the review behind a REVIEW event, or `null`. Lets the card link
+   * to `/reviews/:reviewId`; `null` means there is nothing to link to (a
+   * non-REVIEW event, or a stranded event whose review was deleted).
+   */
+  reviewId: string | null;
+  /**
+   * How many likes the review has, or `null` when there is no review. Sourced
+   * from a nested `_count` in the SAME query — no N+1 over the page, no
+   * denormalized counter to drift. `0` is a real value and is deliberately NOT
+   * collapsed into `null`: "nobody liked it yet" must stay distinguishable from
+   * "there is no review".
+   */
+  reviewLikeCount: number | null;
+  /** How many comments the review has, or `null`. Same contract as {@link reviewLikeCount}. */
+  reviewCommentCount: number | null;
   /** The followed user who produced this event. */
   actor: FeedActor;
 }
@@ -86,7 +102,11 @@ interface FeedEventRow {
     coverUrl: string | null;
     primaryArtist: { name: string };
   };
-  review: { body: string } | null;
+  review: {
+    id: string;
+    body: string;
+    _count: { likes: number; comments: number };
+  } | null;
   user: {
     profile: {
       username: string;
@@ -254,7 +274,17 @@ export class SocialService {
             primaryArtist: { select: { name: true } },
           },
         },
-        review: { select: { body: true } },
+        // The nested `_count` rides along in this same query, so surfacing
+        // engagement on the card costs zero extra round-trips and cannot N+1
+        // over the page (slice 3 Decision 7) — the same select the personal
+        // stream issues, kept in lockstep so the two card surfaces agree.
+        review: {
+          select: {
+            id: true,
+            body: true,
+            _count: { select: { likes: true, comments: true } },
+          },
+        },
         user: {
           select: {
             profile: {
@@ -294,6 +324,10 @@ export class SocialService {
       score:
         row.type === ActivityType.RATING ? extractScore(row.payload) : null,
       reviewBody: row.review?.body ?? null,
+      reviewId: row.review?.id ?? null,
+      // `??`, never `||`: a live review with zero likes must report 0, not null.
+      reviewLikeCount: row.review?._count.likes ?? null,
+      reviewCommentCount: row.review?._count.comments ?? null,
       // A followed user always has a profile (you follow by username), but the
       // relation is nullable in the schema, so degrade defensively rather than
       // throw — consistent with the feed's orphan-safe rendering ethos.

@@ -8,6 +8,7 @@ const CLERK_ID = "clerk_1";
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_USER_ID = "55555555-5555-4555-8555-555555555555";
 const ALBUM_ID = "33333333-3333-4333-8333-333333333333";
+const REVIEW_ID = "77777777-7777-4777-8777-777777777777";
 
 /** An activity-event row in the shape {@link ActivityService} selects it. */
 interface EventRow {
@@ -22,7 +23,17 @@ interface EventRow {
     coverUrl: string | null;
     primaryArtist: { name: string };
   };
-  review: { body: string } | null;
+  /**
+   * The nested `review` select, widened by slice 3 to carry the review's own id
+   * plus its `_count` aggregation of likes and comments. The whole relation is
+   * still nullable (`SetNull`), which is what makes the stranded-event case —
+   * and every non-REVIEW event — degrade all three projected fields to `null`.
+   */
+  review: {
+    id: string;
+    body: string;
+    _count: { likes: number; comments: number };
+  } | null;
 }
 
 const ALBUM = {
@@ -185,6 +196,82 @@ describe("ActivityService", () => {
     expect(page.items[0].reviewBody).toBeNull();
     expect(page.items[1].type).toBe(ActivityType.REVIEW);
     expect(page.items[1].reviewBody).toBeNull();
+    // The engagement projection is sourced from the SAME nullable relation as
+    // the body, so a stranded REVIEW event reports no id and no counts rather
+    // than zeroes — "the review is gone" must stay distinguishable from "the
+    // review exists and nobody engaged with it" (asserted below).
+    expect(page.items[1].reviewId).toBeNull();
+    expect(page.items[1].reviewLikeCount).toBeNull();
+    expect(page.items[1].reviewCommentCount).toBeNull();
+  });
+
+  it("surfaces the review id and its like/comment counts for a REVIEW event whose review still exists", async () => {
+    pushEvent(fake, {
+      id: "77777777-7777-4777-8777-777777777771",
+      type: ActivityType.REVIEW,
+      occurredAt: new Date("2026-07-06T10:00:00.000Z"),
+      review: {
+        id: REVIEW_ID,
+        body: "A masterpiece.",
+        _count: { likes: 3, comments: 2 },
+      },
+    });
+
+    const page = await service.getOwnActivity(CLERK_ID);
+
+    expect(page.items[0].reviewId).toBe(REVIEW_ID);
+    expect(page.items[0].reviewLikeCount).toBe(3);
+    expect(page.items[0].reviewCommentCount).toBe(2);
+    // The pre-existing body projection must keep working off the same relation.
+    expect(page.items[0].reviewBody).toBe("A masterpiece.");
+  });
+
+  it("reports an un-engaged review's counts as 0, never null (a live review with no likes is not a missing review)", async () => {
+    pushEvent(fake, {
+      id: "77777777-7777-4777-8777-777777777772",
+      type: ActivityType.REVIEW,
+      occurredAt: new Date("2026-07-07T10:00:00.000Z"),
+      review: {
+        id: REVIEW_ID,
+        body: "Nobody has engaged with this yet.",
+        _count: { likes: 0, comments: 0 },
+      },
+    });
+
+    const page = await service.getOwnActivity(CLERK_ID);
+
+    // A falsy-coalescing projection (`count || null`) would collapse both of
+    // these to null and make an unliked review indistinguishable from a deleted
+    // one on the card. Nullish coalescing is required.
+    expect(page.items[0].reviewLikeCount).toBe(0);
+    expect(page.items[0].reviewCommentCount).toBe(0);
+    expect(page.items[0].reviewId).toBe(REVIEW_ID);
+  });
+
+  it("leaves the review id and both counts null for LISTEN and RATING events", async () => {
+    pushEvent(fake, {
+      id: "77777777-7777-4777-8777-777777777773",
+      type: ActivityType.LISTEN,
+      occurredAt: new Date("2026-07-08T10:00:00.000Z"),
+    });
+    pushEvent(fake, {
+      id: "77777777-7777-4777-8777-777777777774",
+      type: ActivityType.RATING,
+      occurredAt: new Date("2026-07-09T10:00:00.000Z"),
+      payload: { score: 6 },
+    });
+
+    const page = await service.getOwnActivity(CLERK_ID);
+
+    expect(page.items.map((i) => i.type)).toEqual([
+      ActivityType.RATING,
+      ActivityType.LISTEN,
+    ]);
+    for (const item of page.items) {
+      expect(item.reviewId).toBeNull();
+      expect(item.reviewLikeCount).toBeNull();
+      expect(item.reviewCommentCount).toBeNull();
+    }
   });
 
   it("cursor-paginates: the first page yields a nextCursor, the next page resumes after it", async () => {
