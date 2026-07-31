@@ -1,5 +1,10 @@
 import Link from "next/link";
 import type { ActivityItem } from "../../lib/activity";
+import {
+  commentCountLabel,
+  likeCountLabel,
+  reviewPath,
+} from "../../lib/reviews";
 
 interface ActivityFeedProps {
   items: ActivityItem[];
@@ -48,12 +53,50 @@ function activityLabel(item: ActivityItem): string {
 }
 
 /**
+ * The review link + like/comment counts for one activity item, or `null` when
+ * the event has no review to link to (a LISTEN/RATING event, or a stranded
+ * REVIEW event whose `Review` row was deleted).
+ *
+ * `reviewId` is the ONLY gate. The counts are read with `?? 0` purely as
+ * defensive degradation — the API guarantees they are non-null whenever
+ * `reviewId` is — because `0` is a real count meaning "nobody has reacted yet"
+ * and must never be mistaken for "there is no review".
+ *
+ * Rendered as a SIBLING of the album link, never inside it: the card body is
+ * already wrapped in an `<a href="/albums/…">`, and a nested `<a>` is invalid
+ * HTML that React reports as a hydration error. The labels come from
+ * `lib/reviews.ts` rather than being re-derived here — these are review counts,
+ * so the reviews module owns their copy.
+ */
+function ReviewCounts({ item }: { item: ActivityItem }) {
+  if (item.reviewId === null) {
+    return null;
+  }
+
+  return (
+    <Link
+      href={reviewPath(item.reviewId)}
+      className="flex w-fit items-center gap-2 px-2 text-xs text-brand-600 hover:underline"
+      data-testid="activity-review-link"
+    >
+      <span className="font-medium">View review</span>
+      <span aria-hidden="true">·</span>
+      <span>{likeCountLabel(item.reviewLikeCount ?? 0)}</span>
+      <span aria-hidden="true">·</span>
+      <span>{commentCountLabel(item.reviewCommentCount ?? 0)}</span>
+    </Link>
+  );
+}
+
+/**
  * Presentational personal activity feed (container/presentational split): a
  * pure, synchronous component with no data-fetching or auth concerns, so it
  * renders in a plain unit test — the same pattern as `AlbumDetailView`. The
  * server page fetches the cursor-paginated page and passes the items here; each
- * entry links to the album's detail page (`/albums/[id]`). An empty stream
- * renders an explicit empty state rather than a blank page.
+ * entry links to the album's detail page (`/albums/[id]`), and a REVIEW entry
+ * additionally links to `/reviews/[id]` with its counts (see
+ * {@link ReviewCounts}). An empty stream renders an explicit empty state rather
+ * than a blank page.
  */
 export function ActivityFeed({ items }: ActivityFeedProps) {
   if (items.length === 0) {
@@ -67,7 +110,7 @@ export function ActivityFeed({ items }: ActivityFeedProps) {
   return (
     <ul className="flex flex-col divide-y divide-brand-100">
       {items.map((item) => (
-        <li key={item.id} className="py-3">
+        <li key={item.id} className="flex flex-col gap-1 py-3">
           <Link
             href={`/albums/${item.album.id}`}
             className="flex items-center gap-4 rounded-card p-2 hover:bg-brand-50"
@@ -105,6 +148,7 @@ export function ActivityFeed({ items }: ActivityFeedProps) {
               {item.occurredAt.slice(0, 10)}
             </time>
           </Link>
+          <ReviewCounts item={item} />
         </li>
       ))}
     </ul>

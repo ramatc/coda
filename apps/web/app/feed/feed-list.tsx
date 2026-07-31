@@ -1,5 +1,10 @@
 import Link from "next/link";
 import type { FeedItem } from "../../lib/feed";
+import {
+  commentCountLabel,
+  likeCountLabel,
+  reviewPath,
+} from "../../lib/reviews";
 
 interface FeedListProps {
   items: FeedItem[];
@@ -58,14 +63,54 @@ function actorName(item: FeedItem): string {
 }
 
 /**
+ * The review link + like/comment counts for one feed item, or `null` when the
+ * event has no review to link to (a LISTEN/RATING event, or a stranded REVIEW
+ * event whose `Review` row was deleted).
+ *
+ * `reviewId` is the ONLY gate. The counts are read with `?? 0` purely as
+ * defensive degradation — the API guarantees they are non-null whenever
+ * `reviewId` is — because `0` is a real count meaning "nobody has reacted yet"
+ * and must never be mistaken for "there is no review".
+ *
+ * Rendered as a SIBLING of the album link, never inside it: the card already
+ * wraps its body in an `<a href="/albums/…">` (and the actor name in a second
+ * `<a href="/u/…">`), and a nested `<a>` is invalid HTML that React reports as a
+ * hydration error. The labels come from `lib/reviews.ts` rather than being
+ * re-derived here — these are review counts, so the reviews module owns their
+ * copy. Kept in lockstep with `ActivityFeed`'s twin, exactly as `reviewSnippet`
+ * and the label helpers above already are.
+ */
+function ReviewCounts({ item }: { item: FeedItem }) {
+  if (item.reviewId === null) {
+    return null;
+  }
+
+  return (
+    <Link
+      href={reviewPath(item.reviewId)}
+      className="flex w-fit items-center gap-2 text-xs text-brand-600 hover:underline"
+      data-testid="feed-review-link"
+    >
+      <span className="font-medium">View review</span>
+      <span aria-hidden="true">·</span>
+      <span>{likeCountLabel(item.reviewLikeCount ?? 0)}</span>
+      <span aria-hidden="true">·</span>
+      <span>{commentCountLabel(item.reviewCommentCount ?? 0)}</span>
+    </Link>
+  );
+}
+
+/**
  * Presentational followed-activity feed (container/presentational split): a pure,
  * synchronous component with no data-fetching or auth concerns, so it renders in a
  * plain unit test — the same pattern as `ActivityFeed`. The server page fetches
  * the cursor-paginated page and passes the items here. Unlike the personal
  * activity stream, each entry is attributed to its `actor` (the followed user who
  * produced the event), whose name links to their profile (`/u/[username]`); the
- * album links to its detail page (`/albums/[id]`). An empty feed renders an
- * explicit "follow people" empty state rather than a blank page.
+ * album links to its detail page (`/albums/[id]`), and a REVIEW entry
+ * additionally links to `/reviews/[id]` with its counts (see
+ * {@link ReviewCounts}). An empty feed renders an explicit "follow people" empty
+ * state rather than a blank page.
  */
 export function FeedList({ items }: FeedListProps) {
   if (items.length === 0) {
@@ -147,6 +192,7 @@ export function FeedList({ items }: FeedListProps) {
               {item.occurredAt.slice(0, 10)}
             </time>
           </div>
+          <ReviewCounts item={item} />
         </li>
       ))}
     </ul>

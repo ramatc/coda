@@ -21,6 +21,21 @@ export interface ActivityItem {
   score: number | null;
   /** Review body for a REVIEW event, else `null`. */
   reviewBody: string | null;
+  /**
+   * The id of the review behind a REVIEW event, else `null`. Lets the card link
+   * to `/reviews/:reviewId`; `null` means there is nothing to link to (a
+   * non-REVIEW event, or a stranded event whose review was deleted).
+   */
+  reviewId: string | null;
+  /**
+   * How many likes the review has, or `null` when there is no review. `0` is a
+   * real value and is deliberately NOT collapsed into `null`: "nobody liked it
+   * yet" must stay distinguishable from "there is no review". Read the trio via
+   * {@link reviewId} — never via a falsy check on a count.
+   */
+  reviewLikeCount: number | null;
+  /** How many comments the review has, or `null`. Same contract as {@link reviewLikeCount}. */
+  reviewCommentCount: number | null;
 }
 
 /** A cursor-paginated page of the viewer's own activity. */

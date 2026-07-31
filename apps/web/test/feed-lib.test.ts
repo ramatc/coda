@@ -34,6 +34,11 @@ const PAGE: FeedPage = {
         displayName: "Thom Yorke",
         avatarUrl: null,
       },
+      // A LISTEN event has no review, so all three review fields are null.
+      // Type-level pin: `FeedItem` must carry them for this literal to compile.
+      reviewId: null,
+      reviewLikeCount: null,
+      reviewCommentCount: null,
     },
   ],
   nextCursor: null,
