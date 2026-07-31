@@ -189,6 +189,50 @@ describe("ListDetailView", () => {
     expect(screen.queryByText("owner actions")).toBeNull();
   });
 
+  it("offers the like control to a visitor while withholding the owner's", () => {
+    render(
+      <ListDetailView
+        list={list({ likeCount: 3, viewerHasLiked: false })}
+        isOwner={false}
+        ownerActions={<div>owner actions</div>}
+        likeAction={<div>like button</div>}
+      />,
+    );
+
+    // The two slots part ways here: owner controls are gated on ownership, the
+    // like control never is — the API gates likes on READ visibility, so any
+    // viewer who can see the list may like it.
+    expect(screen.getByText("like button")).not.toBeNull();
+    expect(screen.queryByText("owner actions")).toBeNull();
+  });
+
+  it("offers the like control to the owner too, since self-like is allowed", () => {
+    render(
+      <ListDetailView
+        list={list({ likeCount: 1, viewerHasLiked: true })}
+        isOwner={true}
+        likeAction={<div>like button</div>}
+      />,
+    );
+
+    expect(screen.getByText("like button")).not.toBeNull();
+  });
+
+  it("keeps the like control when ownership could not be verified", () => {
+    // A transient `GET /profile` failure only makes owner-vs-visitor unknown.
+    // Liking does not depend on that answer, so the control must survive it.
+    render(
+      <ListDetailView
+        list={list()}
+        isOwner={false}
+        ownershipUnverified={true}
+        likeAction={<div>like button</div>}
+      />,
+    );
+
+    expect(screen.getByText("like button")).not.toBeNull();
+  });
+
   it("surfaces a notice when ownership could not be verified", () => {
     render(
       <ListDetailView list={list()} isOwner={false} ownershipUnverified={true} />,
