@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LIST_NOT_FOUND,
+  ListActionError,
   addListItem,
   createList,
   deleteList,
@@ -9,10 +10,13 @@ import {
   fetchViewerOwnLists,
   fetchViewerProfile,
   fetchViewerUserId,
+  likeList,
   removeListItem,
   reorderListItems,
+  unlikeList,
   updateList,
   type ListDetail,
+  type ListLikeResult,
   type ListSummary,
 } from "../lib/lists";
 
@@ -29,6 +33,8 @@ const LIST: ListDetail = {
   isPublic: true,
   createdAt: "2026-07-01T00:00:00.000Z",
   updatedAt: "2026-07-02T00:00:00.000Z",
+  likeCount: 2,
+  viewerHasLiked: true,
   items: [
     {
       id: ITEM_ID,
@@ -99,6 +105,17 @@ function bodyOf(mock: ReturnType<typeof vi.spyOn>): unknown {
   return JSON.parse(String(initOf(mock).body));
 }
 
+/** A JSON `Response` carrying an arbitrary successful payload. */
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** The `{ likeCount, hasLiked }` projection both like verbs answer with. */
+const LIKE_RESULT: ListLikeResult = { likeCount: 3, hasLiked: true };
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -138,6 +155,134 @@ describe("fetchList", () => {
     await expect(fetchList("test-token", LIST_ID)).rejects.toThrow(
       "Failed to load list (500)",
     );
+  });
+
+  it("carries the like projection through onto the ListDetail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(listResponse());
+
+    const list = (await fetchList("test-token", LIST_ID)) as ListDetail;
+
+    // Both fields are READ from the payload, never derived: `viewerHasLiked`
+    // describes the caller who sent the token, so deriving it client-side is
+    // impossible. Pinning them here keeps this module's mirror honest against
+    // the API's own `ListDetail` (`apps/api/src/lists/lists.service.ts`).
+    expect(list.likeCount).toBe(2);
+    expect(list.viewerHasLiked).toBe(true);
+  });
+});
+
+describe("likeList", () => {
+  it("POSTs to the list's like route and returns the counter projection", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse(LIKE_RESULT));
+
+    expect(await likeList("test-token", LIST_ID)).toEqual(LIKE_RESULT);
+    expect(urlOf(fetchMock)).toContain(`/lists/${LIST_ID}/like`);
+    expect(initOf(fetchMock).method).toBe("POST");
+    expect(
+      (initOf(fetchMock).headers as Record<string, string>).Authorization,
+    ).toBe("Bearer test-token");
+  });
+
+  it("throws a 409 carrying the API's duplicate-like message", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      errorResponse(409, "You already liked this list."),
+    );
+
+    const error = await likeList("test-token", LIST_ID).catch(
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(ListActionError);
+    expect((error as ListActionError).status).toBe(409);
+    expect((error as ListActionError).message).toBe(
+      "You already liked this list.",
+    );
+  });
+
+  it("throws a 404 for a list the viewer may not see", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      errorResponse(404, "List not found."),
+    );
+
+    const error = await likeList("test-token", LIST_ID).catch(
+      (err: unknown) => err,
+    );
+
+    // The API hides a private list behind a 404 rather than a 403, so this is
+    // the same status a list DELETED mid-request produces — the island cannot
+    // and need not tell them apart, it reconciles with the server either way.
+    expect((error as ListActionError).status).toBe(404);
+  });
+
+  it("falls back to a generic message when the error body is not JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<html>gateway</html>", { status: 502 }),
+    );
+
+    const error = await likeList("test-token", LIST_ID).catch(
+      (err: unknown) => err,
+    );
+
+    // The status still has to survive: it is what separates a reconcilable
+    // answer (409/404) from a genuine fault the island must show as an error.
+    expect((error as ListActionError).status).toBe(502);
+    expect((error as ListActionError).message).toBe(
+      "Could not like this list.",
+    );
+  });
+
+  it("escapes the list id it interpolates into the URL", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse(LIKE_RESULT));
+
+    await likeList("test-token", "not a/uuid");
+
+    expect(urlOf(fetchMock)).toContain("/lists/not%20a%2Fuuid/like");
+  });
+});
+
+describe("unlikeList", () => {
+  it("DELETEs the like and returns the refreshed counter projection", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse({ likeCount: 2, hasLiked: false }));
+
+    expect(await unlikeList("test-token", LIST_ID)).toEqual({
+      likeCount: 2,
+      hasLiked: false,
+    });
+    expect(urlOf(fetchMock)).toContain(`/lists/${LIST_ID}/like`);
+    expect(initOf(fetchMock).method).toBe("DELETE");
+  });
+
+  it("resolves rather than throwing when the list was never liked", async () => {
+    // Tolerant server-side by design: `unlikeList` is a scoped `deleteMany`,
+    // so unliking something never liked is a 200 no-op, deliberately NOT the
+    // 409 its like counterpart answers with. Do not mirror the 409 here.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ likeCount: 0, hasLiked: false }),
+    );
+
+    expect(await unlikeList("test-token", LIST_ID)).toEqual({
+      likeCount: 0,
+      hasLiked: false,
+    });
+  });
+
+  it("throws a ListActionError carrying the status on a non-OK response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      errorResponse(500, "Internal server error"),
+    );
+
+    const error = await unlikeList("test-token", LIST_ID).catch(
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(ListActionError);
+    expect((error as ListActionError).status).toBe(500);
   });
 });
 

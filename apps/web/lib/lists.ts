@@ -28,6 +28,25 @@ export interface ListDetail {
   createdAt: string;
   updatedAt: string;
   items: ListItem[];
+  /** Total likes on this list, counted server-side in the same query. */
+  likeCount: number;
+  /**
+   * Whether the caller whose token fetched this payload has liked the list.
+   * Read from the response, never derived: it describes the REQUESTING viewer,
+   * which nothing on this side can compute. `false` for a caller the API could
+   * not resolve to a local account.
+   */
+  viewerHasLiked: boolean;
+}
+
+/**
+ * What `POST`/`DELETE /lists/:id/like` answer with: a counter projection, not a
+ * created-resource representation — which is why both verbs are `200` and never
+ * `201`. Mirrors the API's own `ListLikeResult`.
+ */
+export interface ListLikeResult {
+  likeCount: number;
+  hasLiked: boolean;
 }
 
 /**
@@ -175,6 +194,49 @@ async function throwApiError(
   generic: string,
 ): Promise<never> {
   throw new Error(await readErrorMessage(response, generic));
+}
+
+/**
+ * A failed list LIKE write, carrying the HTTP status alongside the API's own
+ * message.
+ *
+ * Deliberately separate from {@link throwApiError}, which every other write in
+ * this module uses and which throws a bare `Error`: those callers only ever
+ * render the message, so a status would be dead weight. The like island genuinely
+ * branches on it, and its three cases are not interchangeable:
+ *
+ * - **409** — the like already exists server-side (the composite primary key
+ *   guarantees no second row), so the optimistic increment is wrong and a
+ *   `router.refresh()` reconciles it.
+ * - **404** — either the list is not visible to this viewer, or it was deleted
+ *   in the window between the API's access check and its write (those are two
+ *   separate, non-transactional round trips). Roll back and let the refreshed
+ *   page surface the real state.
+ * - **anything else** — a genuine fault to show verbatim, never reconciled away.
+ *
+ * Mirrors `ReviewActionError` in `lib/reviews.ts` rather than importing it: each
+ * fetch module owns its own error type, exactly as both own a private
+ * `readErrorMessage`.
+ */
+export class ListActionError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ListActionError";
+  }
+}
+
+/** Throws a {@link ListActionError} carrying the API's message and status. */
+async function throwActionError(
+  response: Response,
+  generic: string,
+): Promise<never> {
+  throw new ListActionError(
+    await readErrorMessage(response, generic),
+    response.status,
+  );
 }
 
 /** Parses a successful JSON response as a {@link ListDetail}. */
@@ -499,4 +561,52 @@ export async function reorderListItems(
     await throwApiError(response, "Could not save the new order.");
   }
   return readListDetail(response);
+}
+
+/** The `/lists/:id/like` URL both like verbs address. */
+function likeUrl(listId: string): string {
+  return `${getApiBaseUrl()}/lists/${encodeURIComponent(listId)}/like`;
+}
+
+/**
+ * Likes a list on behalf of the viewer, self-likes included — the API applies
+ * the READ visibility rule, not an ownership rule, so an owner may like their
+ * own list and a non-owner may like any public one.
+ *
+ * A duplicate is a **409** and a list this viewer may not see (or one deleted
+ * mid-request) is a **404**; both arrive as a {@link ListActionError} so the
+ * island can roll back its optimistic increment and reconcile with the server.
+ */
+export async function likeList(
+  token: string | null,
+  listId: string,
+): Promise<ListLikeResult> {
+  const response = await fetch(likeUrl(listId), {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    await throwActionError(response, "Could not like this list.");
+  }
+  return (await response.json()) as ListLikeResult;
+}
+
+/**
+ * Removes the viewer's like. Tolerant server-side — a scoped `deleteMany` means
+ * unliking something never liked is a `200` no-op, deliberately NOT the 409 its
+ * counterpart answers with — so in practice only a visibility, auth or transport
+ * failure throws here.
+ */
+export async function unlikeList(
+  token: string | null,
+  listId: string,
+): Promise<ListLikeResult> {
+  const response = await fetch(likeUrl(listId), {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    await throwActionError(response, "Could not unlike this list.");
+  }
+  return (await response.json()) as ListLikeResult;
 }
