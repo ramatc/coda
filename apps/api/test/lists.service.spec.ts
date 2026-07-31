@@ -49,6 +49,11 @@ interface StoredItem {
   note: string | null;
 }
 
+interface StoredListLike {
+  userId: string;
+  listId: string;
+}
+
 const ALBUM = {
   id: ALBUM_ID,
   title: "OK Computer",
@@ -86,6 +91,56 @@ function uniqueConstraintError(): Prisma.PrismaClientKnownRequestError {
 }
 
 /**
+ * Builds the P2002 a duplicate `ListLike` insert raises. Deliberately reports
+ * `user_id` as the violated field — the LEADING column of the composite
+ * `@@id([userId, listId])`, which is exactly what the real driver adapter
+ * surfaces and which discriminates NOTHING.
+ *
+ * That choice is load-bearing, not incidental. `list_likes` has the composite
+ * PK as its SOLE unique constraint, so {@link ListsService.likeList} maps a
+ * BARE {@link isUniqueConstraintViolation} to 409 (design Decision 5). If a
+ * later contributor copies `addItem`'s `extractUniqueConstraintField(err) ===
+ * "list_id"` discrimination into the like path — which is correct THERE, where
+ * `ListItem` carries both a surrogate `@id` and `@@unique([listId, albumId])`
+ * — this error would no longer match, the 409 would not be thrown, and the
+ * duplicate-like test below would fail with a raw P2002 instead. The test is
+ * the tripwire for that specific mistake.
+ */
+function listLikeUniqueConstraintError(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    "Unique constraint failed on the fields: (`user_id`,`list_id`)",
+    {
+      code: "P2002",
+      clientVersion: "test",
+      meta: {
+        driverAdapterError: {
+          cause: {
+            kind: "UniqueConstraintViolation",
+            constraint: { fields: ["user_id"] },
+          },
+        },
+      },
+    },
+  );
+}
+
+/**
+ * Builds a P2003 foreign-key violation shaped like this project's Prisma 7
+ * client. `loadListForViewer` and `listLike.create` are separate,
+ * non-transactional round trips, so a list deleted in that window (e.g. the
+ * owner deletes it from another tab while a like request is in flight) makes
+ * `ListLike.listId` point at nothing, and the design requires that to surface
+ * as a 404 rather than an unhandled 500 — mirroring
+ * `reviews.service.spec.ts`'s `foreignKeyError`.
+ */
+function listLikeForeignKeyError(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    "Foreign key constraint failed on the field: `list_id`",
+    { code: "P2003", clientVersion: "test" },
+  );
+}
+
+/**
  * In-memory Prisma stand-in honouring the exact queries {@link ListsService}
  * issues: `user.findUnique` by clerk id, `profile.findUnique` by username, and
  * `list.findUnique` / `list.create` / `list.updateMany` / `list.deleteMany` /
@@ -98,7 +153,16 @@ function createFakePrisma() {
   const usersByUsername = new Map<string, string>();
   const lists: StoredList[] = [];
   const items: StoredItem[] = [];
+  const listLikes: StoredListLike[] = [];
+  // Every composite-key like lookup the service issues, so a test can prove a
+  // `null` viewer never reaches Prisma at all (there is no local id to key on).
+  const likeLookups: { userId: string; listId: string }[] = [];
+  const hooks: { afterAccessLoad?: () => void } = {};
   let idSeq = 0;
+
+  function likesForList(listId: string): number {
+    return listLikes.filter((l) => l.listId === listId).length;
+  }
 
   function nextId(): string {
     idSeq += 1;
@@ -140,7 +204,7 @@ function createFakePrisma() {
       }): Promise<Record<string, unknown> | null> {
         const list = lists.find((l) => l.id === args.where.id);
         if (!list) return null;
-        return {
+        const result = {
           id: list.id,
           userId: list.userId,
           title: list.title,
@@ -150,7 +214,14 @@ function createFakePrisma() {
           createdAt: list.createdAt,
           updatedAt: list.updatedAt,
           items: itemsForList(list.id),
+          _count: { likes: likesForList(list.id) },
         };
+        // Race seam: a test can set this to remove the list from the store
+        // right after the access check reads it but before the subsequent
+        // write runs, proving `loadListForViewer` and the write are separate,
+        // non-transactional round trips.
+        hooks.afterAccessLoad?.();
+        return result;
       },
       async create(args: {
         data: {
@@ -287,6 +358,60 @@ function createFakePrisma() {
         return item;
       },
     },
+    listLike: {
+      async create(args: {
+        data: { userId: string; listId: string };
+      }): Promise<StoredListLike> {
+        const { userId, listId } = args.data;
+        // Real FK: the list must still exist (P2003 → 404). `loadListForViewer`
+        // and this `create` are separate, non-transactional round trips, so a
+        // list deleted in that window (see `afterAccessLoad`) IS reachable
+        // here and must be handled the same way `addItem`/`reviewLike.create`
+        // do — this is not unreachable code.
+        if (!lists.some((l) => l.id === listId)) {
+          throw listLikeForeignKeyError();
+        }
+        // Real composite PK: a second like is a constraint violation, never a
+        // silent no-op (P2002 → 409). The DB is the single arbiter — the
+        // service issues no `findUnique` pre-check, so there is no TOCTOU
+        // window to test around.
+        if (listLikes.some((l) => l.userId === userId && l.listId === listId)) {
+          throw listLikeUniqueConstraintError();
+        }
+        const row: StoredListLike = { userId, listId };
+        listLikes.push(row);
+        return row;
+      },
+      async deleteMany(args: {
+        where: { userId: string; listId: string };
+      }): Promise<{ count: number }> {
+        const { userId, listId } = args.where;
+        let count = 0;
+        for (let i = listLikes.length - 1; i >= 0; i -= 1) {
+          if (
+            listLikes[i].userId === userId &&
+            listLikes[i].listId === listId
+          ) {
+            listLikes.splice(i, 1);
+            count += 1;
+          }
+        }
+        return { count };
+      },
+      async count(args: { where: { listId: string } }): Promise<number> {
+        return likesForList(args.where.listId);
+      },
+      async findUnique(args: {
+        where: { userId_listId: { userId: string; listId: string } };
+      }): Promise<{ userId: string } | null> {
+        const key = args.where.userId_listId;
+        likeLookups.push(key);
+        const hit = listLikes.find(
+          (l) => l.userId === key.userId && l.listId === key.listId,
+        );
+        return hit ? { userId: hit.userId } : null;
+      },
+    },
     async $transaction<T>(fn: (tx: typeof client) => Promise<T>): Promise<T> {
       return fn(client);
     },
@@ -298,6 +423,9 @@ function createFakePrisma() {
     usersByUsername,
     lists,
     items,
+    listLikes,
+    likeLookups,
+    hooks,
   };
 }
 
@@ -350,7 +478,9 @@ describe("ListsService", () => {
     });
 
     it("defaults isRanked=false and isPublic=true when the flags are omitted", async () => {
-      const detail = await service.createList(OWNER_CLERK, { title: "Untitled" });
+      const detail = await service.createList(OWNER_CLERK, {
+        title: "Untitled",
+      });
 
       expect(detail.isRanked).toBe(false);
       expect(detail.isPublic).toBe(true);
@@ -373,7 +503,9 @@ describe("ListsService", () => {
 
     it("rejects a title longer than MAX_TITLE_LENGTH with a 400", async () => {
       await expect(
-        service.createList(OWNER_CLERK, { title: "a".repeat(MAX_TITLE_LENGTH + 1) }),
+        service.createList(OWNER_CLERK, {
+          title: "a".repeat(MAX_TITLE_LENGTH + 1),
+        }),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(fake.lists).toHaveLength(0);
     });
@@ -652,7 +784,10 @@ describe("ListsService", () => {
     });
 
     it("shows a non-owner only public lists even when the caller is unsynced", async () => {
-      const summaries = await service.getUserLists("unsynced_clerk", OWNER_USERNAME);
+      const summaries = await service.getUserLists(
+        "unsynced_clerk",
+        OWNER_USERNAME,
+      );
 
       expect(summaries.map((s) => s.id)).toEqual([PUBLIC_LIST_ID]);
     });
@@ -783,7 +918,9 @@ describe("ListsService", () => {
       seedList({ id: PUBLIC_LIST_ID });
 
       await expect(
-        service.addItem("unsynced_clerk", PUBLIC_LIST_ID, { albumId: ALBUM_ID }),
+        service.addItem("unsynced_clerk", PUBLIC_LIST_ID, {
+          albumId: ALBUM_ID,
+        }),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(fake.items).toHaveLength(0);
     });
@@ -963,6 +1100,211 @@ describe("ListsService", () => {
           itemIds: ["40000000-0000-4000-8000-000000000001"],
         }),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  /**
+   * List likes (Fase 2 slice 3, design Decisions 3-5). The access rule is the
+   * READ rule — `loadListForViewer`, NOT `loadListForOwnerAction` — because
+   * liking is a VISITOR action: gating it on ownership would 403 every
+   * non-owner, the exact inverse of the requirement. That yields the spec's
+   * matrix: owner→ok (self-like allowed), public→ok, private+non-owner→404.
+   */
+  describe("likeList / unlikeList", () => {
+    it("lets the OWNER like their own PUBLIC list (self-like is allowed)", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+
+      const result = await service.likeList(OWNER_CLERK, PUBLIC_LIST_ID);
+
+      expect(result).toEqual({ likeCount: 1, hasLiked: true });
+      expect(fake.listLikes).toEqual([
+        { userId: OWNER_ID, listId: PUBLIC_LIST_ID },
+      ]);
+    });
+
+    it("lets the OWNER like their own PRIVATE list", async () => {
+      seedList({ id: PRIVATE_LIST_ID, isPublic: false });
+
+      const result = await service.likeList(OWNER_CLERK, PRIVATE_LIST_ID);
+
+      expect(result).toEqual({ likeCount: 1, hasLiked: true });
+    });
+
+    it("lets a NON-OWNER like a PUBLIC list", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+
+      const result = await service.likeList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      expect(result).toEqual({ likeCount: 1, hasLiked: true });
+      expect(fake.listLikes).toEqual([
+        { userId: OTHER_ID, listId: PUBLIC_LIST_ID },
+      ]);
+    });
+
+    it("returns 404 (not 403) when a NON-OWNER likes a PRIVATE list, writing no row", async () => {
+      seedList({ id: PRIVATE_LIST_ID, isPublic: false });
+
+      await expect(
+        service.likeList(OTHER_CLERK, PRIVATE_LIST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.listLikes).toHaveLength(0);
+    });
+
+    it("returns 404 for an unknown list id, writing no row", async () => {
+      await expect(
+        service.likeList(OWNER_CLERK, UNKNOWN_LIST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.listLikes).toHaveLength(0);
+    });
+
+    it("rejects a DUPLICATE like with a 409, leaving the single original row intact", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+      await service.likeList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      // The second like must surface the P2002 as a 409 — NOT a 500, and NOT a
+      // silently idempotent 200 (`likeList` deliberately does not mirror
+      // `follow()`'s upsert). Idempotency is a DATA-layer invariant enforced by
+      // the composite PK; the 409 is the honest HTTP report that the write was
+      // refused. This also pins that the mapping uses a BARE
+      // `isUniqueConstraintViolation` — see `listLikeUniqueConstraintError`.
+      await expect(
+        service.likeList(OTHER_CLERK, PUBLIC_LIST_ID),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(fake.listLikes).toHaveLength(1);
+    });
+
+    it("maps a list deleted between the access check and the like write to 404, not a raw 500", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+      // Simulates the owner deleting the list from another tab while this
+      // like request is in flight: `loadListForViewer` and `listLike.create`
+      // are separate, non-transactional round trips, so the list can vanish
+      // in between, raising a genuine P2003.
+      fake.hooks.afterAccessLoad = () => {
+        fake.lists.length = 0;
+        delete fake.hooks.afterAccessLoad;
+      };
+
+      await expect(
+        service.likeList(OWNER_CLERK, PUBLIC_LIST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.listLikes).toHaveLength(0);
+    });
+
+    it("removes the like on unlike and decrements the count", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+      await service.likeList(OWNER_CLERK, PUBLIC_LIST_ID);
+      await service.likeList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      const result = await service.unlikeList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      expect(result).toEqual({ likeCount: 1, hasLiked: false });
+      expect(fake.listLikes).toEqual([
+        { userId: OWNER_ID, listId: PUBLIC_LIST_ID },
+      ]);
+    });
+
+    it("treats unliking a list that was never liked as a 200 no-op (never 404/409)", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+
+      // The spec constrains only the duplicate-LIKE direction. Unlike stays
+      // tolerant via `deleteMany`, matching the follow/unfollow precedent — do
+      // NOT mirror the 409 here.
+      const result = await service.unlikeList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      expect(result).toEqual({ likeCount: 0, hasLiked: false });
+      expect(fake.listLikes).toHaveLength(0);
+    });
+
+    it("applies the SAME access rule to unlike: a non-owner unliking a PRIVATE list is a 404", async () => {
+      seedList({ id: PRIVATE_LIST_ID, isPublic: false });
+
+      await expect(
+        service.unlikeList(OTHER_CLERK, PRIVATE_LIST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("rejects an UNSYNCED caller with a 404 on both like and unlike", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+
+      // Liking is a WRITE, so it uses `requireCallerId` (404 for a caller with
+      // no local User row) rather than `getList`'s null-tolerant resolution.
+      await expect(
+        service.likeList("unsynced_clerk", PUBLIC_LIST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.unlikeList("unsynced_clerk", PUBLIC_LIST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(fake.listLikes).toHaveLength(0);
+    });
+
+    it("rejects a malformed list id with a 400 on both like and unlike", async () => {
+      await expect(
+        service.likeList(OWNER_CLERK, "not-a-uuid"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.unlikeList(OWNER_CLERK, "not-a-uuid"),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe("ListDetail like projection", () => {
+    it("reports likeCount and viewerHasLiked=true for a viewer who liked the list", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+      await service.likeList(OWNER_CLERK, PUBLIC_LIST_ID);
+      await service.likeList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      const detail = await service.getList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      expect(detail.likeCount).toBe(2);
+      expect(detail.viewerHasLiked).toBe(true);
+    });
+
+    it("reports viewerHasLiked=false for a viewer who has not liked it, without hiding the count", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+      await service.likeList(OWNER_CLERK, PUBLIC_LIST_ID);
+
+      const detail = await service.getList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      expect(detail.likeCount).toBe(1);
+      expect(detail.viewerHasLiked).toBe(false);
+    });
+
+    it("resolves an UNSYNCED viewer to viewerHasLiked=false WITHOUT any like lookup", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+      await service.likeList(OWNER_CLERK, PUBLIC_LIST_ID);
+      fake.likeLookups.length = 0;
+
+      const detail = await service.getList("unsynced_clerk", PUBLIC_LIST_ID);
+
+      expect(detail.likeCount).toBe(1);
+      expect(detail.viewerHasLiked).toBe(false);
+      // A null viewer has no local id to key the composite lookup on, so the
+      // service must short-circuit rather than issue a query with `undefined`.
+      expect(fake.likeLookups).toHaveLength(0);
+    });
+
+    it("returns likeCount=0 / viewerHasLiked=false on a freshly created list", async () => {
+      const detail = await service.createList(OWNER_CLERK, { title: "New" });
+
+      expect(detail.likeCount).toBe(0);
+      expect(detail.viewerHasLiked).toBe(false);
+    });
+
+    it("keeps the like projection accurate on the detail returned by a MUTATION", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+      await service.likeList(OTHER_CLERK, PUBLIC_LIST_ID);
+
+      // `updateList` re-reads through `getListByIdOrThrow`, which must thread
+      // the caller through to the viewer projection like `getList` does — the
+      // owner here has NOT liked their own list, so a hardcoded `true`/`false`
+      // or a dropped caller would show up as a wrong `viewerHasLiked`.
+      const detail = await service.updateList(OWNER_CLERK, PUBLIC_LIST_ID, {
+        title: "Renamed",
+      });
+
+      expect(detail.title).toBe("Renamed");
+      expect(detail.likeCount).toBe(1);
+      expect(detail.viewerHasLiked).toBe(false);
     });
   });
 });
