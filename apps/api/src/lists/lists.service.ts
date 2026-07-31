@@ -71,6 +71,24 @@ export interface ListDetail {
   createdAt: string;
   updatedAt: string;
   items: ListItemView[];
+  /** Total likes on this list, from a nested `_count` in the same query. */
+  likeCount: number;
+  /**
+   * Whether the RESOLVED caller has liked this list. `false` for an unsynced
+   * caller, who has no local `User.id` to key the composite lookup on.
+   */
+  viewerHasLiked: boolean;
+}
+
+/**
+ * The counter projection returned by {@link ListsService.likeList} /
+ * {@link ListsService.unlikeList}. Deliberately NOT a created-resource
+ * representation — hence `@HttpCode(200)` on both verbs, matching the review
+ * like endpoints.
+ */
+export interface ListLikeResult {
+  likeCount: number;
+  hasLiked: boolean;
 }
 
 /** A compact list row for the profile Lists section (no items, just a count). */
@@ -142,7 +160,10 @@ export class ListsService {
       data: { userId, ...data },
     });
 
-    return this.toDetail(list as unknown as ListRow);
+    // A list that did not exist a moment ago cannot have been liked, so the
+    // viewer projection is a constant here — no `_count` select and no like
+    // lookup are needed just to write two zeroes.
+    return this.toDetail(list as unknown as ListRow, false);
   }
 
   /**
@@ -164,7 +185,10 @@ export class ListsService {
       // Extremely narrow race (deleted between the access check and this read).
       throw new NotFoundException("List not found.");
     }
-    return this.toDetail(list as unknown as ListRow);
+    return this.toDetail(
+      list as unknown as ListRow,
+      await this.hasLikedList(callerId, id),
+    );
   }
 
   /**
@@ -191,7 +215,7 @@ export class ListsService {
       throw new NotFoundException("List not found.");
     }
 
-    return this.getListByIdOrThrow(id);
+    return this.getListByIdOrThrow(id, userId);
   }
 
   /**
@@ -297,7 +321,7 @@ export class ListsService {
       throw err;
     }
 
-    return this.getListByIdOrThrow(id);
+    return this.getListByIdOrThrow(id, userId);
   }
 
   /**
@@ -329,7 +353,7 @@ export class ListsService {
       await this.renumberItems(tx, id);
     });
 
-    return this.getListByIdOrThrow(id);
+    return this.getListByIdOrThrow(id, userId);
   }
 
   /**
@@ -408,7 +432,113 @@ export class ListsService {
       }
     });
 
-    return this.getListByIdOrThrow(id);
+    return this.getListByIdOrThrow(id, userId);
+  }
+
+  /**
+   * Likes a list on the caller's behalf. Access is gated by
+   * {@link loadListForViewer} — the READ rule, deliberately NOT
+   * {@link loadListForOwnerAction} — because liking is a VISITOR action:
+   * gating on ownership would 403 every non-owner, the exact inverse of the
+   * requirement. The read rule yields precisely the required matrix: owner → ok
+   * (self-liking is allowed), public → ok, private + non-owner → 404.
+   *
+   * The write is a plain `create()` with the database as the single arbiter —
+   * no `findUnique` pre-check (which would open a TOCTOU window surfacing as a
+   * raw P2002 500 under concurrency) and deliberately NOT `follow()`'s
+   * `upsert` + empty `update`, because the spec's duplicate-like scenario
+   * normatively requires a 409. Idempotency is guaranteed at the DATA layer
+   * instead: `@@id([userId, listId])` means a second row can never exist.
+   *
+   * One thing NOT to "fix" here: **no `extractUniqueConstraintField`
+   * discrimination.** That composite PK is the SOLE unique constraint on
+   * `list_likes`, so a bare {@link isUniqueConstraintViolation} is
+   * unambiguous. `addItem` needs the discrimination only because `ListItem`
+   * carries both a surrogate `@id` and `@@unique([listId, albumId])`; here it
+   * would match on the non-discriminating leading column (`user_id`) and add
+   * brittleness for nothing.
+   *
+   * The access check above and `create()` below ARE, however, two separate,
+   * non-transactional round trips — not one atomic operation. If the list is
+   * deleted in that window (e.g. the owner deletes it from another tab while
+   * a like request is in flight), `create()` raises a genuine P2003, so the
+   * FK branch below is reachable and must be mapped to 404, mirroring
+   * `addItem` and `reviews.likeReview`.
+   */
+  async likeList(
+    clerkUserId: string,
+    listId: unknown,
+  ): Promise<ListLikeResult> {
+    const id = this.validateListId(listId);
+    const userId = await this.requireCallerId(clerkUserId);
+    await this.loadListForViewer(userId, id);
+
+    try {
+      await this.prisma.client.listLike.create({
+        data: { userId, listId: id },
+      });
+    } catch (err) {
+      if (isUniqueConstraintViolation(err)) {
+        throw new ConflictException("You already liked this list.");
+      }
+      if (isForeignKeyViolation(err)) {
+        throw new NotFoundException("List not found.");
+      }
+      throw err;
+    }
+
+    return { likeCount: await this.countListLikes(id), hasLiked: true };
+  }
+
+  /**
+   * Removes the caller's like. Tolerant by design: `deleteMany` scoped to the
+   * caller's own row means unliking something never liked is a 200 no-op rather
+   * than a 409/404. The spec only ever constrains the duplicate-LIKE direction,
+   * so the 409 must NOT be mirrored here — matching the follow/unfollow
+   * precedent, where only `unfollow` uses the tolerant `deleteMany`.
+   *
+   * The visibility check still runs first: unlike obeys the SAME access rule as
+   * like, so a private list stays a 404 for a non-owner rather than leaking its
+   * existence through a differently-shaped response.
+   */
+  async unlikeList(
+    clerkUserId: string,
+    listId: unknown,
+  ): Promise<ListLikeResult> {
+    const id = this.validateListId(listId);
+    const userId = await this.requireCallerId(clerkUserId);
+    await this.loadListForViewer(userId, id);
+
+    await this.prisma.client.listLike.deleteMany({
+      where: { userId, listId: id },
+    });
+
+    return { likeCount: await this.countListLikes(id), hasLiked: false };
+  }
+
+  /** Current like total for a list, read back after a like/unlike write. */
+  private async countListLikes(listId: string): Promise<number> {
+    return this.prisma.client.listLike.count({ where: { listId } });
+  }
+
+  /**
+   * Whether the resolved caller has liked this list. A `null` caller (unsynced,
+   * so no local `User` row) never reaches Prisma — there is no local id to key
+   * the composite lookup on, and passing `undefined` into the `userId_listId`
+   * compound `where` would raise a `PrismaClientValidationError`.
+   */
+  private async hasLikedList(
+    callerId: string | null,
+    listId: string,
+  ): Promise<boolean> {
+    if (callerId === null) {
+      return false;
+    }
+    const like = await this.prisma.client.listLike.findUnique({
+      where: { userId_listId: { userId: callerId, listId } },
+      select: { userId: true },
+    });
+    return like !== null;
   }
 
   /**
@@ -494,8 +624,16 @@ export class ListsService {
     }
   }
 
-  /** Re-reads a full list detail by id after a mutation (owner already authorized). */
-  private async getListByIdOrThrow(id: string): Promise<ListDetail> {
+  /**
+   * Re-reads a full list detail by id after a mutation (owner already
+   * authorized). `callerId` is threaded through so the returned detail's
+   * `viewerHasLiked` describes the ACTUAL caller — an owner has usually not
+   * liked their own list, so this must not be assumed either way.
+   */
+  private async getListByIdOrThrow(
+    id: string,
+    callerId: string,
+  ): Promise<ListDetail> {
     const list = await this.prisma.client.list.findUnique({
       where: { id },
       select: LIST_DETAIL_SELECT,
@@ -503,11 +641,18 @@ export class ListsService {
     if (!list) {
       throw new NotFoundException("List not found.");
     }
-    return this.toDetail(list as unknown as ListRow);
+    return this.toDetail(
+      list as unknown as ListRow,
+      await this.hasLikedList(callerId, id),
+    );
   }
 
-  /** Maps a persisted list row (with items) to the API detail shape. */
-  private toDetail(list: ListRow): ListDetail {
+  /**
+   * Maps a persisted list row (with items) to the API detail shape. `_count` is
+   * optional for the same reason `items` is: the `create` path returns a bare
+   * row with neither selected, and a brand-new list has zero of both.
+   */
+  private toDetail(list: ListRow, viewerHasLiked: boolean): ListDetail {
     return {
       id: list.id,
       userId: list.userId,
@@ -517,6 +662,8 @@ export class ListsService {
       isPublic: list.isPublic,
       createdAt: list.createdAt.toISOString(),
       updatedAt: list.updatedAt.toISOString(),
+      likeCount: list._count?.likes ?? 0,
+      viewerHasLiked,
       items: (list.items ?? []).map((item) => ({
         id: item.id,
         position: item.position,
@@ -721,6 +868,9 @@ const LIST_DETAIL_SELECT = {
   isPublic: true,
   createdAt: true,
   updatedAt: true,
+  // Nested aggregate in the SAME query — no extra round-trip, no N+1, and no
+  // denormalized counter column to drift out of sync.
+  _count: { select: { likes: true } },
   items: {
     orderBy: { position: "asc" as const },
     select: {
@@ -749,6 +899,8 @@ interface ListRow {
   isPublic: boolean;
   createdAt: Date;
   updatedAt: Date;
+  /** Absent on the `create` path, which selects neither items nor counts. */
+  _count?: { likes: number };
   items?: {
     id: string;
     position: number;

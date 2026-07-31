@@ -14,6 +14,7 @@ import {
   type AddItemInput,
   type CreateListInput,
   type ListDetail,
+  type ListLikeResult,
   type ListSummary,
   type ReorderInput,
   type UpdateListInput,
@@ -32,6 +33,13 @@ import {
  * - `POST   /lists/:id/items`            → add an album (owner only; dup → `409`, `200`)
  * - `DELETE /lists/:id/items/:itemId`    → remove an item, renumber (owner only)
  * - `PATCH  /lists/:id/items/reorder`    → reorder items to the given order (owner only)
+ * - `POST   /lists/:id/like`             → like (`200`; duplicate → `409`)
+ * - `DELETE /lists/:id/like`             → unlike (`200`, tolerant)
+ *
+ * The two like routes are the only ones here NOT scoped to the owner: liking is
+ * a visitor action gated by the READ visibility rule, so any authenticated
+ * caller who can see the list can like it (including its owner). See
+ * {@link ListsService.likeList}.
  *
  * The controller has NO class-level prefix so the routes carry their absolute
  * paths. All validation and access logic lives in {@link ListsService}.
@@ -120,5 +128,29 @@ export class ListsController {
     @Param("itemId") itemId: string,
   ): Promise<ListDetail> {
     return this.lists.removeItem(clerkUserId, id, itemId);
+  }
+
+  /**
+   * Likes a list. `200` rather than `201` because the payload is a counter
+   * projection, not a created-resource representation. A duplicate is a `409`;
+   * a list the caller cannot see is a `404`.
+   */
+  @Post("lists/:id/like")
+  @HttpCode(200)
+  likeList(
+    @CurrentUser("sub") clerkUserId: string,
+    @Param("id") id: string,
+  ): Promise<ListLikeResult> {
+    return this.lists.likeList(clerkUserId, id);
+  }
+
+  /** Removes the caller's like. Tolerant: unliking what was never liked is a `200`. */
+  @Delete("lists/:id/like")
+  @HttpCode(200)
+  unlikeList(
+    @CurrentUser("sub") clerkUserId: string,
+    @Param("id") id: string,
+  ): Promise<ListLikeResult> {
+    return this.lists.unlikeList(clerkUserId, id);
   }
 }

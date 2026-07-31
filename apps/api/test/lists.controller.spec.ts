@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { GUARDS_METADATA, HTTP_CODE_METADATA } from "@nestjs/common/constants";
 import { ListsController } from "../src/lists/lists.controller.js";
 import type { ListsService } from "../src/lists/lists.service.js";
+import { IS_PUBLIC_KEY } from "../src/auth/auth.types.js";
 
 /**
  * Unit test for {@link ListsController}: it is a thin pass-through to
@@ -18,6 +20,8 @@ describe("ListsController", () => {
   let addItem: ReturnType<typeof vi.fn>;
   let removeItem: ReturnType<typeof vi.fn>;
   let reorder: ReturnType<typeof vi.fn>;
+  let likeList: ReturnType<typeof vi.fn>;
+  let unlikeList: ReturnType<typeof vi.fn>;
   let controller: ListsController;
 
   const detail = {
@@ -30,6 +34,8 @@ describe("ListsController", () => {
     createdAt: "2026-07-22T12:00:00.000Z",
     updatedAt: "2026-07-22T12:00:00.000Z",
     items: [],
+    likeCount: 0,
+    viewerHasLiked: false,
   };
 
   beforeEach(() => {
@@ -41,6 +47,8 @@ describe("ListsController", () => {
     addItem = vi.fn().mockResolvedValue({ ...detail, items: [{ id: "item-1" }] });
     removeItem = vi.fn().mockResolvedValue(detail);
     reorder = vi.fn().mockResolvedValue(detail);
+    likeList = vi.fn().mockResolvedValue({ likeCount: 1, hasLiked: true });
+    unlikeList = vi.fn().mockResolvedValue({ likeCount: 0, hasLiked: false });
     const service = {
       createList,
       getList,
@@ -50,6 +58,8 @@ describe("ListsController", () => {
       addItem,
       removeItem,
       reorder,
+      likeList,
+      unlikeList,
     } as unknown as ListsService;
     controller = new ListsController(service);
   });
@@ -114,5 +124,70 @@ describe("ListsController", () => {
 
     expect(reorder).toHaveBeenCalledWith("clerk_1", "list-1", body);
     expect(result).toBe(detail);
+  });
+
+  it("POST /lists/:id/like forwards caller id and list id, returning the counter projection", async () => {
+    const result = await controller.likeList("clerk_1", "list-1");
+
+    expect(likeList).toHaveBeenCalledWith("clerk_1", "list-1");
+    expect(result).toEqual({ likeCount: 1, hasLiked: true });
+  });
+
+  it("DELETE /lists/:id/like forwards caller id and list id, returning the counter projection", async () => {
+    const result = await controller.unlikeList("clerk_1", "list-1");
+
+    expect(unlikeList).toHaveBeenCalledWith("clerk_1", "list-1");
+    expect(result).toEqual({ likeCount: 0, hasLiked: false });
+  });
+
+  /**
+   * Both like verbs answer `200`, not `201`/`204`: the payload is a counter
+   * projection, not a created-resource representation and not an empty body.
+   * Asserted through Nest's own metadata so a dropped `@HttpCode(200)` fails
+   * here rather than silently changing the contract the web island depends on
+   * — `POST` would otherwise default to `201`.
+   */
+  /**
+   * The like routes stay behind the GLOBAL fail-closed `ClerkGuard`: neither
+   * carries `@Public()` nor a route-scoped guard override, so an anonymous
+   * caller is rejected before the handler runs.
+   *
+   * This is the regression net for the most plausible mistake in this slice.
+   * `OptionalClerkGuard` was introduced for `GET /reviews/:id`, and these two
+   * endpoints are the obvious place to wrongly copy it onto — they are the
+   * "other" like routes. Doing so would silently downgrade a WRITE to
+   * anonymous-tolerant, at which point `@CurrentUser("sub")` is `undefined`
+   * and `requireCallerId` turns a missing 401 into a confusing 404.
+   */
+  it("keeps both like verbs behind the global ClerkGuard (no @Public, no guard override)", () => {
+    for (const handler of [
+      ListsController.prototype.likeList,
+      ListsController.prototype.unlikeList,
+    ]) {
+      expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler)).toBe(undefined);
+      expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toBe(undefined);
+    }
+    // Nothing at class level either — `ClerkGuard` resolves these with
+    // `getAllAndOverride([handler, class])`, so a class-level exemption would
+    // silently cover every list route including the owner-only mutations.
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, ListsController)).toBe(undefined);
+    expect(Reflect.getMetadata(GUARDS_METADATA, ListsController)).toBe(
+      undefined,
+    );
+  });
+
+  it("answers 200 (not 201) on both like verbs", () => {
+    expect(
+      Reflect.getMetadata(
+        HTTP_CODE_METADATA,
+        ListsController.prototype.likeList,
+      ),
+    ).toBe(200);
+    expect(
+      Reflect.getMetadata(
+        HTTP_CODE_METADATA,
+        ListsController.prototype.unlikeList,
+      ),
+    ).toBe(200);
   });
 });
