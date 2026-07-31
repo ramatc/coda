@@ -28,6 +28,11 @@ const PAGE: ActivityPage = {
       },
       score: null,
       reviewBody: null,
+      // A LISTEN event has no review, so all three review fields are null.
+      // Type-level pin: `ActivityItem` must carry them for this literal to compile.
+      reviewId: null,
+      reviewLikeCount: null,
+      reviewCommentCount: null,
     },
   ],
   nextCursor: null,
