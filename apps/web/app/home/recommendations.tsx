@@ -42,13 +42,18 @@ export function Recommendations({ items }: RecommendationsProps) {
   const { getToken } = useAuth();
   const router = useRouter();
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  // A SET, not a single "current pending id": dismisses are per-card and can
+  // overlap, so one scalar would hand the pending flag over to whichever card
+  // was clicked last and re-enable the first card's button while its own
+  // request is still in flight — letting the user fire a second concurrent
+  // dismiss for the same recommendation.
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   const visible = items.filter((item) => !dismissedIds.has(item.id));
 
   async function handleDismiss(id: string): Promise<void> {
-    setPendingId(id);
+    setPendingIds((prev) => new Set(prev).add(id));
     setError(null);
     try {
       const token = await getToken();
@@ -71,7 +76,13 @@ export function Recommendations({ items }: RecommendationsProps) {
         err instanceof Error ? err.message : "Could not dismiss this recommendation.",
       );
     } finally {
-      setPendingId(null);
+      // Clears only THIS card's entry, leaving any other card's still in-flight
+      // dismiss blocked.
+      setPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
@@ -131,11 +142,11 @@ export function Recommendations({ items }: RecommendationsProps) {
             <button
               type="button"
               onClick={() => void handleDismiss(item.id)}
-              disabled={pendingId === item.id}
+              disabled={pendingIds.has(item.id)}
               className="shrink-0 rounded-full border border-brand-200 px-3 py-1 text-xs font-medium opacity-70 hover:opacity-100 disabled:opacity-40"
               aria-label={`Dismiss ${item.album.title}`}
             >
-              {pendingId === item.id ? "Dismissing…" : "Dismiss"}
+              {pendingIds.has(item.id) ? "Dismissing…" : "Dismiss"}
             </button>
           </li>
         ))}

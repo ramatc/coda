@@ -163,6 +163,57 @@ describe("Recommendations island", () => {
     );
   });
 
+  it("tracks in-flight dismisses per card, so dismissing a second card does not re-enable the first", async () => {
+    // One resolver per id, so each card's request can be held in flight and
+    // released independently.
+    const resolvers = new Map<string, () => void>();
+    vi.mocked(dismissRecommendation).mockImplementation(
+      (_token, id) =>
+        new Promise<void>((resolve) => {
+          resolvers.set(id, resolve);
+        }),
+    );
+
+    render(<Recommendations items={ITEMS} />);
+
+    const first = screen.getByLabelText(
+      "Dismiss OK Computer",
+    ) as HTMLButtonElement;
+    const second = screen.getByLabelText(
+      "Dismiss Blue Train",
+    ) as HTMLButtonElement;
+
+    fireEvent.click(first);
+    await waitFor(() =>
+      expect(dismissRecommendation).toHaveBeenCalledWith("test-token", "rec-1"),
+    );
+    expect(first.disabled).toBe(true);
+
+    // The first dismiss is still in flight when the user dismisses another
+    // card. Tracking a single "pending id" would hand the pending flag over to
+    // the second card and silently release the first.
+    fireEvent.click(second);
+    await waitFor(() =>
+      expect(dismissRecommendation).toHaveBeenCalledWith("test-token", "rec-2"),
+    );
+
+    expect(second.disabled).toBe(true);
+    expect(first.disabled).toBe(true);
+
+    // …and the still-blocked first card cannot fire a second concurrent
+    // dismiss for the same recommendation.
+    fireEvent.click(first);
+    expect(dismissRecommendation).toHaveBeenCalledTimes(2);
+
+    // Releasing one request clears only that card's pending state.
+    resolvers.get("rec-1")?.();
+    await waitFor(() => expect(screen.queryByText("OK Computer")).toBeNull());
+    expect(second.disabled).toBe(true);
+
+    resolvers.get("rec-2")?.();
+    await waitFor(() => expect(screen.queryByText("Blue Train")).toBeNull());
+  });
+
   it("shows an explicit empty state when there are no recommendations", () => {
     render(<Recommendations items={[]} />);
 
