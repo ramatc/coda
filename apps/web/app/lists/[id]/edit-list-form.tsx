@@ -139,7 +139,20 @@ export function EditListForm({ list }: EditListFormProps) {
       setEditing(false);
       // The server page re-reads the list, so the header re-renders from the
       // saved values rather than from this island's local draft.
-      router.refresh();
+      //
+      // The save already succeeded and `setEditing(false)` already committed,
+      // so a throwing `router.refresh()` must not escape into the catch below:
+      // that would set `status` to "error" behind a form that is no longer on
+      // screen — invisible today only because the collapsed branch renders no
+      // banner, and a false "your save failed" the moment it does.
+      try {
+        router.refresh();
+      } catch (refreshFailure) {
+        console.error(
+          "EditListForm: router.refresh() threw after a successful save",
+          refreshFailure,
+        );
+      }
     } catch (err) {
       setStatus("error");
       setError(err instanceof Error ? err.message : "Something went wrong.");

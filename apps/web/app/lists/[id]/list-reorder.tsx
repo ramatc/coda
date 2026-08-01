@@ -123,7 +123,20 @@ export function ListReorder({ listId, items }: ListReorderProps) {
         next.map((entry) => entry.id),
       );
       // The server re-reads the renumbered list so positions stay authoritative.
-      router.refresh();
+      //
+      // The reorder already persisted at this point, so a throwing
+      // `router.refresh()` must not escape into the catch below: that would
+      // roll the rows back to the PRE-drag order — a phantom order
+      // contradicting what the server actually stored — and blame it on the
+      // owner with an error banner.
+      try {
+        router.refresh();
+      } catch (refreshFailure) {
+        console.error(
+          "ListReorder: router.refresh() threw after a successful reorder",
+          refreshFailure,
+        );
+      }
     } catch (err) {
       setOrder(previous);
       setError(err instanceof Error ? err.message : "Something went wrong.");

@@ -336,6 +336,97 @@ describe("AlbumActions", () => {
     expect(review.value).toBe("Updated review.");
   });
 
+  it("does not surface a refresh failure after a successful review save, and releases the draft gate", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    renderActions({ score: 8, review: "Original review." });
+
+    const review = screen.getByLabelText("Your review") as HTMLTextAreaElement;
+    fireEvent.change(review, { target: { value: "Updated review." } });
+    fireEvent.click(screen.getByText("Update review"));
+
+    await waitFor(() =>
+      expect(writeReview).toHaveBeenCalledWith(
+        "test-token",
+        ALBUM_ID,
+        "Updated review.",
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The review itself already saved — a throwing `router.refresh()` must not
+    // be misreported as a failed mutation via a false error banner.
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+
+    // The `pendingRefresh` gate was armed FOR the refresh that just failed, so
+    // no refreshed `viewer` prop will ever land to clear it. Leaving it armed
+    // would brick the textarea for the rest of the page's life — and now
+    // silently, since the error banner is (correctly) gone.
+    await waitFor(() => expect(review.disabled).toBe(false));
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
+  it("does not release the review draft gate when an unrelated action's refresh fails (cross-action race regression)", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    renderActions({
+      listened: false,
+      listenId: null,
+      score: 8,
+      review: "Original review.",
+    });
+
+    // Save a review. Its own `router.refresh()` succeeds, so `pendingRefresh`
+    // stays armed while the (fire-and-forget) refetch is still in flight.
+    const review = screen.getByLabelText("Your review") as HTMLTextAreaElement;
+    fireEvent.change(review, { target: { value: "Updated review." } });
+    fireEvent.click(screen.getByText("Update review"));
+
+    await waitFor(() =>
+      expect(writeReview).toHaveBeenCalledWith(
+        "test-token",
+        ALBUM_ID,
+        "Updated review.",
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+    expect(review.disabled).toBe(true);
+
+    // Before that refetch lands, the user clicks a DIFFERENT, still-enabled
+    // control. Its own `router.refresh()` throws.
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    fireEvent.click(screen.getByText("Mark as listened"));
+
+    await waitFor(() =>
+      expect(markListened).toHaveBeenCalledWith("test-token", ALBUM_ID),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(2));
+
+    // The unrelated action's failure must NOT release the gate that is still
+    // legitimately protecting the first (still in-flight) review refresh —
+    // otherwise the user could resume typing and have it silently clobbered
+    // once that refresh eventually lands.
+    expect(review.disabled).toBe(true);
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
   it("re-syncs the review draft when a cascade-delete clears the viewer's review (Finding 1 regression)", () => {
     const { rerender } = renderActions({
       listened: false,
@@ -492,6 +583,46 @@ describe("AlbumActions — add to list", () => {
     );
     expect(screen.queryByRole("status")).toBeNull();
     expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("still confirms the add when router.refresh throws afterwards", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    renderActions({});
+
+    fireEvent.change(screen.getByLabelText("Add to list"), {
+      target: { value: "list-2" },
+    });
+
+    await waitFor(() =>
+      expect(addListItem).toHaveBeenCalledWith(
+        "test-token",
+        "list-2",
+        ALBUM_ID,
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The album IS on the list — `addListItem` resolved. A throwing
+    // `router.refresh()` afterwards must neither raise a false error banner…
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "Added to Private drafts.",
+      ),
+    );
+    // …nor swallow the confirmation by making `run` report the add as failed:
+    // this action's success has NO other visible trace on the page.
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
   });
 
   it("points a viewer with no lists at the create page instead of hiding the control", () => {

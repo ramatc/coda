@@ -216,6 +216,45 @@ describe("EditListForm", () => {
     expect(saveButton().disabled).toBe(false);
   });
 
+  it("does not surface a refresh failure after a successful save", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    render(<EditListForm list={list()} />);
+
+    openForm();
+    type("Title", "Best of 2027");
+    fireEvent.click(saveButton());
+
+    await waitFor(() =>
+      expect(updateList).toHaveBeenCalledWith("test-token", "list-1", {
+        title: "Best of 2027",
+      }),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The save already persisted and the form already collapsed, so the
+    // committed success state must survive the throwing refresh…
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Edit list" })).not.toBeNull(),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // …and the failure must leave a diagnosable trace rather than vanishing
+    // into an error state the collapsed branch never renders. Without the
+    // local catch the exception silently sets `status` to "error" behind a
+    // form that is no longer on screen: invisible today, and a false banner
+    // the moment the collapsed branch learns to render one.
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
   it("discards edits on cancel and re-seeds from the list on the next open", () => {
     render(<EditListForm list={list()} />);
 

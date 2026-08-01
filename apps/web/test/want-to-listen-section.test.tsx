@@ -206,6 +206,40 @@ describe("WantToListenSection", () => {
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
+  it("keeps the row removed when router.refresh throws after a successful removal", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    render(<WantToListenSection entries={ENTRIES} isOwnProfile={true} />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Remove Kid A by Radiohead from want to listen",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(unmarkWantToListen).toHaveBeenCalledWith("test-token", "album-a"),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The entry is ALREADY deleted server-side, so restoring the row here
+    // would resurrect a phantom the next page load contradicts — and invite a
+    // second remove that can only 404.
+    expect(renderedTitles()).toEqual(["Amnesiac", "In Rainbows"]);
+    // …and no banner may claim the removal failed.
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
   it("re-syncs from fresh server props after a refresh lands", () => {
     const { rerender } = render(
       <WantToListenSection entries={ENTRIES} isOwnProfile={true} />,

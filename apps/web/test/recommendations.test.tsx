@@ -128,6 +128,41 @@ describe("Recommendations island", () => {
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
+  it("does not surface a refresh failure after a successful dismiss", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+
+    render(<Recommendations items={ITEMS} />);
+    fireEvent.click(screen.getByLabelText("Dismiss OK Computer"));
+
+    await waitFor(() => {
+      expect(dismissRecommendation).toHaveBeenCalledWith("test-token", "rec-1");
+    });
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The dismiss already persisted, so the card stays hidden…
+    await waitFor(() => expect(screen.queryByText("OK Computer")).toBeNull());
+    // …and a throwing `router.refresh()` must not be misreported as a failed
+    // dismiss: an error banner over a card that is (correctly) gone tells the
+    // viewer their dismiss failed when the server recorded it.
+    expect(screen.queryByRole("alert")).toBeNull();
+    // The control is released either way, so a retry stays possible.
+    expect(
+      (screen.getByLabelText("Dismiss Blue Train") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
   it("shows an explicit empty state when there are no recommendations", () => {
     render(<Recommendations items={[]} />);
 

@@ -78,7 +78,20 @@ export function AvatarUpload() {
       }
 
       setStatus("done");
-      router.refresh();
+      // Every leg of the upload already succeeded and `status` already
+      // committed to "done", so a throwing `router.refresh()` here must not
+      // escape into the catch below: that would knock the island back to
+      // "error" and tell the owner their avatar failed to upload when the
+      // profile already carries the new URL. All that is actually lost is the
+      // re-render, so the page shows a stale avatar until the next navigation.
+      try {
+        router.refresh();
+      } catch (refreshFailure) {
+        console.error(
+          "AvatarUpload: router.refresh() threw after a successful upload",
+          refreshFailure,
+        );
+      }
     } catch (err) {
       setStatus("error");
       setError(err instanceof Error ? err.message : "Something went wrong.");
