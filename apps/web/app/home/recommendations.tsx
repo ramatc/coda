@@ -54,7 +54,18 @@ export function Recommendations({ items }: RecommendationsProps) {
       const token = await getToken();
       await dismissRecommendation(token, id);
       setDismissedIds((prev) => new Set(prev).add(id));
-      router.refresh();
+      // The dismiss already succeeded and the card was already hidden above, so
+      // a throwing `router.refresh()` here must not escape into the catch
+      // below: that would leave an error banner claiming the dismiss failed
+      // sitting next to a card that is correctly gone.
+      try {
+        router.refresh();
+      } catch (refreshFailure) {
+        console.error(
+          "Recommendations: router.refresh() threw after a successful dismiss",
+          refreshFailure,
+        );
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not dismiss this recommendation.",

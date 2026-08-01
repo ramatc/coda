@@ -133,7 +133,33 @@ export function AlbumActions({
       if (affectsReviewDraft) {
         setPendingRefresh(true);
       }
-      router.refresh();
+      // The mutation already succeeded at this point, so a throwing
+      // `router.refresh()` here must not escape into the catch below: that
+      // would raise an error banner over a mutation the server committed, and
+      // make `run` return `false` — swallowing `addToList`'s "Added to X."
+      // confirmation, which is that action's ONLY visible trace of success.
+      try {
+        router.refresh();
+      } catch (refreshFailure) {
+        // Only release the gate here when THIS action is the one that armed
+        // it. `pendingRefresh` is shared across every action, so an unrelated
+        // action's own `router.refresh()` throwing here must not clear a gate
+        // that is still legitimately protecting a DIFFERENT, still in-flight
+        // review refresh (judgment-day round 1: cross-action race). When
+        // `affectsReviewDraft` is true, the gate above was armed FOR this
+        // refresh, so no refreshed `viewer` prop will ever land to clear it
+        // (the effect keyed on `viewer` is the only other release path).
+        // Leaving it armed would lock the review textarea for the rest of the
+        // page's life — and silently, since the failure is deliberately not
+        // surfaced as an error.
+        if (affectsReviewDraft) {
+          setPendingRefresh(false);
+        }
+        console.error(
+          "AlbumActions: router.refresh() threw after a successful mutation",
+          refreshFailure,
+        );
+      }
       return true;
     } catch (err) {
       setStatus("error");

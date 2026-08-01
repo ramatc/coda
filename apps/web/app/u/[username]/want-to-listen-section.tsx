@@ -80,7 +80,19 @@ export function WantToListenSection({
       // Addressed by ALBUM id: the API scopes the delete to the caller's own
       // row for that album, so the entry's own id is never part of the URL.
       await unmarkWantToListen(token, target.albumId);
-      router.refresh();
+      // The removal already persisted at this point, so a throwing
+      // `router.refresh()` must not escape into the catch below: that would
+      // restore a row the server has already deleted — a phantom the next page
+      // load contradicts, and one whose Remove control can now only 404 —
+      // while blaming the owner with an error banner.
+      try {
+        router.refresh();
+      } catch (refreshFailure) {
+        console.error(
+          "WantToListenSection: router.refresh() threw after a successful removal",
+          refreshFailure,
+        );
+      }
     } catch (err) {
       setVisible(previous);
       setError(err instanceof Error ? err.message : "Something went wrong.");

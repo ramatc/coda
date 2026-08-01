@@ -305,6 +305,41 @@ describe("ListReorder", () => {
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
+  it("keeps the persisted order when router.refresh throws after a successful reorder", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    render(<ListReorder listId={LIST_ID} items={ITEMS} />);
+
+    dropOn("c", "a");
+
+    await waitFor(() =>
+      expect(reorderListItems).toHaveBeenCalledWith("test-token", LIST_ID, [
+        "c",
+        "a",
+        "b",
+      ]),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The server ALREADY renumbered the list, so rolling back here would put a
+    // phantom PRE-drag order on screen that contradicts what was persisted —
+    // the exact inverse of the rollback-on-failure guarantee above.
+    expect(renderedTitles()).toEqual(["In Rainbows", "Kid A", "Amnesiac"]);
+    expect(renderedOrdinals()).toEqual(["1.", "2.", "3."]);
+    // …and no banner may claim the reorder failed.
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
   it("does not call the API when an item is dropped on itself", async () => {
     render(<ListReorder listId={LIST_ID} items={ITEMS} />);
 
