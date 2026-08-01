@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { buttonVariants, cn } from "@coda/ui";
@@ -10,6 +10,7 @@ import {
   isBlankCommentBody,
   remainingCommentChars,
 } from "../../../lib/reviews";
+import { useAsyncAction } from "../../../lib/use-async-action";
 import { ReviewSignInPrompt } from "./review-sign-in-prompt";
 
 interface ReviewCommentFormProps {
@@ -62,47 +63,57 @@ export function ReviewCommentForm({
   const router = useRouter();
 
   const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Synchronous guard: comment creation has no idempotency key, so two clicks
-  // landing in the same tick would post the comment twice.
-  const inFlight = useRef(false);
+  // `busy` is read as `saving` here because that is what it means on a form: the
+  // submit label and the textarea's disabled state both speak in those terms.
+  // The synchronous re-entrancy guard behind it matters more than usual —
+  // comment creation has no idempotency key, so two clicks landing in the same
+  // tick would post the comment twice.
+  const { busy: saving, error, run } = useAsyncAction();
 
   const remaining = remainingCommentChars(draft);
   const submittable = !saving && !isBlankCommentBody(draft) && remaining >= 0;
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!submittable || inFlight.current) {
+    if (!submittable) {
       return;
     }
 
-    inFlight.current = true;
-    setSaving(true);
-    setError(null);
-
-    try {
-      // Trimmed exactly as the API stores it, so the posted row and the draft
-      // never disagree about leading/trailing space.
-      await createComment(await getToken(), reviewId, draft.trim());
-      setDraft("");
-      router.refresh();
-    } catch (err) {
-      // The draft deliberately SURVIVES a failure — a validation 400 is the
-      // viewer's to correct, and clearing it would force a retype.
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-
-      if (
-        err instanceof ReviewActionError &&
-        RECONCILABLE_STATUSES.has(err.status)
-      ) {
-        router.refresh();
-      }
-    } finally {
-      inFlight.current = false;
-      setSaving(false);
-    }
+    await run(
+      async () => {
+        // Trimmed exactly as the API stores it, so the posted row and the draft
+        // never disagree about leading/trailing space.
+        await createComment(await getToken(), reviewId, draft.trim());
+        setDraft("");
+        // The mutation already succeeded and the draft was already cleared
+        // above, so a throwing `router.refresh()` here must not escape into
+        // `run`'s outer catch: that would misreport a successful post as a
+        // failed mutation, rendering a false error banner for a comment that
+        // was actually posted, and the emptied draft would block an obvious
+        // retry.
+        try {
+          router.refresh();
+        } catch (refreshFailure) {
+          console.error(
+            "ReviewCommentForm: router.refresh() threw after a successful post",
+            refreshFailure,
+          );
+        }
+      },
+      {
+        // The draft deliberately SURVIVES a failure — a validation 400 is the
+        // viewer's to correct, and clearing it would force a retype — so this
+        // handler only reconciles, never rolls anything back.
+        onError: (caught) => {
+          if (
+            caught instanceof ReviewActionError &&
+            RECONCILABLE_STATUSES.has(caught.status)
+          ) {
+            router.refresh();
+          }
+        },
+      },
+    );
   }
 
   if (!canInteract) {

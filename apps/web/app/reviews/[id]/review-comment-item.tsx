@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { buttonVariants, cn } from "@coda/ui";
@@ -12,6 +12,7 @@ import {
   updateComment,
   type ReviewComment,
 } from "../../../lib/reviews";
+import { useAsyncAction } from "../../../lib/use-async-action";
 
 interface ReviewCommentItemProps {
   /** The parent review — both ids travel on every comment write. */
@@ -74,12 +75,10 @@ export function ReviewCommentItem({
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Synchronous guard: neither edit nor delete is idempotent from the UI's
-  // point of view, and a second delete would answer 404 on an already-gone row.
-  const inFlight = useRef(false);
+  // The synchronous guard inside this hook matters on both actions: neither edit
+  // nor delete is idempotent from the UI's point of view, and a second delete
+  // would answer 404 on an already-gone row.
+  const { busy, error, setError, running, run } = useAsyncAction();
 
   const remaining = remainingCommentChars(draft);
   const submittable = !busy && !isBlankCommentBody(draft) && remaining >= 0;
@@ -99,76 +98,121 @@ export function ReviewCommentItem({
 
   async function onSave(event: FormEvent) {
     event.preventDefault();
-    if (!submittable || inFlight.current) {
+    if (!submittable) {
       return;
     }
 
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
-
-    try {
-      await updateComment(await getToken(), reviewId, comment.id, draft.trim());
-      setEditing(false);
-      // The server page re-reads the comment list, so the row re-renders from
-      // the saved value rather than from this island's draft. The API already
-      // returned the updated comment; it is deliberately NOT re-fetched.
-      router.refresh();
-    } catch (err) {
-      // The editor stays OPEN with the draft intact — a 403/400 is something
-      // the author can see and act on.
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-
-      if (
-        err instanceof ReviewActionError &&
-        RECONCILABLE_STATUSES.has(err.status)
-      ) {
-        router.refresh();
-      }
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
+    await run(
+      async () => {
+        await updateComment(
+          await getToken(),
+          reviewId,
+          comment.id,
+          draft.trim(),
+        );
+        setEditing(false);
+        // The mutation already succeeded at this point, so a throwing
+        // `router.refresh()` here must not escape into `run`'s outer catch:
+        // `setEditing(false)` already committed, so that would misreport a
+        // successful save as a failed mutation and render a false error
+        // banner over an editor that already collapsed.
+        //
+        // The server page re-reads the comment list, so the row re-renders from
+        // the saved value rather than from this island's draft. The API already
+        // returned the updated comment; it is deliberately NOT re-fetched.
+        try {
+          router.refresh();
+        } catch (refreshFailure) {
+          console.error(
+            "ReviewCommentItem: router.refresh() threw after a successful save",
+            refreshFailure,
+          );
+        }
+      },
+      {
+        // The editor stays OPEN with the draft intact — a 403/400 is something
+        // the author can see and act on — so this handler only reconciles.
+        onError: (caught) => {
+          if (
+            caught instanceof ReviewActionError &&
+            RECONCILABLE_STATUSES.has(caught.status)
+          ) {
+            router.refresh();
+          }
+        },
+      },
+    );
   }
 
   async function onDelete() {
-    if (inFlight.current || !window.confirm(DELETE_CONFIRM_MESSAGE)) {
+    // The guard is read HERE too, ahead of `run`'s own, so a click arriving
+    // mid-delete does not raise a second confirmation dialog it would then
+    // silently discard.
+    if (running.current || !window.confirm(DELETE_CONFIRM_MESSAGE)) {
       return;
     }
 
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
+    await run(
+      async () => {
+        await deleteComment(await getToken(), reviewId, comment.id);
+        // The mutation already succeeded at this point, so a throwing
+        // `router.refresh()` here must not escape into `run`'s outer catch:
+        // that would misreport a successful delete as a failed mutation, and
+        // since the thrown value is not a `ReviewActionError`, `onError`'s
+        // `reconcilable` check below would evaluate false and release the
+        // latch on a comment that is actually already gone.
+        try {
+          router.refresh();
+        } catch (refreshFailure) {
+          console.error(
+            "ReviewCommentItem: router.refresh() threw after a successful delete",
+            refreshFailure,
+          );
+        }
+      },
+      {
+        // Deliberately stays LATCHED, mirroring `delete-list-button.tsx`:
+        // `router.refresh()` is fire-and-forget, so the row removal lands
+        // asynchronously. Re-enabling Delete in that window would let a second
+        // delete land on a comment that no longer exists.
+        latchOnSuccess: true,
+        onError: (caught) => {
+          // Decided FIRST, before any side effect that could throw: the latch
+          // decision must not depend on whether `router.refresh()` below
+          // succeeds, or a throwing refresh would fall through to
+          // `useAsyncAction`'s release path and silently defeat the
+          // stay-latched protection this branch exists to provide.
+          const reconcilable =
+            caught instanceof ReviewActionError &&
+            RECONCILABLE_STATUSES.has(caught.status);
 
-    try {
-      await deleteComment(await getToken(), reviewId, comment.id);
-      // Deliberately does NOT reset `busy`/`inFlight` here, mirroring
-      // `delete-list-button.tsx`: `router.refresh()` is fire-and-forget, so the
-      // row removal lands asynchronously. Re-enabling Delete in that window
-      // would let a second delete land on a comment that no longer exists.
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+          if (reconcilable) {
+            // The server has already confirmed this comment (or its parent
+            // review) is gone — that is not a transient failure, so the control
+            // stays latched exactly like the success path. Re-enabling Delete
+            // here would reopen the same ghost-row window: a second click
+            // landing on a row that `router.refresh()` is about to remove.
+            try {
+              router.refresh();
+            } catch (refreshFailure) {
+              // The latch decision above is already final — a throwing
+              // refresh must not retroactively turn a confirmed-terminal
+              // delete into a released control. Logged (not swallowed
+              // silently), or a row stuck "Deleting…" leaves zero trace of
+              // why.
+              console.error(
+                "ReviewCommentItem: router.refresh() threw while reconciling a delete failure",
+                refreshFailure,
+              );
+            }
+          }
 
-      const reconcilable =
-        err instanceof ReviewActionError &&
-        RECONCILABLE_STATUSES.has(err.status);
-
-      if (reconcilable) {
-        // The server has already confirmed this comment (or its parent
-        // review) is gone — that is not a transient failure, so `busy`/
-        // `inFlight` stay set exactly like the success path. Re-enabling
-        // Delete here would reopen the same ghost-row window: a second click
-        // landing on a row that `router.refresh()` is about to remove.
-        router.refresh();
-      } else {
-        // A genuinely transient failure (400/403/500/network) — the
-        // mutation did not persist, so re-enable the control so the author
-        // can retry.
-        inFlight.current = false;
-        setBusy(false);
-      }
-    }
+          // A genuinely transient failure (400/403/500/network) did not persist,
+          // so returning `false` re-enables the control for a retry.
+          return reconcilable;
+        },
+      },
+    );
   }
 
   if (!comment.isOwn) {

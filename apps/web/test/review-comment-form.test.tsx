@@ -213,6 +213,41 @@ describe("ReviewCommentForm", () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
 
+  it("does not surface a refresh failure after a successful post", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    renderSignedIn();
+
+    type("Nicely put.");
+    fireEvent.click(submitButton());
+
+    await waitFor(() =>
+      expect(createComment).toHaveBeenCalledWith(
+        "test-token",
+        REVIEW_ID,
+        "Nicely put.",
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The post already succeeded and the draft was already cleared — a
+    // throwing `router.refresh()` must not be misreported as a failed
+    // mutation via a false error banner, which would also block an obvious
+    // retry on an already-emptied draft.
+    await waitFor(() => expect(textarea().value).toBe(""));
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
   it("ignores a second submit while the first is still in flight", async () => {
     vi.mocked(createComment).mockImplementation(
       () => new Promise(() => {}) as Promise<never>,
@@ -226,6 +261,14 @@ describe("ReviewCommentForm", () => {
 
     // Two clicks must not post the same comment twice — there is no
     // idempotency key on comment creation.
+    //
+    // What actually stops the second click HERE is the `disabled` attribute:
+    // React flushes a discrete event's state updates synchronously, so submit is
+    // already disabled by the time the second `fireEvent.click` is dispatched,
+    // and React does not dispatch clicks on disabled controls. The island's
+    // synchronous ref guard is therefore NOT what this test observes — it is
+    // unreachable from jsdom, and is pinned directly on the hook that owns it in
+    // `use-async-action.test.tsx`.
     await waitFor(() => expect(createComment).toHaveBeenCalledTimes(1));
   });
 });
