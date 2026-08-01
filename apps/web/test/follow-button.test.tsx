@@ -165,4 +165,58 @@ describe("FollowButton", () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button").textContent).toBe("Follow");
   });
+
+  it("does not surface a refresh failure or roll back after a successful follow", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    render(<FollowButton username={USERNAME} initialFollowing={false} />);
+
+    fireEvent.click(screen.getByRole("button"));
+
+    await waitFor(() =>
+      expect(followUser).toHaveBeenCalledWith("test-token", USERNAME),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The follow already succeeded — a throwing `router.refresh()` must not
+    // be misreported as a failed mutation, which would otherwise
+    // unconditionally revert the optimistic toggle via `onError`.
+    expect(screen.getByRole("button").textContent).toBe("Following");
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
+  it("ignores a second click while the first is still in flight", async () => {
+    vi.mocked(followUser).mockImplementation(
+      () => new Promise(() => {}) as Promise<never>,
+    );
+    render(<FollowButton username={USERNAME} initialFollowing={false} />);
+
+    const button = screen.getByRole("button");
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    // Without SOME guard the three clicks would send follow/unfollow/follow and
+    // the final server state would depend on which response landed last.
+    //
+    // What actually stops clicks 2 and 3 HERE is the `disabled` attribute:
+    // React flushes a discrete event's state updates synchronously, so the
+    // button is already disabled by the time the next `fireEvent.click` is
+    // dispatched, and React does not dispatch clicks on disabled controls. The
+    // island's synchronous ref guard is therefore NOT what this test observes —
+    // it is unreachable from jsdom, and is pinned directly on the hook that owns
+    // it in `use-async-action.test.tsx`.
+    await waitFor(() => expect(followUser).toHaveBeenCalledTimes(1));
+    expect(unfollowUser).not.toHaveBeenCalled();
+  });
 });

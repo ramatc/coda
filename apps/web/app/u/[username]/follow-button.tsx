@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { buttonVariants, cn } from "@coda/ui";
 import { followUser, unfollowUser } from "../../../lib/social";
+import { useAsyncAction } from "../../../lib/use-async-action";
 
 interface FollowButtonProps {
   /** The profile being followed/unfollowed (path param for the API call). */
@@ -30,53 +31,79 @@ interface FollowButtonProps {
  * optimistic update.
  * On failure it ROLLS BACK to the pre-click state and surfaces an inline error,
  * so a rejected request never leaves a phantom follow in the UI.
+ *
+ * Shares `useAsyncAction` with the four other write islands. That swap brought
+ * one behaviour change here: the in-flight test is now a REF rather than the
+ * `busy` state value, which both removes this file's `exhaustive-deps`
+ * suppression and closes the same-tick re-entrancy window the like buttons
+ * already guarded against.
  */
-export function FollowButton({ username, initialFollowing }: FollowButtonProps) {
+export function FollowButton({
+  username,
+  initialFollowing,
+}: FollowButtonProps) {
   const { getToken } = useAuth();
   const router = useRouter();
   const [following, setFollowing] = useState(initialFollowing);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, running, run } = useAsyncAction();
 
   // Re-sync from fresh server props after this component's own
-  // `router.refresh()` lands. Skipped while `busy` is true so it doesn't
-  // stomp on an in-flight optimistic toggle. Deliberately
-  // keyed only on `initialFollowing` — reacting to `busy` too would re-run
-  // this effect the moment a toggle finishes, racing the rollback/optimistic
-  // state in `toggle()`.
+  // `router.refresh()` lands. Skipped while a request is in flight so it doesn't
+  // stomp on an in-flight optimistic toggle. The guard reads a REF, so listing
+  // it costs nothing and the dependency list is honest: this runs exactly when
+  // the server prop changes, never the moment a toggle finishes.
   useEffect(() => {
-    if (!busy) {
+    if (!running.current) {
       setFollowing(initialFollowing);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialFollowing]);
+  }, [initialFollowing, running]);
 
   async function toggle() {
+    // Checked HERE as well as inside `run`, because the optimistic flip below
+    // happens before the request starts: letting a rejected second click flip
+    // local state would leave a change no request will ever settle.
+    if (running.current) {
+      return;
+    }
+
     const previous = following;
     const next = !previous;
 
     // Optimistic flip: reflect the intended state immediately.
     setFollowing(next);
-    setBusy(true);
-    setError(null);
 
-    try {
-      const token = await getToken();
-      if (next) {
-        await followUser(token, username);
-      } else {
-        await unfollowUser(token, username);
-      }
-      // Server re-fetches the counts so the follower total updates in the same
-      // view without a full reload.
-      router.refresh();
-    } catch (err) {
-      // Roll back the optimistic flip — the mutation did not persist.
-      setFollowing(previous);
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setBusy(false);
-    }
+    await run(
+      async () => {
+        const token = await getToken();
+        if (next) {
+          await followUser(token, username);
+        } else {
+          await unfollowUser(token, username);
+        }
+        // The mutation already succeeded at this point, so a throwing
+        // `router.refresh()` here must not escape into `run`'s outer catch:
+        // `onError` below would unconditionally revert the optimistic toggle,
+        // silently reverting a successful follow/unfollow even though the
+        // server recorded it correctly.
+        //
+        // Server re-fetches the counts so the follower total updates in the same
+        // view without a full reload.
+        try {
+          router.refresh();
+        } catch (refreshFailure) {
+          console.error(
+            "FollowButton: router.refresh() threw after a successful follow/unfollow",
+            refreshFailure,
+          );
+        }
+      },
+      {
+        // Roll back the optimistic flip — the mutation did not persist.
+        onError: () => {
+          setFollowing(previous);
+        },
+      },
+    );
   }
 
   return (
@@ -85,9 +112,7 @@ export function FollowButton({ username, initialFollowing }: FollowButtonProps) 
         type="button"
         onClick={() => void toggle()}
         disabled={busy}
-        aria-label={
-          following ? `Unfollow ${username}` : `Follow ${username}`
-        }
+        aria-label={following ? `Unfollow ${username}` : `Follow ${username}`}
         className={cn(
           buttonVariants({ variant: following ? "outline" : "default" }),
           "w-fit",

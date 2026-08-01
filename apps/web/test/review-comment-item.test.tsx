@@ -233,6 +233,42 @@ describe("ReviewCommentItem", () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
 
+  it("does not surface a refresh failure after a successful save", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    renderOwn();
+    openEditor();
+
+    fireEvent.change(editor(), { target: { value: "Sharper on rewind." } });
+    fireEvent.click(saveButton());
+
+    await waitFor(() =>
+      expect(updateComment).toHaveBeenCalledWith(
+        "test-token",
+        REVIEW_ID,
+        COMMENT_ID,
+        "Sharper on rewind.",
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The save itself already succeeded — `setEditing(false)` already
+    // committed — so a throwing `router.refresh()` must not be misreported as
+    // a failed mutation via a false error banner.
+    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
   it("deletes after confirmation and re-reads the page", async () => {
     const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderOwn();
@@ -315,6 +351,81 @@ describe("ReviewCommentItem", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(false);
+  });
+
+  it("stays latched when router.refresh throws during a reconcilable delete", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    vi.mocked(deleteComment).mockRejectedValue(
+      new ReviewActionError("Comment not found.", 404),
+    );
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    renderOwn();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete comment" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe("Comment not found."),
+    );
+
+    // The server has already confirmed this comment is gone. A throwing
+    // `router.refresh()` must not retroactively turn that into a released
+    // control — the ghost-row window it protects against would reopen.
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete comment",
+    }) as HTMLButtonElement;
+    expect(deleteButton.disabled).toBe(true);
+
+    // The swallowed failure must leave a trace — otherwise a row stuck
+    // "Deleting…" forever is undiagnosable.
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
+  it("does not surface a refresh failure after a successful delete", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    renderOwn();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete comment" }));
+
+    await waitFor(() =>
+      expect(deleteComment).toHaveBeenCalledWith(
+        "test-token",
+        REVIEW_ID,
+        COMMENT_ID,
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The delete itself already succeeded — a throwing `router.refresh()`
+    // must not be misreported as a failed mutation.
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // `latchOnSuccess` already governs the correct end state on a clean
+    // success — protecting the refresh call must not change that.
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete comment",
+    }) as HTMLButtonElement;
+    expect(deleteButton.disabled).toBe(true);
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
   });
 
   it("keeps Delete disabled after a successful delete instead of re-enabling it", async () => {

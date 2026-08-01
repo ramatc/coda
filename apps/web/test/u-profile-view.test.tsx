@@ -16,9 +16,19 @@ import type { WantToListenEntry } from "../lib/want-to-listen";
 // The composition tests below mount the REAL profile sections, one of which is
 // a client island. These three mocks are what it needs to render outside a Next
 // request context — the view itself uses none of them.
+// Every prop other than `href` is forwarded rather than dropped, so
+// `data-testid` and friends survive into the DOM — without that, a
+// `getByTestId` on a link silently fails and a `not.toContain(testid)`
+// assertion passes for the wrong reason.
 vi.mock("next/link", () => ({
-  default: ({ href, children }: { href: string; children: ReactNode }) => (
-    <a href={href}>{children}</a>
+  default: ({
+    href,
+    children,
+    ...rest
+  }: { href: string; children: ReactNode } & Record<string, unknown>) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
   ),
 }));
 

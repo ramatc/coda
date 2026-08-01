@@ -276,6 +276,37 @@ describe("ListLikeButton", () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
 
+  it("does not surface a refresh failure or roll back after a successful like", async () => {
+    const consoleErrorMock = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    vi.mocked(likeList).mockResolvedValue({ likeCount: 9, hasLiked: true });
+    const refreshFailure = new Error("refresh blew up");
+    refreshMock.mockImplementationOnce(() => {
+      throw refreshFailure;
+    });
+    renderButton({ likeCount: 3, hasLiked: false });
+
+    fireEvent.click(screen.getByRole("button"));
+
+    await waitFor(() =>
+      expect(likeList).toHaveBeenCalledWith("test-token", LIST_ID),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // The like already succeeded and the server's authoritative count was
+    // already committed — a throwing `router.refresh()` must not be
+    // misreported as a failed mutation, which would otherwise unconditionally
+    // roll back to the PRE-click optimistic values via `onError`.
+    await waitFor(() => expect(likeCount()).toBe("9 likes"));
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    expect(consoleErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("router.refresh()"),
+      refreshFailure,
+    );
+  });
+
   it("ignores a second click while the first is still in flight", async () => {
     vi.mocked(likeList).mockImplementation(
       () => new Promise(() => {}) as Promise<never>,
@@ -287,8 +318,16 @@ describe("ListLikeButton", () => {
     fireEvent.click(button);
     fireEvent.click(button);
 
-    // Without this guard the three clicks would send like/unlike/like and the
+    // Without SOME guard the three clicks would send like/unlike/like and the
     // final server state would depend on which response landed last.
+    //
+    // What actually stops clicks 2 and 3 HERE is the `disabled` attribute:
+    // React flushes a discrete event's state updates synchronously, so the
+    // button is already disabled by the time the next `fireEvent.click` is
+    // dispatched, and React does not dispatch clicks on disabled controls. The
+    // island's synchronous ref guard is therefore NOT what this test observes —
+    // it is unreachable from jsdom, and is pinned directly on the hook that owns
+    // it in `use-async-action.test.tsx`.
     await waitFor(() => expect(likeList).toHaveBeenCalledTimes(1));
     expect(unlikeList).not.toHaveBeenCalled();
   });

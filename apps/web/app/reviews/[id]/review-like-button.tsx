@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { buttonVariants, cn } from "@coda/ui";
@@ -10,6 +10,7 @@ import {
   likeReview,
   unlikeReview,
 } from "../../../lib/reviews";
+import { useAsyncAction } from "../../../lib/use-async-action";
 import { ReviewSignInPrompt } from "./review-sign-in-prompt";
 
 interface ReviewLikeButtonProps {
@@ -67,33 +68,28 @@ export function ReviewLikeButton({
 
   const [liked, setLiked] = useState(initialHasLiked);
   const [count, setCount] = useState(initialLikeCount);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Synchronous re-entrancy guard. `busy` drives the DISABLED attribute, but a
-  // state update cannot be observed by a second handler firing in the same tick
-  // — and three fast clicks sending like/unlike/like would leave the final
-  // server state decided by whichever response happened to land last.
-  const inFlight = useRef(false);
+  const { busy, error, running, run } = useAsyncAction();
 
   // Re-sync from fresh server props after this island's own `router.refresh()`
   // lands, skipped while a request is in flight so it never stomps a pending
   // optimistic update.
   //
   // The in-flight test reads a REF, not state, which is why this effect needs no
-  // `eslint-disable` for `exhaustive-deps` — unlike `follow-button.tsx`, which
-  // guards on the `busy` state value and therefore has to suppress the rule to
-  // keep it out of the dependency array. Refs are stable, so the dependency list
-  // is already honest: this runs exactly when the server props change.
+  // `eslint-disable` for `exhaustive-deps`: refs are stable, so listing `running`
+  // costs nothing and the dependency list stays honest — this runs exactly when
+  // the server props change.
   useEffect(() => {
-    if (!inFlight.current) {
+    if (!running.current) {
       setLiked(initialHasLiked);
       setCount(initialLikeCount);
     }
-  }, [initialHasLiked, initialLikeCount]);
+  }, [initialHasLiked, initialLikeCount, running]);
 
   async function toggle() {
-    if (inFlight.current) {
+    // Checked HERE as well as inside `run`, because the optimistic flip below
+    // happens before the request starts: letting a rejected second click flip
+    // local state would leave a change no request will ever settle.
+    if (running.current) {
       return;
     }
 
@@ -104,36 +100,47 @@ export function ReviewLikeButton({
     // Optimistic flip: reflect the intended state immediately.
     setLiked(next);
     setCount(previousCount + (next ? 1 : -1));
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
 
-    try {
-      const token = await getToken();
-      const result = next
-        ? await likeReview(token, reviewId)
-        : await unlikeReview(token, reviewId);
+    await run(
+      async () => {
+        const token = await getToken();
+        const result = next
+          ? await likeReview(token, reviewId)
+          : await unlikeReview(token, reviewId);
 
-      // The server's count wins over the optimistic one.
-      setLiked(result.hasLiked);
-      setCount(result.likeCount);
-      router.refresh();
-    } catch (err) {
-      // Roll back — the mutation did not persist.
-      setLiked(previousLiked);
-      setCount(previousCount);
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+        // The server's count wins over the optimistic one.
+        setLiked(result.hasLiked);
+        setCount(result.likeCount);
+        // The mutation already succeeded and the server's authoritative
+        // result was already committed above, so a throwing `router.refresh()`
+        // here must not escape into `run`'s outer catch: `onError` below would
+        // unconditionally roll back to the PRE-click optimistic values,
+        // reverting a successful like/unlike in the UI even though the server
+        // recorded it correctly.
+        try {
+          router.refresh();
+        } catch (refreshFailure) {
+          console.error(
+            "ReviewLikeButton: router.refresh() threw after a successful like/unlike",
+            refreshFailure,
+          );
+        }
+      },
+      {
+        onError: (caught) => {
+          // Roll back — the mutation did not persist.
+          setLiked(previousLiked);
+          setCount(previousCount);
 
-      if (
-        err instanceof ReviewActionError &&
-        RECONCILABLE_STATUSES.has(err.status)
-      ) {
-        router.refresh();
-      }
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
+          if (
+            caught instanceof ReviewActionError &&
+            RECONCILABLE_STATUSES.has(caught.status)
+          ) {
+            router.refresh();
+          }
+        },
+      },
+    );
   }
 
   if (!canInteract) {

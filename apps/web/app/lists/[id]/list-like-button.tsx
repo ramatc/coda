@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { buttonVariants, cn } from "@coda/ui";
 import { ListActionError, likeList, unlikeList } from "../../../lib/lists";
+// `likeCountLabel` was briefly duplicated here, on the reasoning that only one
+// surface on this page labelled likes so the copy never crossed a module
+// boundary — with the caveat that a THIRD surface should collapse it back to one
+// source. The feed and activity cards became exactly that, importing this same
+// function from `lib/reviews.ts`, so the label now has one home for all four.
+import { likeCountLabel } from "../../../lib/reviews";
+import { useAsyncAction } from "../../../lib/use-async-action";
 
 interface ListLikeButtonProps {
   /** The list being liked (path param for the API call). */
@@ -34,22 +41,6 @@ interface ListLikeButtonProps {
  * a refresh would just be a second failing round trip.
  */
 const RECONCILABLE_STATUSES: ReadonlySet<number> = new Set([409, 404]);
-
-/**
- * `N likes`, singularized for a single like.
- *
- * Deliberately LOCAL rather than imported from `lib/reviews.ts` (which owns the
- * review-side twin) or added to `lib/lists.ts`: on this page only the island
- * renders a like count, so there is no server/client boundary for the copy to
- * straddle — which is exactly the reason the review twin lives in a lib module
- * and `albumCountLabel` does too. Importing across fetch modules for a string
- * formatter would be the lists UI's only dependency on the reviews module. If a
- * THIRD surface ever labels likes, move all of them to a shared module rather
- * than growing a second cross-import.
- */
-function likeCountLabel(count: number): string {
-  return count === 1 ? "1 like" : `${count} likes`;
-}
 
 /**
  * Like/unlike island for a list (client). The direct sibling of
@@ -84,14 +75,7 @@ export function ListLikeButton({
 
   const [liked, setLiked] = useState(initialHasLiked);
   const [count, setCount] = useState(initialLikeCount);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Synchronous re-entrancy guard. `busy` drives the DISABLED attribute, but a
-  // state update cannot be observed by a second handler firing in the same tick
-  // — and three fast clicks sending like/unlike/like would leave the final
-  // server state decided by whichever response happened to land last.
-  const inFlight = useRef(false);
+  const { busy, error, setError, running, run } = useAsyncAction();
 
   // Re-sync from fresh server props after this island's own `router.refresh()`
   // lands, skipped while a request is in flight so it never stomps a pending
@@ -100,23 +84,28 @@ export function ListLikeButton({
   //
   // Clearing `error` here too (Judgment Day Round 1 fix) means ANY landed
   // refresh clears whatever error is currently showing, not just the one that
-  // triggered it. ACCEPTED RISK (Judgment Day Round 2, judges split
-  // theoretical/real, user accepted without a fix): two rapid clicks before
-  // the first request's `router.refresh()` resolves could let its late-landing
-  // props clear a second, still-relevant error. Requires a fast double
-  // re-click plus specific network timing; not fixed with a generation guard
-  // because it was judged low-priority relative to the stale-banner bug it
-  // replaces.
+  // triggered it. This is the ONE place this island deliberately diverges from
+  // its review-side twin, and the extraction of `useAsyncAction` preserves it
+  // rather than flattening the two back together. ACCEPTED RISK (Judgment Day
+  // Round 2, judges split theoretical/real, user accepted without a fix): two
+  // rapid clicks before the first request's `router.refresh()` resolves could
+  // let its late-landing props clear a second, still-relevant error. Requires a
+  // fast double re-click plus specific network timing; not fixed with a
+  // generation guard because it was judged low-priority relative to the
+  // stale-banner bug it replaces.
   useEffect(() => {
-    if (!inFlight.current) {
+    if (!running.current) {
       setLiked(initialHasLiked);
       setCount(initialLikeCount);
       setError(null);
     }
-  }, [initialHasLiked, initialLikeCount]);
+  }, [initialHasLiked, initialLikeCount, running, setError]);
 
   async function toggle() {
-    if (inFlight.current) {
+    // Checked HERE as well as inside `run`, because the optimistic flip below
+    // happens before the request starts: letting a rejected second click flip
+    // local state would leave a change no request will ever settle.
+    if (running.current) {
       return;
     }
 
@@ -127,36 +116,47 @@ export function ListLikeButton({
     // Optimistic flip: reflect the intended state immediately.
     setLiked(next);
     setCount(previousCount + (next ? 1 : -1));
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
 
-    try {
-      const token = await getToken();
-      const result = next
-        ? await likeList(token, listId)
-        : await unlikeList(token, listId);
+    await run(
+      async () => {
+        const token = await getToken();
+        const result = next
+          ? await likeList(token, listId)
+          : await unlikeList(token, listId);
 
-      // The server's count wins over the optimistic one.
-      setLiked(result.hasLiked);
-      setCount(result.likeCount);
-      router.refresh();
-    } catch (err) {
-      // Roll back — the mutation did not persist.
-      setLiked(previousLiked);
-      setCount(previousCount);
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+        // The server's count wins over the optimistic one.
+        setLiked(result.hasLiked);
+        setCount(result.likeCount);
+        // The mutation already succeeded and the server's authoritative
+        // result was already committed above, so a throwing `router.refresh()`
+        // here must not escape into `run`'s outer catch: `onError` below would
+        // unconditionally roll back to the PRE-click optimistic values,
+        // reverting a successful like/unlike in the UI even though the server
+        // recorded it correctly.
+        try {
+          router.refresh();
+        } catch (refreshFailure) {
+          console.error(
+            "ListLikeButton: router.refresh() threw after a successful like/unlike",
+            refreshFailure,
+          );
+        }
+      },
+      {
+        onError: (caught) => {
+          // Roll back — the mutation did not persist.
+          setLiked(previousLiked);
+          setCount(previousCount);
 
-      if (
-        err instanceof ListActionError &&
-        RECONCILABLE_STATUSES.has(err.status)
-      ) {
-        router.refresh();
-      }
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
+          if (
+            caught instanceof ListActionError &&
+            RECONCILABLE_STATUSES.has(caught.status)
+          ) {
+            router.refresh();
+          }
+        },
+      },
+    );
   }
 
   return (
