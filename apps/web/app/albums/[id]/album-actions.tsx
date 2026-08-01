@@ -75,9 +75,10 @@ export function AlbumActions({
   // so explicitly instead of snapping the picker back in silence.
   const [addedTo, setAddedTo] = useState<string | null>(null);
   const [reviewDraft, setReviewDraft] = useState(viewer.review ?? "");
-  // Set right before `router.refresh()` (review save/update only, see `run`
-  // below) and cleared only once the refreshed server props actually land —
-  // detected by the effect below keyed on the `viewer` object identity, since
+  // Set right before `router.refresh()` — armed by both the review
+  // save/update and the rating-delete cascade (see `run` below) — and
+  // cleared only once the refreshed server props actually land — detected by
+  // the effect below keyed on the `viewer` object identity, since
   // `router.refresh()` doesn't expose a completion callback. Without this,
   // the textarea re-enables immediately when the mutation promise resolves —
   // before the refetch lands — so keystrokes typed in that gap get silently
@@ -106,12 +107,16 @@ export function AlbumActions({
 
   /**
    * Runs a mutation, then triggers `router.refresh()`. `affectsReviewDraft`
-   * is set only by the review save/update action: it keeps the review
-   * textarea disabled (via `pendingRefresh`) until the refreshed `viewer.review`
-   * prop actually lands, closing the gap where the user could resume typing
-   * before the refetch completes and have those keystrokes silently
-   * overwritten once the (now-stale) server value arrives. The other actions
-   * (listen, rating) have no locally-editable draft at risk, so they skip it.
+   * is set by the actions whose result changes the review: the review
+   * save/update, and the rating DELETE (which cascade-deletes the review
+   * server-side, see Decision #12). It keeps the review textarea disabled (via
+   * `pendingRefresh`) until the refreshed `viewer` props actually land, closing
+   * the gap where the review controls would re-enable over stale state — the
+   * user could resume typing and have those keystrokes silently overwritten
+   * once the (now-stale) server value arrives, or save a review against a
+   * rating the server has already removed (a 400). The other actions (listen,
+   * rate, want-to-listen, add-to-list) leave the review untouched, so they
+   * skip it.
    *
    * Returns whether the mutation succeeded, so a caller that owns extra
    * feedback (the list picker's confirmation) can react without duplicating
@@ -248,12 +253,26 @@ export function AlbumActions({
           <span className="opacity-70">Your rating</span>
           <select
             aria-label="Your rating"
-            disabled={busy}
+            // Also gated on `pendingRefresh`, not just `busy`: clearing the
+            // rating fires `deleteRating`, which cascades to delete the
+            // review server-side (Decision #12) and arms the same gate the
+            // review controls use. Left on `busy` alone, this select would
+            // re-enable as soon as a DIFFERENT in-flight action (e.g. a
+            // review save) returns its mutation promise but before its own
+            // `router.refresh()` lands — letting the user clear the rating
+            // mid-flight and race two action+refresh cycles over the one
+            // shared `pendingRefresh` boolean (judgment-day round 4).
+            disabled={reviewBusy}
             value={viewer.score ?? ""}
             onChange={(e) => {
               const value = e.target.value;
               if (value === "") {
-                void run((t) => deleteRating(t, albumId));
+                // Arms the review-draft gate too: deleting the rating
+                // cascade-deletes the review server-side (Decision #12), so
+                // the review controls must stay disabled until the refreshed
+                // props land rather than re-enable over a stale rating and a
+                // review the server has already removed.
+                void run((t) => deleteRating(t, albumId), true);
               } else {
                 void run((t) => rateAlbum(t, albumId, Number(value)));
               }

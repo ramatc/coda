@@ -427,6 +427,85 @@ describe("AlbumActions", () => {
     );
   });
 
+  it("keeps the rating select disabled while a review save's refresh is still in flight (cross-action race — rating over review, judgment-day round 4)", async () => {
+    renderActions({
+      listened: false,
+      listenId: null,
+      score: 8,
+      review: "Original review.",
+    });
+
+    // Save a review. Its own `router.refresh()` succeeds, so `pendingRefresh`
+    // stays armed while the (fire-and-forget) refetch is still in flight.
+    const review = screen.getByLabelText("Your review") as HTMLTextAreaElement;
+    fireEvent.change(review, { target: { value: "Updated review." } });
+    fireEvent.click(screen.getByText("Update review"));
+
+    await waitFor(() =>
+      expect(writeReview).toHaveBeenCalledWith(
+        "test-token",
+        ALBUM_ID,
+        "Updated review.",
+      ),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // `busy` is already back to "idle" here — this only holds if the rating
+    // select is also gated on `pendingRefresh`. Left ungated, the user could
+    // clear the rating in this window, firing `deleteRating` (which cascades
+    // to delete the review server-side — Decision #12) while the review
+    // save's own refresh is still in flight: two independent action+refresh
+    // cycles racing over the single shared `pendingRefresh` gate.
+    const rating = screen.getByLabelText("Your rating") as HTMLSelectElement;
+    expect(rating.disabled).toBe(true);
+  });
+
+  it("keeps the review controls disabled after clearing the rating until the refreshed viewer props land (the delete cascades to the review — Decision #12)", async () => {
+    const { rerender } = renderActions({
+      listened: false,
+      listenId: null,
+      score: 8,
+      review: "Original review.",
+    });
+
+    const review = screen.getByLabelText("Your review") as HTMLTextAreaElement;
+    const save = screen.getByText("Update review") as HTMLButtonElement;
+    expect(review.disabled).toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Your rating"), {
+      target: { value: "" },
+    });
+
+    await waitFor(() =>
+      expect(deleteRating).toHaveBeenCalledWith("test-token", ALBUM_ID),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+
+    // Deleting the rating cascade-deletes the review server-side, but the
+    // refetch is fire-and-forget: `viewer.score`/`viewer.review` here are still
+    // the STALE pre-delete values. Re-enabling the review controls in this gap
+    // offers the user an "Update review" over a rating and a review that no
+    // longer exist — and saving in that window hits the API's "review requires
+    // a rating" error. `busy` is already back to "idle", so this only holds if
+    // this action arms the same `pendingRefresh` gate the review save does.
+    expect(review.disabled).toBe(true);
+    expect(save.disabled).toBe(true);
+
+    // Once the refreshed props land, the (now correct) absence of a rating
+    // takes over the gating and the stale draft is cleared. The gate's release
+    // path is the shared one already covered by the review-save tests above.
+    rerender(
+      <AlbumActions
+        albumId={ALBUM_ID}
+        viewer={viewerState()}
+        ownLists={OWN_LISTS}
+      />,
+    );
+
+    expect(review.value).toBe("");
+    expect(review.disabled).toBe(true);
+  });
+
   it("re-syncs the review draft when a cascade-delete clears the viewer's review (Finding 1 regression)", () => {
     const { rerender } = renderActions({
       listened: false,
