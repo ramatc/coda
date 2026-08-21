@@ -102,15 +102,16 @@ const NOTIFICATION_SELECT = {
 } as const;
 
 /**
- * In-app notifications (Fase 2 slice 4): backs the read surface,
- * `GET /notifications` and `GET /notifications/unread-count`. Both return ONLY
- * the authenticated caller's own rows — a notification is private to its
- * recipient, so there is no public or cross-user view of this data.
+ * In-app notifications (Fase 2 slice 4): backs `GET /notifications`,
+ * `GET /notifications/unread-count` and `POST /notifications/read-all`. All
+ * three touch ONLY the authenticated caller's own rows — a notification is
+ * private to its recipient, so there is no public or cross-user view of this
+ * data, and every query scopes on `recipientUserId`.
  *
  * Runs behind the global `ClerkGuard`, so the caller is always authenticated,
  * but the caller's LOCAL `User` row may not exist yet (the Clerk webhook sync is
- * eventually consistent). Both reads degrade to an empty page / a zero count
- * rather than a 404, matching `getFeed` and `getOwnActivity`: an unsynced
+ * eventually consistent). All three methods degrade to an empty page / a zero
+ * count rather than a 404, matching `getFeed` and `getOwnActivity`: an unsynced
  * account has no notifications to show anyway, and a 404 on a private resource
  * would be a worse answer than an honest empty one (design Decision 14).
  *
@@ -183,6 +184,39 @@ export class NotificationsService {
       return { unreadCount: 0 };
     }
     return { unreadCount: await this.countUnread(recipientUserId) };
+  }
+
+  /**
+   * Marks every one of the caller's currently-unread notifications as read, and
+   * reports the resulting (always zero) badge. Fired when the web dropdown
+   * opens: the v1 dropdown shows the whole recent set at once, so "the user
+   * opened it" IS "the user saw them" (design Decision 13). Per-item read is
+   * deliberately out of v1 scope.
+   *
+   * Scoping the update to `readAt: null` is load-bearing twice over: it PRESERVES
+   * the original timestamp of rows read earlier (an unscoped `updateMany` would
+   * restamp them to "now" on every open, destroying when the user actually saw
+   * them), and it makes a replay a genuine no-op rather than a rewrite.
+   *
+   * The posture is tolerant (design Decision 14) — matching nothing is a success,
+   * not a 404, and an unsynced caller gets the same cleared badge as everyone
+   * else. Unlike the social/tracking write paths there is no `requireCallerId`
+   * here on purpose: a notification is PRIVATE to its recipient, so a 403/404
+   * would confirm the existence of rows the caller may not observe, and an
+   * account with no local row owns no notifications anyway.
+   */
+  async markAllRead(clerkUserId: string): Promise<UnreadCountResult> {
+    const recipientUserId = await this.resolveUserId(clerkUserId);
+    if (recipientUserId !== null) {
+      await this.prisma.client.notification.updateMany({
+        where: { recipientUserId, readAt: null },
+        data: { readAt: new Date() },
+      });
+    }
+    // Zero by construction: every row that could have counted was just stamped.
+    // Returning the same `{ unreadCount }` shape as the polled endpoint lets the
+    // dropdown reconcile its badge from this response with no extra round-trip.
+    return { unreadCount: 0 };
   }
 
   /** Unread rows for one recipient, covered by the `[recipientUserId, readAt]` index. */

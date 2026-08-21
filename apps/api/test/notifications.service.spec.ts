@@ -125,6 +125,23 @@ function createFakePrisma() {
           (n) => n.readAt === args.where.readAt,
         ).length;
       },
+      async updateMany(args: {
+        where: { recipientUserId: string; readAt: null };
+        data: { readAt: Date };
+      }): Promise<{ count: number }> {
+        // Postgres would apply the `readAt: null` predicate as part of the
+        // UPDATE's WHERE, so an already-read row is never even matched — which
+        // is exactly what preserves its original timestamp. The fake filters
+        // the same way rather than blanket-assigning, or the "preserves an
+        // earlier readAt" test below would pass for the wrong reason.
+        const matched = ownedBy(args.where.recipientUserId).filter(
+          (n) => n.readAt === args.where.readAt,
+        );
+        for (const row of matched) {
+          row.readAt = args.data.readAt;
+        }
+        return { count: matched.length };
+      },
     },
   };
 
@@ -434,5 +451,140 @@ describe("NotificationsService (read surface)", () => {
     });
 
     expect(await service.getUnreadCount(CLERK_ID)).toEqual({ unreadCount: 0 });
+  });
+});
+
+/**
+ * The slice's only write on this surface (design Decision 13): `read-all`, fired
+ * when the web dropdown OPENS. Two properties carry the whole design here and
+ * each has its own test below:
+ *
+ * 1. The update is SCOPED to `readAt: null`, so a row read three days ago keeps
+ *    its original timestamp instead of being restamped to "now" on every open.
+ *    That scoping is also what makes a second call a genuine no-op.
+ * 2. The update is SCOPED to the caller's `recipientUserId`. A notification is
+ *    private to its recipient, so the posture is tolerant-200 and never 403/404
+ *    (design Decision 14): nothing to update is an honest success, and an
+ *    unsynced caller gets the same cleared badge rather than an error that would
+ *    leak whether another account's rows exist.
+ */
+describe("NotificationsService (mark-as-read)", () => {
+  let fake: ReturnType<typeof createFakePrisma>;
+  let service: NotificationsService;
+
+  beforeEach(() => {
+    fake = createFakePrisma();
+    service = new NotificationsService(fake.prisma);
+    fake.users.set(CLERK_ID, RECIPIENT_ID);
+  });
+
+  it("stamps every unread notification as read and reports a cleared badge", async () => {
+    push(fake, {
+      id: "11111111-1111-4111-8111-11111111aaa1",
+      type: NotificationType.FOLLOW,
+      createdAt: new Date("2026-08-01T10:00:00.000Z"),
+    });
+    push(fake, {
+      id: "11111111-1111-4111-8111-11111111aaa2",
+      type: NotificationType.COMMENT,
+      createdAt: new Date("2026-08-02T10:00:00.000Z"),
+      reviewComment: { reviewId: REVIEW_ID, body: "Great take." },
+    });
+    expect(await service.getUnreadCount(CLERK_ID)).toEqual({ unreadCount: 2 });
+
+    const result = await service.markAllRead(CLERK_ID);
+
+    expect(result).toEqual({ unreadCount: 0 });
+    // The badge is not merely asserted from the return value: re-counting proves
+    // the rows themselves were written, not that the method returned a literal.
+    expect(await service.getUnreadCount(CLERK_ID)).toEqual({ unreadCount: 0 });
+    for (const row of fake.notifications) {
+      expect(row.readAt).toBeInstanceOf(Date);
+    }
+  });
+
+  it("preserves the original readAt of a row that was already read", async () => {
+    const ALREADY_READ_AT = new Date("2026-08-03T09:00:00.000Z");
+    push(fake, {
+      id: "22222222-2222-4222-8222-22222222bbb1",
+      type: NotificationType.FOLLOW,
+      createdAt: new Date("2026-08-01T10:00:00.000Z"),
+      readAt: ALREADY_READ_AT,
+    });
+    push(fake, {
+      id: "22222222-2222-4222-8222-22222222bbb2",
+      type: NotificationType.FOLLOW,
+      createdAt: new Date("2026-08-02T10:00:00.000Z"),
+    });
+
+    await service.markAllRead(CLERK_ID);
+
+    const [alreadyRead, wasUnread] = fake.notifications;
+    // Scoping the update to `readAt: null` is what keeps this timestamp intact.
+    // An unscoped `updateMany` would restamp it to "now" every time the dropdown
+    // opens, silently destroying when the user actually saw it.
+    expect(alreadyRead.readAt).toBe(ALREADY_READ_AT);
+    expect(wasUnread.readAt).not.toBeNull();
+    expect(wasUnread.readAt).not.toBe(ALREADY_READ_AT);
+  });
+
+  it("is an idempotent no-op on a second call, leaving the first timestamps intact", async () => {
+    push(fake, {
+      id: "33333333-3333-4333-8333-33333333ccc1",
+      type: NotificationType.FOLLOW,
+      createdAt: new Date("2026-08-01T10:00:00.000Z"),
+    });
+
+    await service.markAllRead(CLERK_ID);
+    const firstReadAt = fake.notifications[0].readAt;
+
+    const second = await service.markAllRead(CLERK_ID);
+
+    expect(second).toEqual({ unreadCount: 0 });
+    // Nothing matched the second time, so the row is byte-identical: replaying
+    // the request (a double-open of the dropdown) cannot rewrite history.
+    expect(fake.notifications[0].readAt).toBe(firstReadAt);
+  });
+
+  it("never marks another user's notifications read", async () => {
+    push(fake, {
+      id: "44444444-4444-4444-8444-44444444ddd1",
+      type: NotificationType.FOLLOW,
+      createdAt: new Date("2026-08-01T10:00:00.000Z"),
+    });
+    push(fake, {
+      id: "44444444-4444-4444-8444-44444444ddd2",
+      recipientUserId: OTHER_USER_ID,
+      type: NotificationType.FOLLOW,
+      createdAt: new Date("2026-08-02T10:00:00.000Z"),
+    });
+
+    await service.markAllRead(CLERK_ID);
+
+    const [own, foreign] = fake.notifications;
+    expect(own.readAt).not.toBeNull();
+    // The recipient scoping lives entirely in the `where`; dropping it would
+    // let one signed-in user clear the entire table's unread state.
+    expect(foreign.readAt).toBeNull();
+  });
+
+  it("reports a cleared badge (never a 404) when the local user is not synced yet", async () => {
+    fake.users.clear(); // no local User row for CLERK_ID
+    // A row that WOULD match if the caller resolved, so the untouched `readAt`
+    // below proves the short-circuit ran instead of an empty-table coincidence.
+    push(fake, {
+      id: "55555555-5555-4555-8555-55555555eee1",
+      type: NotificationType.FOLLOW,
+      createdAt: new Date("2026-08-01T10:00:00.000Z"),
+    });
+
+    const result = await service.markAllRead(CLERK_ID);
+
+    // Tolerant 200, matching both reads (design Decision 14). An unsynced
+    // account owns no notifications, so "everything you have is read" is the
+    // honest answer; a 404 here would be an error posture this module
+    // deliberately does not have.
+    expect(result).toEqual({ unreadCount: 0 });
+    expect(fake.notifications[0].readAt).toBeNull();
   });
 });
