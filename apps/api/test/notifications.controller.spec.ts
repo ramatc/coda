@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestMethod } from "@nestjs/common";
 import {
   GUARDS_METADATA,
+  HTTP_CODE_METADATA,
   METHOD_METADATA,
   MODULE_METADATA,
   PATH_METADATA,
@@ -14,16 +15,21 @@ import { NotificationsService } from "../src/notifications/notifications.service
 
 /**
  * The handlers this controller exposes, in DECLARATION order, paired with the
- * absolute route each one carries. Declaration order is load-bearing, not
- * cosmetic: Nest matches routes in the order they are registered, so the day a
- * `notifications/:id/read` handler is added it MUST come after both static
- * segments below or `unread-count` would be swallowed as an `:id` (design
- * "Route-order note"). Pinning the pairs here forces that decision to be made
- * deliberately instead of by accident.
+ * absolute route and HTTP verb each one carries. Declaration order is
+ * load-bearing, not cosmetic: Nest matches routes in the order they are
+ * registered, so the day a `notifications/:id/read` handler is added it MUST
+ * come after all three static segments below or `unread-count` and `read-all`
+ * would be swallowed as an `:id` (design "Route-order note"). Pinning the
+ * triples here forces that decision to be made deliberately, not by accident.
+ *
+ * The verb is part of the pin because `read-all` is the module's first non-GET
+ * route: it is a POST (the action-verb convention this codebase already uses for
+ * like/dismiss/follow), which makes the explicit 200 below necessary.
  */
 const ROUTES = [
-  ["list", "notifications"],
-  ["getUnreadCount", "notifications/unread-count"],
+  ["list", "notifications", RequestMethod.GET],
+  ["getUnreadCount", "notifications/unread-count", RequestMethod.GET],
+  ["markAllRead", "notifications/read-all", RequestMethod.POST],
 ] as const;
 
 /** The handler names this controller currently exposes (own prototype methods). */
@@ -50,6 +56,7 @@ function handlerNames(): string[] {
 describe("NotificationsController", () => {
   let list: ReturnType<typeof vi.fn>;
   let getUnreadCount: ReturnType<typeof vi.fn>;
+  let markAllRead: ReturnType<typeof vi.fn>;
   let controller: NotificationsController;
 
   beforeEach(() => {
@@ -57,9 +64,11 @@ describe("NotificationsController", () => {
       .fn()
       .mockResolvedValue({ items: [], nextCursor: null, unreadCount: 0 });
     getUnreadCount = vi.fn().mockResolvedValue({ unreadCount: 4 });
+    markAllRead = vi.fn().mockResolvedValue({ unreadCount: 0 });
     controller = new NotificationsController({
       list,
       getUnreadCount,
+      markAllRead,
     } as unknown as NotificationsService);
   });
 
@@ -103,7 +112,17 @@ describe("NotificationsController", () => {
     expect(result).toEqual({ unreadCount: 4 });
   });
 
-  it("mounts both routes as absolute GET paths on a prefix-less controller", () => {
+  it("POST /notifications/read-all forwards the caller id and returns the cleared badge", async () => {
+    const result = await controller.markAllRead("clerk_1");
+
+    // Like the polled count route this takes NO body and NO params: "read
+    // everything addressed to me" is fully determined by the authenticated
+    // caller. Per-item read is deliberately out of v1 scope (design Decision 13).
+    expect(markAllRead).toHaveBeenCalledWith("clerk_1");
+    expect(result).toEqual({ unreadCount: 0 });
+  });
+
+  it("mounts every route as an absolute path on a prefix-less controller", () => {
     // No class-level prefix (matches `ReviewsController`/`SocialController`):
     // Nest's default for a bare `@Controller()` is "/", so each handler carries
     // its own absolute path.
@@ -111,20 +130,40 @@ describe("NotificationsController", () => {
       "/",
     );
 
-    for (const [name, path] of ROUTES) {
+    for (const [name, path, verb] of ROUTES) {
       const handler = NotificationsController.prototype[name];
       expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(path);
-      expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(
-        RequestMethod.GET,
-      );
+      expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(verb);
     }
   });
 
-  it("exposes exactly the two read handlers, static routes first", () => {
+  it("answers read-all with 200, not Nest's default 201 for a POST", () => {
+    // `read-all` is idempotent and creates nothing, so 201 would be a lie about
+    // the resource model — the same reasoning that makes follow/unfollow 200
+    // in `SocialController`. Without the explicit `@HttpCode(200)` Nest would
+    // return 201 here and the web client's status check would drift.
+    expect(
+      Reflect.getMetadata(
+        HTTP_CODE_METADATA,
+        NotificationsController.prototype.markAllRead,
+      ),
+    ).toBe(200);
+
+    // ...and the reads stay on Nest's GET default rather than being pinned by
+    // accident, which is what proves the assertion above is specific.
+    expect(
+      Reflect.getMetadata(
+        HTTP_CODE_METADATA,
+        NotificationsController.prototype.list,
+      ),
+    ).toBe(undefined);
+  });
+
+  it("exposes exactly the three handlers, static routes first", () => {
     // Pinning the surface so any handler added here later has to extend the
     // negative auth assertions below deliberately, rather than silently
-    // inheriting no coverage. `read-all` (PR1b-iii) and any future
-    // `notifications/:id/*` route land AFTER these two.
+    // inheriting no coverage. Declaration order matters: any future
+    // `notifications/:id/*` route lands AFTER all three static segments.
     expect(handlerNames()).toEqual(ROUTES.map(([name]) => name));
   });
 

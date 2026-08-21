@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from "@nestjs/common";
+import { Controller, Get, HttpCode, Post, Query } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator.js";
 import {
   NotificationsService,
@@ -12,8 +12,9 @@ import {
  * {@link ReviewsController} and `SocialController`; all pagination, validation
  * and mapping live in {@link NotificationsService}.
  *
- * - `GET /notifications`               → one cursor-paginated page + `unreadCount`
- * - `GET /notifications/unread-count`  → `{ unreadCount }`, the polled badge
+ * - `GET  /notifications`               → one cursor-paginated page + `unreadCount`
+ * - `GET  /notifications/unread-count`  → `{ unreadCount }`, the polled badge
+ * - `POST /notifications/read-all`      → `{ unreadCount: 0 }`, fired on open
  *
  * The split is deliberate (design Decision 12): every signed-in tab hits the
  * count route twice a minute forever, so it must stay a single indexed `count`
@@ -33,10 +34,10 @@ import {
  *
  * ## Route order
  *
- * Both routes are STATIC segments and there is no `:id` sibling in v1, so there
- * is no shadowing hazard today. If per-item read is ever added, declare
- * `notifications/:id/...` AFTER both handlers below — otherwise `unread-count`
- * matches as an `:id`.
+ * All three routes are STATIC segments and there is no `:id` sibling in v1, so
+ * there is no shadowing hazard today. If per-item read is ever added, declare
+ * `notifications/:id/...` AFTER all three handlers below — otherwise
+ * `unread-count` and `read-all` match as an `:id`.
  */
 @Controller()
 export class NotificationsController {
@@ -58,5 +59,22 @@ export class NotificationsController {
     @CurrentUser("sub") clerkUserId: string,
   ): Promise<UnreadCountResult> {
     return this.notifications.getUnreadCount(clerkUserId);
+  }
+
+  /**
+   * Marks all of the caller's unread notifications as read — what the web
+   * dropdown fires when it OPENS (design Decision 13). Takes no body and no
+   * params: the authenticated caller fully determines the scope.
+   *
+   * `200`, not Nest's default `201`, because nothing is created and the call is
+   * idempotent — the response reports the resulting badge state, matching the
+   * follow/unfollow and like/dismiss convention in this codebase.
+   */
+  @Post("notifications/read-all")
+  @HttpCode(200)
+  markAllRead(
+    @CurrentUser("sub") clerkUserId: string,
+  ): Promise<UnreadCountResult> {
+    return this.notifications.markAllRead(clerkUserId);
   }
 }
