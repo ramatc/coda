@@ -271,8 +271,8 @@ export class NotificationsService {
         data: { recipientUserId, actorUserId, type: NotificationType.FOLLOW },
       });
     } catch (err) {
-      // KNOWN LIMITATION (accepted, revisit on change): {@link
-      // isUniqueConstraintViolation} classifies on the Prisma P2002 CODE alone
+      // KNOWN LIMITATION (accepted, revisit on change): `isUniqueConstraintViolation`
+      // classifies on the Prisma P2002 CODE alone
       // — it does not tell us WHICH unique constraint fired. That is
       // unambiguous today because `notifications` has exactly ONE non-PK
       // unique index (the dedup index above), so any P2002 from this insert
