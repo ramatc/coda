@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { NotificationsModule } from "../notifications/notifications.module.js";
 import { SocialController } from "./social.controller.js";
 import { SocialService } from "./social.service.js";
 
@@ -14,8 +15,14 @@ import { SocialService } from "./social.service.js";
  * The followed-activity feed (`GET /feed`) lands in a follow-up slice. Runs
  * behind the global `ClerkGuard`; `PrismaService` comes from the global
  * PrismaModule.
+ *
+ * It imports `NotificationsModule` (slice 4) purely to inject its exported
+ * `NotificationsService` into the follow hook. The dependency is one-directional
+ * by design — nothing under `notifications/` imports back — which is what keeps
+ * the graph acyclic even though both modules now sit in the same request path.
  */
 @Module({
+  imports: [NotificationsModule],
   controllers: [SocialController],
   providers: [SocialService],
 })
