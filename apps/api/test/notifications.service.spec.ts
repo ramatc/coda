@@ -803,9 +803,13 @@ describe("NotificationsService (write surface, unit layer)", () => {
 
   it("yields exactly one row when two notifyFollow calls race with no unread row to pre-check against", async () => {
     // Unit-layer proof of the CATCH, not of the DB race (see the block
-    // docstring): both calls start against an empty table, so neither could
-    // have been stopped by a `findFirst` pre-check — only the insert itself
-    // rejects one of them, and the service must absorb that rejection.
+    // docstring): the fake's `create()` has no internal `await`, so this is
+    // deterministically SEQUENTIAL, not a genuine interleaving — call A's
+    // entire body (including its row push) runs to completion before call B
+    // starts, so B always collides with A's just-written row and always hits
+    // the dedup branch. Still worth keeping as its own assertion of the
+    // `Promise.all` call shape, even though it is functionally redundant with
+    // "swallows the dedup violation" above.
     await Promise.all([
       service.notifyFollow(ACTOR_ID, RECIPIENT_ID),
       service.notifyFollow(ACTOR_ID, RECIPIENT_ID),
@@ -827,6 +831,12 @@ describe("NotificationsService (write surface, unit layer)", () => {
     // site's own try/catch, which is what keeps the follow itself a 200.
     expect(fake.notifications).toEqual([]);
     expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(String(warnSpy.mock.calls[0][0])).toContain("connection terminated");
+    const warnMessage = String(warnSpy.mock.calls[0][0]);
+    expect(warnMessage).toContain("connection terminated");
+    // The log must also identify WHO the lost notification was for — a
+    // regression that drops the recipient id would still "warn", just
+    // uselessly, since nobody could tell which user's follow notification
+    // failed to send.
+    expect(warnMessage).toContain(RECIPIENT_ID);
   });
 });

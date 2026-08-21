@@ -257,17 +257,6 @@ export class NotificationsService {
    * - anything else is a genuine failure: warn-logged, then rethrown so the hook
    *   site's own `try/catch` can absorb it and still return its 200. A lost
    *   notification must never fail the follow it describes.
-   *
-   * KNOWN LIMITATION (accepted, revisit on change): {@link
-   * isUniqueConstraintViolation} classifies on the Prisma P2002 CODE alone — it
-   * does not tell us WHICH unique constraint fired. That is unambiguous today
-   * because `notifications` has exactly ONE non-PK unique index (the dedup index
-   * above), so any P2002 from this insert can only be that one. If a second
-   * unique constraint is ever added to this table, this catch would start
-   * swallowing unrelated collisions as if they were refollows. The fix at that
-   * point is to discriminate with `extractUniqueConstraintField(err)`, the way
-   * `lists.addItem` already does — see the same reasoning recorded on
-   * `reviews.likeReview`.
    */
   async notifyFollow(
     actorUserId: string,
@@ -282,6 +271,16 @@ export class NotificationsService {
         data: { recipientUserId, actorUserId, type: NotificationType.FOLLOW },
       });
     } catch (err) {
+      // KNOWN LIMITATION (accepted, revisit on change): {@link
+      // isUniqueConstraintViolation} classifies on the Prisma P2002 CODE alone
+      // — it does not tell us WHICH unique constraint fired. That is
+      // unambiguous today because `notifications` has exactly ONE non-PK
+      // unique index (the dedup index above), so any P2002 from this insert
+      // can only be that one. If a second unique constraint is ever added to
+      // this table, this catch would start swallowing unrelated collisions as
+      // if they were refollows. The fix at that point is to discriminate with
+      // `extractUniqueConstraintField(err)`, the way `lists.addItem` already
+      // does — see the same reasoning recorded on `reviews.likeReview`.
       if (isUniqueConstraintViolation(err)) {
         return;
       }
@@ -317,6 +316,9 @@ export class NotificationsService {
       return;
     }
 
+    // No catch here BY DESIGN: unlike `notifyFollow`, there is no dedup-noop
+    // to discriminate from a genuine failure, so an insert failure is expected
+    // to propagate as-is to the Phase 6/7 hook site's own try/catch.
     await this.prisma.client.notification.create({
       data: {
         recipientUserId,
