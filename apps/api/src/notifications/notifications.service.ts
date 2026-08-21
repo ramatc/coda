@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
-import type { NotificationType } from "@coda/db";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { NotificationType } from "@coda/db";
+import { isUniqueConstraintViolation } from "../prisma/prisma-error.util.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import {
   COMMENT_EXCERPT_LENGTH,
@@ -108,6 +109,12 @@ const NOTIFICATION_SELECT = {
  * private to its recipient, so there is no public or cross-user view of this
  * data, and every query scopes on `recipientUserId`.
  *
+ * It also owns the two WRITE helpers — {@link NotificationsService.notifyFollow}
+ * and {@link NotificationsService.notifyComment} — which have no HTTP surface at
+ * all. They are called from inside `follow()` and `createComment()`, so unlike
+ * the read methods they take LOCAL user ids that the caller already resolved,
+ * never a clerk id.
+ *
  * Runs behind the global `ClerkGuard`, so the caller is always authenticated,
  * but the caller's LOCAL `User` row may not exist yet (the Clerk webhook sync is
  * eventually consistent). All three methods degrade to an empty page / a zero
@@ -121,6 +128,8 @@ const NOTIFICATION_SELECT = {
  */
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -217,6 +226,107 @@ export class NotificationsService {
     // Returning the same `{ unreadCount }` shape as the polled endpoint lets the
     // dropdown reconcile its badge from this response with no extra round-trip.
     return { unreadCount: 0 };
+  }
+
+  /**
+   * Records that `actorUserId` started following `recipientUserId`. Called from
+   * inside `follow()` once the `Follow` row is committed, so both arguments are
+   * LOCAL `User.id`s, never clerk ids.
+   *
+   * Self-suppression lives here rather than at the call site (design Decision 4):
+   * `follow()` already 400s a self-follow, which makes this branch structurally
+   * unreachable TODAY — and that is precisely the argument for keeping the
+   * invariant in one place, because it becomes reachable the moment a second
+   * caller appears.
+   *
+   * The insert is attempted DIRECTLY, with no `findFirst` pre-check. Refollow
+   * spam (an unfollow→refollow loop would otherwise mint an unbounded stream of
+   * notifications and emails at the victim) is stopped by
+   * `notifications_active_follow_dedup_idx` — a partial unique index on
+   * `(recipient_user_id, actor_user_id, type)` scoped to
+   * `WHERE read_at IS NULL AND type = 'FOLLOW'` (design Decision 17). A pre-check
+   * would leave a TOCTOU window where two concurrent calls both pass the lookup
+   * before either insert lands; letting the database arbitrate closes it.
+   *
+   * The two failure modes are therefore NOT the same thing and must not be
+   * logged the same way (design Decision 6):
+   * - a unique-constraint violation means "this recipient already has an unread
+   *   follow notification from this actor". That is an EXPECTED outcome of a
+   *   normal refollow, so it is a silent no-op — no row, and deliberately no
+   *   warning, or every ordinary refollow would read as a production error.
+   * - anything else is a genuine failure: warn-logged, then rethrown so the hook
+   *   site's own `try/catch` can absorb it and still return its 200. A lost
+   *   notification must never fail the follow it describes.
+   */
+  async notifyFollow(
+    actorUserId: string,
+    recipientUserId: string,
+  ): Promise<void> {
+    if (actorUserId === recipientUserId) {
+      return;
+    }
+
+    try {
+      await this.prisma.client.notification.create({
+        data: { recipientUserId, actorUserId, type: NotificationType.FOLLOW },
+      });
+    } catch (err) {
+      // KNOWN LIMITATION (accepted, revisit on change): `isUniqueConstraintViolation`
+      // classifies on the Prisma P2002 CODE alone
+      // — it does not tell us WHICH unique constraint fired. That is
+      // unambiguous today because `notifications` has exactly ONE non-PK
+      // unique index (the dedup index above), so any P2002 from this insert
+      // can only be that one. If a second unique constraint is ever added to
+      // this table, this catch would start swallowing unrelated collisions as
+      // if they were refollows. The fix at that point is to discriminate with
+      // `extractUniqueConstraintField(err)`, the way `lists.addItem` already
+      // does — see the same reasoning recorded on `reviews.likeReview`.
+      if (isUniqueConstraintViolation(err)) {
+        return;
+      }
+      this.logger.warn(
+        `Could not create follow notification for user ${recipientUserId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * Records that `actorUserId` commented on `recipientUserId`'s review. Same
+   * local-id contract as {@link NotificationsService.notifyFollow}, called from
+   * inside `createComment()` after the comment is committed.
+   *
+   * Self-suppression is LIVE here, not theoretical: the reviews slice explicitly
+   * allows commenting on your own review, so this guard is the only thing
+   * stopping an author from notifying themselves (design Decision 4).
+   *
+   * A plain insert with no catch, because there is nothing expected to absorb:
+   * the dedup index is scoped to `type = 'FOLLOW'`, so a second comment from the
+   * same actor is a legitimate second notification and must produce a second row.
+   * Any failure propagates to the hook site's `try/catch`, which logs it and
+   * still returns the created comment.
+   */
+  async notifyComment(
+    actorUserId: string,
+    recipientUserId: string,
+    reviewCommentId: string,
+  ): Promise<void> {
+    if (actorUserId === recipientUserId) {
+      return;
+    }
+
+    // No catch here BY DESIGN: unlike `notifyFollow`, there is no dedup-noop
+    // to discriminate from a genuine failure, so an insert failure is expected
+    // to propagate as-is to the Phase 6/7 hook site's own try/catch.
+    await this.prisma.client.notification.create({
+      data: {
+        recipientUserId,
+        actorUserId,
+        type: NotificationType.COMMENT,
+        reviewCommentId,
+      },
+    });
   }
 
   /** Unread rows for one recipient, covered by the `[recipientUserId, readAt]` index. */

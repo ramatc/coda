@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { BadRequestException } from "@nestjs/common";
-import { NotificationType } from "@coda/db";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BadRequestException, Logger } from "@nestjs/common";
+import { NotificationType, Prisma } from "@coda/db";
 import { COMMENT_EXCERPT_LENGTH } from "../src/notifications/notifications.constants.js";
 import { NotificationsService } from "../src/notifications/notifications.service.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
@@ -8,7 +8,9 @@ import type { PrismaService } from "../src/prisma/prisma.service.js";
 const CLERK_ID = "clerk_recipient";
 const RECIPIENT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_USER_ID = "22222222-2222-4222-8222-222222222222";
+const ACTOR_ID = "33333333-3333-4333-8333-333333333333";
 const REVIEW_ID = "77777777-7777-4777-8777-777777777777";
+const COMMENT_ID = "66666666-6666-4666-8666-666666666666";
 
 /** The actor profile projection nested inside the notification select. */
 interface ActorProfile {
@@ -26,6 +28,12 @@ interface NotificationRow {
    * invariant the "never another user's notifications" test below protects.
    */
   recipientUserId: string;
+  /**
+   * Fake-only filter key, like `recipientUserId`. The read `select` never
+   * projects it, but the Decision 17 dedup index keys on it, so the write tests
+   * below need it addressable.
+   */
+  actorUserId: string;
   type: NotificationType;
   createdAt: Date;
   readAt: Date | null;
@@ -75,6 +83,9 @@ function assertExpectedOrderBy(orderBy: unknown): void {
 function createFakePrisma() {
   const users = new Map<string, string>();
   const notifications: NotificationRow[] = [];
+  /** Set by a test to make the NEXT `create` fail for a non-dedup reason. */
+  const control: { nextCreateError: unknown } = { nextCreateError: null };
+  let seq = 0;
 
   /** The caller's own rows, in the service's `[createdAt desc, id desc]` order. */
   function ownedBy(recipientUserId: string): NotificationRow[] {
@@ -142,6 +153,55 @@ function createFakePrisma() {
         }
         return { count: matched.length };
       },
+      async create(args: {
+        data: {
+          recipientUserId: string;
+          actorUserId: string;
+          type: NotificationType;
+          reviewCommentId?: string;
+        };
+      }): Promise<{ id: string }> {
+        if (control.nextCreateError !== null) {
+          const err = control.nextCreateError;
+          control.nextCreateError = null;
+          throw err;
+        }
+        // Stands in for `notifications_active_follow_dedup_idx` — the partial
+        // UNIQUE index on (recipient, actor, type) scoped to
+        // `WHERE read_at IS NULL AND type = 'FOLLOW'` (design Decision 17).
+        // Enforcing it HERE, inside the insert, is the whole point: the service
+        // must not pre-check, so the fake has to be the arbiter exactly like
+        // Postgres is. Note the scoping is faithful in both directions — an
+        // already-READ FOLLOW row does not block, and COMMENT rows are not
+        // constrained at all.
+        const blocked =
+          args.data.type === NotificationType.FOLLOW &&
+          notifications.some(
+            (n) =>
+              n.recipientUserId === args.data.recipientUserId &&
+              n.actorUserId === args.data.actorUserId &&
+              n.type === NotificationType.FOLLOW &&
+              n.readAt === null,
+          );
+        if (blocked) {
+          throw followDedupConstraintError();
+        }
+        seq += 1;
+        const row: NotificationRow = {
+          id: `00000000-0000-4000-8000-00000000000${seq}`,
+          recipientUserId: args.data.recipientUserId,
+          actorUserId: args.data.actorUserId,
+          type: args.data.type,
+          createdAt: new Date("2026-08-10T12:00:00.000Z"),
+          readAt: null,
+          actor: { profile: ACTOR },
+          reviewComment: args.data.reviewCommentId
+            ? { reviewId: REVIEW_ID, body: "Great take." }
+            : null,
+        };
+        notifications.push(row);
+        return { id: row.id };
+      },
     },
   };
 
@@ -149,7 +209,40 @@ function createFakePrisma() {
     prisma: { client } as unknown as PrismaService,
     users,
     notifications,
+    control,
   };
+}
+
+/**
+ * Builds the P2002 Postgres raises when an insert collides with
+ * `notifications_active_follow_dedup_idx`, in this project's Prisma 7
+ * driver-adapter shape (fields on `meta.driverAdapterError.cause.constraint`,
+ * never the classic `meta.target` — see `prisma-error.util.ts`).
+ *
+ * The reported field is the index's LEADING column, `recipient_user_id`, which
+ * is what the real adapter surfaces and which discriminates NOTHING on its own.
+ * That is deliberate: `notifyFollow` classifies purely on the P2002 CODE (the
+ * table has exactly one non-PK unique index, so the code is unambiguous today),
+ * and this error is the tripwire for anyone who later adds an
+ * `extractUniqueConstraintField(err) === "..."` guard without also updating the
+ * documented limitation at the catch site.
+ */
+function followDedupConstraintError(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    "Unique constraint failed on the fields: (`recipient_user_id`,`actor_user_id`,`type`)",
+    {
+      code: "P2002",
+      clientVersion: "test",
+      meta: {
+        driverAdapterError: {
+          cause: {
+            kind: "UniqueConstraintViolation",
+            constraint: { fields: ["recipient_user_id"] },
+          },
+        },
+      },
+    },
+  );
 }
 
 function push(
@@ -159,6 +252,7 @@ function push(
 ): void {
   fake.notifications.push({
     recipientUserId: RECIPIENT_ID,
+    actorUserId: ACTOR_ID,
     readAt: null,
     actor: { profile: ACTOR },
     reviewComment: null,
@@ -586,5 +680,163 @@ describe("NotificationsService (mark-as-read)", () => {
     // deliberately does not have.
     expect(result).toEqual({ unreadCount: 0 });
     expect(fake.notifications[0].readAt).toBeNull();
+  });
+});
+
+/**
+ * The write helpers the hook sites will call (design Decisions 4, 6 and 17).
+ * Both take LOCAL user ids, not clerk ids — they are called from inside
+ * `follow()` / `createComment()`, which already resolved the caller.
+ *
+ * **This block is UNIT-LAYER ONLY.** The dedup and "concurrent" cases below
+ * assert the SERVICE's catch-logic against a fake that raises the constraint,
+ * i.e. that `notifyFollow` treats a P2002 as an expected no-op instead of
+ * letting it escape. They do NOT and CANNOT prove the real Postgres race — the
+ * fake is single-threaded, so its "collision" is sequential by construction.
+ * The genuine atomicity guarantee belongs to
+ * `notifications_active_follow_dedup_idx` itself and is asserted against a live
+ * database in Phase 8's dedicated integration spec.
+ */
+describe("NotificationsService (write surface, unit layer)", () => {
+  let fake: ReturnType<typeof createFakePrisma>;
+  let service: NotificationsService;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fake = createFakePrisma();
+    service = new NotificationsService(fake.prisma);
+    fake.users.set(CLERK_ID, RECIPIENT_ID);
+    warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("creates one unread FOLLOW notification addressed to the followed user", async () => {
+    await service.notifyFollow(ACTOR_ID, RECIPIENT_ID);
+
+    expect(fake.notifications).toHaveLength(1);
+    const [row] = fake.notifications;
+    expect(row.type).toBe(NotificationType.FOLLOW);
+    expect(row.recipientUserId).toBe(RECIPIENT_ID);
+    expect(row.actorUserId).toBe(ACTOR_ID);
+    // A FOLLOW row carries no target FK at all (design Decision 1), and it
+    // starts unread so it counts toward the recipient's badge immediately.
+    expect(row.reviewComment).toBeNull();
+    expect(row.readAt).toBeNull();
+    expect(await service.getUnreadCount(CLERK_ID)).toEqual({ unreadCount: 1 });
+  });
+
+  it("suppresses a self-follow notification without touching the table", async () => {
+    // Structurally unreachable today (`follow()` 400s a self-follow), which is
+    // exactly why the guard lives in the service and not at the call site: it
+    // becomes reachable the moment a second caller appears (Decision 4).
+    await service.notifyFollow(RECIPIENT_ID, RECIPIENT_ID);
+
+    expect(fake.notifications).toEqual([]);
+  });
+
+  it("creates a COMMENT notification linked to the comment that triggered it", async () => {
+    await service.notifyComment(ACTOR_ID, RECIPIENT_ID, COMMENT_ID);
+
+    expect(fake.notifications).toHaveLength(1);
+    const [row] = fake.notifications;
+    expect(row.type).toBe(NotificationType.COMMENT);
+    expect(row.recipientUserId).toBe(RECIPIENT_ID);
+    expect(row.actorUserId).toBe(ACTOR_ID);
+    // The comment FK is what makes the item deep-linkable; without it the read
+    // surface would render a COMMENT item with a null reviewId.
+    expect(row.reviewComment).not.toBeNull();
+    const page = await service.list(CLERK_ID);
+    expect(page.items[0].reviewId).toBe(REVIEW_ID);
+  });
+
+  it("suppresses a self-comment notification without touching the table", async () => {
+    // Unlike the follow guard this one is LIVE — self-commenting is explicitly
+    // allowed by the reviews slice, so this is the branch that actually fires.
+    await service.notifyComment(RECIPIENT_ID, RECIPIENT_ID, COMMENT_ID);
+
+    expect(fake.notifications).toEqual([]);
+  });
+
+  it("does not dedup COMMENT notifications: two comments from the same actor create two rows", async () => {
+    await service.notifyComment(ACTOR_ID, RECIPIENT_ID, COMMENT_ID);
+    await service.notifyComment(ACTOR_ID, RECIPIENT_ID, COMMENT_ID);
+
+    // The dedup index is scoped to `type = 'FOLLOW'`. A table-wide
+    // `@@unique([recipient, actor, type])` would silently swallow every reply
+    // after the first — this is the test that catches that mistake.
+    expect(fake.notifications).toHaveLength(2);
+    expect(await service.getUnreadCount(CLERK_ID)).toEqual({ unreadCount: 2 });
+  });
+
+  it("swallows the dedup violation when an unread FOLLOW from the same actor already exists — no row, no warning", async () => {
+    await service.notifyFollow(ACTOR_ID, RECIPIENT_ID);
+
+    await expect(
+      service.notifyFollow(ACTOR_ID, RECIPIENT_ID),
+    ).resolves.toBeUndefined();
+
+    expect(fake.notifications).toHaveLength(1);
+    expect(await service.getUnreadCount(CLERK_ID)).toEqual({ unreadCount: 1 });
+    // A refollow-while-unread is an EXPECTED outcome, not a failure. Logging it
+    // would make every normal refollow look like a production error (Decision 6).
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("creates a fresh FOLLOW notification once the previous one has been read", async () => {
+    await service.notifyFollow(ACTOR_ID, RECIPIENT_ID);
+    await service.markAllRead(CLERK_ID);
+
+    await service.notifyFollow(ACTOR_ID, RECIPIENT_ID);
+
+    // The index is partial (`WHERE read_at IS NULL`), so a read row stops
+    // constraining anything — the second follow is legitimately newsworthy.
+    expect(fake.notifications).toHaveLength(2);
+    expect(fake.notifications[0].readAt).not.toBeNull();
+    expect(fake.notifications[1].readAt).toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("yields exactly one row when two notifyFollow calls race with no unread row to pre-check against", async () => {
+    // Unit-layer proof of the CATCH, not of the DB race (see the block
+    // docstring): the fake's `create()` has no internal `await`, so this is
+    // deterministically SEQUENTIAL, not a genuine interleaving — call A's
+    // entire body (including its row push) runs to completion before call B
+    // starts, so B always collides with A's just-written row and always hits
+    // the dedup branch. Still worth keeping as its own assertion of the
+    // `Promise.all` call shape, even though it is functionally redundant with
+    // "swallows the dedup violation" above.
+    await Promise.all([
+      service.notifyFollow(ACTOR_ID, RECIPIENT_ID),
+      service.notifyFollow(ACTOR_ID, RECIPIENT_ID),
+    ]);
+
+    expect(fake.notifications).toHaveLength(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("warn-logs and rethrows an insert failure that is NOT the dedup violation", async () => {
+    fake.control.nextCreateError = new Error("connection terminated");
+
+    await expect(
+      service.notifyFollow(ACTOR_ID, RECIPIENT_ID),
+    ).rejects.toThrow("connection terminated");
+
+    // The contrast case for the dedup test above: a genuine failure is NOT
+    // silently absorbed. It is surfaced to the log AND propagated to the hook
+    // site's own try/catch, which is what keeps the follow itself a 200.
+    expect(fake.notifications).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warnMessage = String(warnSpy.mock.calls[0][0]);
+    expect(warnMessage).toContain("connection terminated");
+    // The log must also identify WHO the lost notification was for — a
+    // regression that drops the recipient id would still "warn", just
+    // uselessly, since nobody could tell which user's follow notification
+    // failed to send.
+    expect(warnMessage).toContain(RECIPIENT_ID);
   });
 });
