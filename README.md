@@ -4,7 +4,7 @@
 
 **El diario musical donde registrás lo que escuchás, descubrís álbumes que se te habrían escapado y encontrás gente con tu mismo oído.**
 
-_Red social de descubrimiento musical inspirada en Letterboxd._
+_Red social de descubrimiento musical._
 
 [![Estado](https://img.shields.io/badge/estado-en%20desarrollo-orange)](#-roadmap)
 [![Licencia](https://img.shields.io/badge/licencia-por%20definir-lightgrey)](#-licencia)
@@ -30,7 +30,7 @@ _Red social de descubrimiento musical inspirada en Letterboxd._
 
 ## 🎧 ¿Qué es Coda?
 
-**Coda** es Letterboxd, pero para música: no es un reproductor, es un lugar para llevar tu diario sonoro, calificar y reseñar álbumes, armar listas y recibir recomendaciones **explicables**.
+**Coda** es un diario musical social: un lugar para llevar tu diario sonoro, calificar y reseñar álbumes, armar listas y recibir recomendaciones **explicables**. No es un reproductor.
 
 No es un reproductor de audio, ni un agregador de reseñas profesionales, ni una red social generalista — el gusto musical es la moneda social acá.
 
