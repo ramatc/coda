@@ -14,6 +14,7 @@ import { SocialModule } from "./social/social.module.js";
 import { ListsModule } from "./lists/lists.module.js";
 import { WantToListenModule } from "./want-to-listen/want-to-listen.module.js";
 import { ReviewsModule } from "./reviews/reviews.module.js";
+import { NotificationsModule } from "./notifications/notifications.module.js";
 
 /**
  * Root module for the Coda API. Fase 1 wires the global PrismaModule (first real
@@ -30,7 +31,11 @@ import { ReviewsModule } from "./reviews/reviews.module.js";
  * slice 2 adds the lists module (curated-list CRUD + profile Lists section) and
  * the want-to-listen module (manual backlog + read-time auto-resolve). Fase 2
  * slice 3 adds the reviews module (review detail + likes/comments), which owns
- * the app's ONLY anonymously-readable route (`GET /reviews/:id`).
+ * the app's ONLY anonymously-readable route (`GET /reviews/:id`). Fase 2 slice 4
+ * adds the notifications module (in-app notification read surface, and the
+ * `notifyFollow`/`notifyComment` helpers the social and reviews modules call) —
+ * every one of its routes is private to its recipient and stays behind the
+ * global `ClerkGuard`.
  */
 @Module({
   imports: [
@@ -52,6 +57,7 @@ import { ReviewsModule } from "./reviews/reviews.module.js";
     ListsModule,
     WantToListenModule,
     ReviewsModule,
+    NotificationsModule,
     HealthModule,
   ],
 })
