@@ -164,11 +164,13 @@ function stubPrisma() {
           // create projection that carries the parent review's author so the
           // notification hook costs no extra round-trip. Honouring `select`
           // matters because a narrowed projection makes `created.review.userId`
-          // throw a TypeError while still inside `createComment`'s own try
-          // block (before `notifyReviewAuthor` is ever reached), which fails
-          // `isForeignKeyViolation`'s `instanceof` check and surfaces as an
-          // uncaught 500 — loudly, not silently — so the comment test below
-          // asserts the notification row directly instead.
+          // throw a TypeError, but that read happens inside `notifyReviewAuthor`'s
+          // OWN try block, not `createComment`'s — so the error never reaches
+          // `isForeignKeyViolation`. It is caught right there, logged as a
+          // warning, and the comment is still returned with a 201; only the
+          // notification is silently dropped. This is NOT an uncaught 500, so
+          // the comment test below asserts the notification row directly
+          // instead of trying to provoke a failure from here.
           ...(args.select.review ? { review: { userId: AUTHOR_ID } } : {}),
         };
       },

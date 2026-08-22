@@ -261,7 +261,7 @@ export class ReviewsService {
         data: { reviewId: id, userId, body },
         select: COMMENT_CREATE_SELECT,
       })) as CreatedCommentRow;
-      await this.notifyReviewAuthor(userId, created, created.id);
+      await this.notifyReviewAuthor(userId, created);
       return toCommentView(created, userId);
     } catch (err) {
       if (isForeignKeyViolation(err)) {
@@ -293,23 +293,29 @@ export class ReviewsService {
    * `notifyComment` has no catch at all (there is no dedup no-op for it to
    * discriminate — the Decision 17 index is scoped to FOLLOW rows), so this is
    * the only place a lost comment notification can be reported.
+   *
+   * `comment.review.userId` is deliberately read as the FIRST statement inside
+   * THIS method's own try, rather than in {@link createComment}'s frame. That
+   * placement is what makes a future narrowing of {@link COMMENT_CREATE_SELECT}
+   * back to {@link COMMENT_SELECT} degrade silently — `comment.review` would be
+   * `undefined`, the resulting `TypeError` would be caught right here, and the
+   * comment would still be returned to the caller with only the notification
+   * dropped — instead of escaping to `createComment`'s outer catch, where
+   * {@link isForeignKeyViolation} would fail and the `TypeError` would surface
+   * as an uncaught 500. Keep future edits consistent with this.
    */
   private async notifyReviewAuthor(
     actorId: string,
     comment: CreatedCommentRow,
-    reviewCommentId: string,
   ): Promise<void> {
     let recipientId: string | undefined;
     try {
       recipientId = comment.review.userId;
-      await this.notifications.notifyComment(
-        actorId,
-        recipientId,
-        reviewCommentId,
-      );
+      await this.notifications.notifyComment(actorId, recipientId, comment.id);
     } catch (err) {
       this.logger.warn(
-        `Could not create comment notification for user ${recipientId}: ` +
+        `Could not create comment notification for review comment ${comment.id} ` +
+          `(recipient ${recipientId ?? "unresolved"}): ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }

@@ -159,8 +159,17 @@ function createFakePrisma() {
   // NotificationsService running over this same fake.
   const notifications: StoredNotification[] = [];
   /** Set by a test to make the NEXT notification insert fail. */
-  const control: { nextNotificationError: unknown } = {
+  const control: {
+    nextNotificationError: unknown;
+    /**
+     * Set by a test to simulate a future narrowing of `COMMENT_CREATE_SELECT`
+     * back to `COMMENT_SELECT`: the fake still honours `select.review` like
+     * real Prisma would, but drops the field it would otherwise attach.
+     */
+    dropReviewOnCreate: boolean;
+  } = {
     nextNotificationError: null,
+    dropReviewOnCreate: false,
   };
   const userLookups: (string | undefined)[] = [];
   const likeLookups: { userId: string; reviewId: string }[] = [];
@@ -308,7 +317,7 @@ function createFakePrisma() {
         // fidelity is load-bearing: with an unconditional `review` field, a
         // service that reverted to the narrow `COMMENT_SELECT` would still find
         // the author sitting there and every hook test would pass for free.
-        return args.select.review
+        return args.select.review && !control.dropReviewOnCreate
           ? { ...projectComment(row), review: { userId: parent.userId } }
           : projectComment(row);
       },
@@ -882,7 +891,8 @@ describe("ReviewsService write path", () => {
       // warning, naming the recipient, not zero and not two.
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledWith(
-        `Could not create comment notification for user ${AUTHOR_ID}: ` +
+        `Could not create comment notification for review comment ${comment.id} ` +
+          `(recipient ${AUTHOR_ID}): ` +
           "Foreign key constraint failed on the field: `review_id`",
       );
     });
@@ -897,8 +907,40 @@ describe("ReviewsService write path", () => {
       expect(comment.body).toBe("Survives a dead database too.");
       expect(fake.comments).toHaveLength(1);
       expect(warnSpy).toHaveBeenCalledWith(
-        `Could not create comment notification for user ${AUTHOR_ID}: connection terminated`,
+        `Could not create comment notification for review comment ${comment.id} ` +
+          `(recipient ${AUTHOR_ID}): connection terminated`,
       );
+    });
+
+    it("still returns the created comment — never an error — when the create projection is missing the parent review", async () => {
+      // Pins the CURRENT, deliberate behaviour documented on
+      // `notifyReviewAuthor`: `comment.review.userId` is read as the FIRST
+      // statement inside THAT method's own try, not inside `createComment`'s.
+      // This simulates a future regression where `COMMENT_CREATE_SELECT` is
+      // narrowed back to `COMMENT_SELECT` — the fake still honours
+      // `select.review` like real Prisma would, but strips the field the
+      // service asked for, so `comment.review` is `undefined` and
+      // `comment.review.userId` throws a `TypeError`. That must degrade
+      // SILENTLY: the comment insert already committed, so the caller still
+      // gets it back, the notification is simply never written, and exactly
+      // one warning is logged — it must NOT surface as an error out of
+      // `createComment` (which would happen if this read instead lived in
+      // `createComment`'s own try, where `isForeignKeyViolation` would reject
+      // the `TypeError` and rethrow it).
+      fake.control.dropReviewOnCreate = true;
+
+      const comment = await service.createComment(VIEWER_CLERK, REVIEW_ID, {
+        body: "Still lands even if the widened select regresses.",
+      });
+
+      expect(comment).toMatchObject({
+        body: "Still lands even if the widened select regresses.",
+        author: VIEWER_PROFILE,
+        isOwn: true,
+      });
+      expect(fake.comments).toHaveLength(1);
+      expect(fake.notifications).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
     });
 
     it("leaves toCommentView's output byte-unchanged despite the widened create select", async () => {
