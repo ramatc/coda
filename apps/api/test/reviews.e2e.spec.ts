@@ -22,9 +22,11 @@ const mockedVerifyToken = vi.mocked(verifyToken);
 
 const VIEWER_CLERK = "user_viewer";
 const VIEWER_ID = "22222222-2222-4222-8222-222222222222";
+const AUTHOR_ID = "11111111-1111-4111-8111-111111111111";
 const REVIEW_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const UNKNOWN_REVIEW_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 const COMMENT_ID = "10000000-0000-4000-8000-000000000001";
+const NOTIFICATION_ID = "00000000-0000-4000-8000-000000000001";
 
 /** Builds a P2002 in this project's real driver-adapter shape (Decision #14). */
 function uniqueConstraintError(): Prisma.PrismaClientKnownRequestError {
@@ -67,6 +69,9 @@ function foreignKeyError(): Prisma.PrismaClientKnownRequestError {
  */
 function stubPrisma() {
   let likes: { userId: string; reviewId: string }[] = [];
+  // Rows minted by the createComment → notification hook (slice 4 Phase 7),
+  // written by the REAL NotificationsService resolved through Nest DI.
+  let notifications: Record<string, unknown>[] = [];
 
   const client = {
     user: {
@@ -139,6 +144,7 @@ function stubPrisma() {
     reviewComment: {
       async create(args: {
         data: { reviewId: string; userId: string; body: string };
+        select: { review?: unknown };
       }) {
         if (args.data.reviewId !== REVIEW_ID) throw foreignKeyError();
         return {
@@ -154,15 +160,36 @@ function stubPrisma() {
               avatarUrl: null,
             },
           },
+          // Supplied ONLY when `COMMENT_CREATE_SELECT` asks for it — the widened
+          // create projection that carries the parent review's author so the
+          // notification hook costs no extra round-trip. Honouring `select`
+          // matters because a narrowed projection makes `created.review.userId`
+          // throw a TypeError, but that read happens inside `notifyReviewAuthor`'s
+          // OWN try block, not `createComment`'s — so the error never reaches
+          // `isForeignKeyViolation`. It is caught right there, logged as a
+          // warning, and the comment is still returned with a 201; only the
+          // notification is silently dropped. This is NOT an uncaught 500, so
+          // the comment test below asserts the notification row directly
+          // instead of trying to provoke a failure from here.
+          ...(args.select.review ? { review: { userId: AUTHOR_ID } } : {}),
         };
+      },
+    },
+    notification: {
+      async create(args: { data: Record<string, unknown> }) {
+        const row = { id: NOTIFICATION_ID, ...args.data };
+        notifications.push(row);
+        return row;
       },
     },
   };
 
   return {
     prisma: { client } as unknown as PrismaService,
+    notifications: (): Record<string, unknown>[] => notifications,
     reset(): void {
       likes = [];
+      notifications = [];
     },
   };
 }
@@ -304,6 +331,20 @@ describe("Reviews API (e2e)", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ body: "Completely agree.", isOwn: true });
+    // Over the wire, through Nest's real DI graph: `ReviewsModule` must import
+    // `NotificationsModule` for `NotificationsService` to resolve at all, and
+    // the widened create projection must actually carry the review's author.
+    expect(stub.notifications()).toEqual([
+      {
+        id: NOTIFICATION_ID,
+        recipientUserId: AUTHOR_ID,
+        actorUserId: VIEWER_ID,
+        type: "COMMENT",
+        reviewCommentId: COMMENT_ID,
+      },
+    ]);
+    // The extra `review` field must not leak into the response body.
+    expect(res.body).not.toHaveProperty("review");
   });
 
   it("rejects an over-long comment body with 400 before any write", async () => {

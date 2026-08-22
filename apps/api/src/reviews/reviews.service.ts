@@ -3,9 +3,11 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import type { Prisma } from "@coda/db";
+import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import {
   isForeignKeyViolation,
@@ -105,10 +107,19 @@ export interface ReviewDetail {
  * `requireCallerId`: a read must not 404 a signed-in user whose Clerk webhook
  * sync has not landed yet. They simply degrade to the anonymous viewer block —
  * the same posture `ListsService.getList` takes.
+ *
+ * A successful comment also notifies the review's author (Fase 2 slice 4). That
+ * is a best-effort side channel, kept strictly subordinate to the comment
+ * itself: see {@link ReviewsService.notifyReviewAuthor}.
  */
 @Injectable()
 export class ReviewsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ReviewsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * Returns a review with its album, author, counts, ordered comments and the
@@ -226,6 +237,15 @@ export class ReviewsService {
    * allowed. An unknown review id violates the `ReviewComment.reviewId` FK
    * (P2003) and is mapped to a 404 rather than escaping as a raw 500 — the same
    * stale-target handling as {@link likeReview}.
+   *
+   * The write projects on {@link COMMENT_CREATE_SELECT}, which carries the
+   * parent review's author alongside the comment, so notifying that author is
+   * expected to cost zero extra round-trips — the method never loaded the
+   * review before (it relies on P2003 for its 404) and still does not. That
+   * expectation has NOT been verified against real Postgres (the schema has
+   * no `relationJoins` preview feature enabled, and the in-memory test fakes
+   * cannot observe actual SQL round-trips); confirm with query logging once
+   * Phase 8 first runs against a live database.
    */
   async createComment(
     clerkUserId: string,
@@ -239,14 +259,65 @@ export class ReviewsService {
     try {
       const created = (await this.prisma.client.reviewComment.create({
         data: { reviewId: id, userId, body },
-        select: COMMENT_SELECT,
-      })) as CommentRow;
+        select: COMMENT_CREATE_SELECT,
+      })) as CreatedCommentRow;
+      await this.notifyReviewAuthor(userId, created);
       return toCommentView(created, userId);
     } catch (err) {
       if (isForeignKeyViolation(err)) {
         throw new NotFoundException("Review not found.");
       }
       throw err;
+    }
+  }
+
+  /**
+   * Best-effort comment notification, fired once the `ReviewComment` row is
+   * committed. Non-fatal by construction: a notification or queue failure must
+   * never fail the comment it describes (design Decision 6, layer A) — the same
+   * shape as `TrackingService.enqueueRecoGeneration`.
+   *
+   * ## Why this catch must swallow EVERYTHING (read before narrowing it)
+   *
+   * The call sits inside {@link createComment}'s existing `try`, whose `catch`
+   * maps {@link isForeignKeyViolation} to a 404. That mapping is correct for the
+   * comment insert and catastrophic for this one: a P2003 raised while writing
+   * the NOTIFICATION would be re-read as "the review does not exist" and turn a
+   * successfully committed comment into a bogus "Review not found." — the
+   * caller would retry a write that already succeeded. Nothing may escape here,
+   * which is why the catch is unconditional rather than error-type-specific.
+   *
+   * Unlike `SocialService.notifyNewFollower`, this helper DOES warn. Its
+   * counterpart `notifyFollow` owns a catch of its own and logs before
+   * rethrowing, so re-warning there would double-log one incident;
+   * `notifyComment` has no catch at all (there is no dedup no-op for it to
+   * discriminate — the Decision 17 index is scoped to FOLLOW rows), so this is
+   * the only place a lost comment notification can be reported.
+   *
+   * `comment.review.userId` is deliberately read as the FIRST statement inside
+   * THIS method's own try, rather than in {@link createComment}'s frame. That
+   * placement is what makes a future narrowing of {@link COMMENT_CREATE_SELECT}
+   * back to {@link COMMENT_SELECT} degrade silently — `comment.review` would be
+   * `undefined`, the resulting `TypeError` would be caught right here, and the
+   * comment would still be returned to the caller with only the notification
+   * dropped — instead of escaping to `createComment`'s outer catch, where
+   * {@link isForeignKeyViolation} would fail and the `TypeError` would surface
+   * as an uncaught 500. Keep future edits consistent with this.
+   */
+  private async notifyReviewAuthor(
+    actorId: string,
+    comment: CreatedCommentRow,
+  ): Promise<void> {
+    let recipientId: string | undefined;
+    try {
+      recipientId = comment.review.userId;
+      await this.notifications.notifyComment(actorId, recipientId, comment.id);
+    } catch (err) {
+      this.logger.warn(
+        `Could not create comment notification for review comment ${comment.id} ` +
+          `(recipient ${recipientId ?? "unresolved"}): ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -513,6 +584,25 @@ const COMMENT_SELECT = {
 } as const;
 
 /**
+ * {@link COMMENT_SELECT} widened with the parent review's author, used by the
+ * CREATE path only (Fase 2 slice 4). The notification hook needs the review's
+ * `userId` and `createComment` never loaded the review — so rather than adding
+ * a `findUnique`, the id rides along in the write's own projection, which is
+ * expected to add zero extra round-trips. That expectation has not been
+ * verified against real Postgres — see {@link ReviewsService.createComment}.
+ *
+ * The extra field is invisible downstream: {@link toCommentView} builds its
+ * result from named fields and never spreads the row, so `review` cannot leak
+ * into a response. Deliberately NOT folded back into {@link COMMENT_SELECT} —
+ * the read path and the authz load have no use for it and should not pay to
+ * join it on every comment of every review.
+ */
+const COMMENT_CREATE_SELECT = {
+  ...COMMENT_SELECT,
+  review: { select: { userId: true } },
+} as const;
+
+/**
  * Comments are ordered oldest-first (a conversation reads top-down), with `id`
  * as a secondary tiebreak so ordering stays deterministic when two comments
  * share a `createdAt` — mirroring the activity/feed cursor's secondary sort.
@@ -581,4 +671,11 @@ interface CommentRow {
   createdAt: Date;
   updatedAt: Date;
   user: { profile: ProfileRow | null };
+}
+
+/** Row shape returned by {@link COMMENT_CREATE_SELECT} — a {@link CommentRow}
+ *  plus the parent review's author, for the notification hook. Structurally
+ *  assignable to `CommentRow`, so it feeds {@link toCommentView} unchanged. */
+interface CreatedCommentRow extends CommentRow {
+  review: { userId: string };
 }

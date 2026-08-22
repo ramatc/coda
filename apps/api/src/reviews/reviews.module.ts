@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { OptionalClerkGuard } from "../auth/optional-clerk.guard.js";
+import { NotificationsModule } from "../notifications/notifications.module.js";
 import { ReviewsController } from "./reviews.controller.js";
 import { ReviewsService } from "./reviews.service.js";
 
@@ -19,8 +20,14 @@ import { ReviewsService } from "./reviews.service.js";
  * it does for `CatalogAdminGuard`, which is absent from
  * `CatalogImportModule.providers`. The entry is what anchors the guard's
  * "provided ONLY here, never as `APP_GUARD`" scoping claim to a greppable line.
+ *
+ * It imports `NotificationsModule` (slice 4) purely to inject its exported
+ * `NotificationsService` into the comment hook — the same one-directional
+ * dependency `SocialModule` takes for the follow hook. Nothing under
+ * `notifications/` imports back, which is what keeps the graph acyclic.
  */
 @Module({
+  imports: [NotificationsModule],
   controllers: [ReviewsController],
   providers: [ReviewsService, OptionalClerkGuard],
 })
