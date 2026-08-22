@@ -77,7 +77,7 @@ const ALBUM = {
 /**
  * In-memory Prisma stand-in honouring the exact queries {@link SocialService}
  * issues for the follow graph: `user.findUnique` by clerk id, `profile.findUnique`
- * by username, and `follow.upsert` / `follow.deleteMany` / `follow.count`. Proves
+ * by username, and `follow.create` / `follow.deleteMany` / `follow.count`. Proves
  * the follow/unfollow/stats logic deterministically without a live Postgres
  * (the project's no-docker sandbox convention, mirroring activity.service.spec).
  */
@@ -481,7 +481,7 @@ describe("SocialService", () => {
       });
     });
 
-    it("still follows successfully, and warns, when the notification write fails", async () => {
+    it("still follows successfully, and warns exactly once, when the notification write fails", async () => {
       fake.control.nextNotificationError = new Error("connection terminated");
 
       const result = await service.follow(CALLER_CLERK, TARGET_USERNAME);
@@ -491,10 +491,14 @@ describe("SocialService", () => {
       expect(result).toEqual({ following: true });
       expect(fake.follows).toHaveLength(1);
       expect(fake.notifications).toHaveLength(0);
-      // The warning must name WHO the lost notification was for — a regression
-      // that drops the recipient id still "warns", just uselessly.
+      // `NotificationsService.notifyFollow` is the sole owner of this log line
+      // (it has the most context); `SocialService.notifyNewFollower` swallows
+      // the rethrow silently instead of re-warning, so a genuine failure must
+      // produce exactly ONE warning, not two — a regression that drops the
+      // recipient id, or double-logs the same incident, must fail this test.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledWith(
-        `Could not notify user ${TARGET_ID} of a new follower: connection terminated`,
+        `Could not create follow notification for user ${TARGET_ID}: connection terminated`,
       );
     });
 

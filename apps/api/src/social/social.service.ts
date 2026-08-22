@@ -199,10 +199,14 @@ export class SocialService {
    * describes (design Decision 6, layer A) — the same shape as
    * `TrackingService.enqueueRecoGeneration`.
    *
-   * There is deliberately nothing to handle here beyond logging. Self-follows
-   * and the refollow-while-unread dedup are both absorbed inside
-   * `notifyFollow` (Decisions 4 and 17), and the dedup case is a silent no-op
-   * there, so anything reaching this catch is a genuine failure worth a warning.
+   * Self-follow can never reach this helper in practice: `follow()` already
+   * rejects it with a 400 before any `Follow` row exists, so `notifyFollow`'s
+   * own `actorUserId === recipientUserId` guard is defense-in-depth for this
+   * call path, not the primary mechanism. The refollow-while-unread dedup
+   * (Decisions 4 and 17) is a silent no-op inside `notifyFollow`, so anything
+   * reaching this catch is a genuine failure — already warned about, with more
+   * context, by `notifyFollow` itself, so it is swallowed here without a
+   * second log line.
    */
   private async notifyNewFollower(
     actorId: string,
@@ -210,11 +214,10 @@ export class SocialService {
   ): Promise<void> {
     try {
       await this.notifications.notifyFollow(actorId, recipientId);
-    } catch (err) {
-      this.logger.warn(
-        `Could not notify user ${recipientId} of a new follower: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
+    } catch {
+      // Swallowed on purpose: `notifyFollow` already warned about this exact
+      // failure (with more specific context) before rethrowing, so re-warning
+      // here would double-log the same incident.
     }
   }
 
