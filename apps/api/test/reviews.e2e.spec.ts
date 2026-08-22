@@ -163,9 +163,12 @@ function stubPrisma() {
           // Supplied ONLY when `COMMENT_CREATE_SELECT` asks for it — the widened
           // create projection that carries the parent review's author so the
           // notification hook costs no extra round-trip. Honouring `select`
-          // matters because a narrowed projection does NOT fail loudly here
-          // (the hook's catch swallows the resulting TypeError), so the comment
-          // test below asserts the notification row directly instead.
+          // matters because a narrowed projection makes `created.review.userId`
+          // throw a TypeError while still inside `createComment`'s own try
+          // block (before `notifyReviewAuthor` is ever reached), which fails
+          // `isForeignKeyViolation`'s `instanceof` check and surfaces as an
+          // uncaught 500 — loudly, not silently — so the comment test below
+          // asserts the notification row directly instead.
           ...(args.select.review ? { review: { userId: AUTHOR_ID } } : {}),
         };
       },

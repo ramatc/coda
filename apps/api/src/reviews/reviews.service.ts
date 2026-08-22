@@ -239,9 +239,13 @@ export class ReviewsService {
    * stale-target handling as {@link likeReview}.
    *
    * The write projects on {@link COMMENT_CREATE_SELECT}, which carries the
-   * parent review's author alongside the comment, so notifying that author
-   * costs ZERO extra round-trips — the method never loaded the review before
-   * (it relies on P2003 for its 404) and still does not.
+   * parent review's author alongside the comment, so notifying that author is
+   * expected to cost zero extra round-trips — the method never loaded the
+   * review before (it relies on P2003 for its 404) and still does not. That
+   * expectation has NOT been verified against real Postgres (the schema has
+   * no `relationJoins` preview feature enabled, and the in-memory test fakes
+   * cannot observe actual SQL round-trips); confirm with query logging once
+   * Phase 8 first runs against a live database.
    */
   async createComment(
     clerkUserId: string,
@@ -257,7 +261,7 @@ export class ReviewsService {
         data: { reviewId: id, userId, body },
         select: COMMENT_CREATE_SELECT,
       })) as CreatedCommentRow;
-      await this.notifyReviewAuthor(userId, created.review.userId, created.id);
+      await this.notifyReviewAuthor(userId, created, created.id);
       return toCommentView(created, userId);
     } catch (err) {
       if (isForeignKeyViolation(err)) {
@@ -292,10 +296,12 @@ export class ReviewsService {
    */
   private async notifyReviewAuthor(
     actorId: string,
-    recipientId: string,
+    comment: CreatedCommentRow,
     reviewCommentId: string,
   ): Promise<void> {
+    let recipientId: string | undefined;
     try {
+      recipientId = comment.review.userId;
       await this.notifications.notifyComment(
         actorId,
         recipientId,
@@ -575,8 +581,9 @@ const COMMENT_SELECT = {
  * {@link COMMENT_SELECT} widened with the parent review's author, used by the
  * CREATE path only (Fase 2 slice 4). The notification hook needs the review's
  * `userId` and `createComment` never loaded the review — so rather than adding
- * a `findUnique`, the id rides along in the write's own projection for zero
- * extra round-trips.
+ * a `findUnique`, the id rides along in the write's own projection, which is
+ * expected to add zero extra round-trips. That expectation has not been
+ * verified against real Postgres — see {@link ReviewsService.createComment}.
  *
  * The extra field is invisible downstream: {@link toCommentView} builds its
  * result from named fields and never spreads the row, so `review` cannot leak
