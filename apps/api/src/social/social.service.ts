@@ -1,9 +1,12 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { ActivityType } from "@coda/db";
+import { NotificationsService } from "../notifications/notifications.service.js";
+import { isUniqueConstraintViolation } from "../prisma/prisma-error.util.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import {
   DEFAULT_FEED_LIMIT,
@@ -125,23 +128,39 @@ interface FeedEventRow {
  *
  * The follow model is OPEN: no approval step, no reciprocity requirement. A
  * self-follow is rejected at the app layer (Prisma cannot express a CHECK
- * cleanly), and both follow and unfollow are idempotent (upsert / deleteMany),
- * matching the listens/dismiss idempotent-200 convention.
+ * cleanly), and both follow and unfollow are idempotent (a tolerated-collision
+ * create / deleteMany), matching the listens/dismiss idempotent-200 convention.
  *
  * Runs behind the global `ClerkGuard`. Write paths (follow/unfollow) require the
  * caller's local `User` row to exist — an unsynced caller is a 404, mirroring the
  * tracking write paths. The stats read degrades gracefully: an unsynced caller
  * simply reports `isFollowing: false` rather than erroring.
+ *
+ * A successful NEW follow also notifies the followed user (Fase 2 slice 4). That
+ * is a best-effort side channel, kept strictly subordinate to the follow itself:
+ * see {@link SocialService.notifyNewFollower}.
  */
 @Injectable()
 export class SocialService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(SocialService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * Follows the user identified by `username`. Idempotent: re-following returns
    * `{ following: true }` without creating a second row (composite PK prevents
    * duplicates). Rejects a self-follow with 400 and an unknown/unsynced target
    * with 404.
+   *
+   * The insert is a `create` whose unique-constraint violation is TOLERATED,
+   * rather than the `upsert` this used before (design Decision 5). The two are
+   * observably identical — same 200, same body, still exactly one row — but only
+   * `create` can report whether this call is the one that actually established
+   * the follow. Without that signal, every repeat click of an already-active
+   * Follow button would fire a fresh notification and a fresh email.
    */
   async follow(clerkUserId: string, username: string): Promise<FollowResult> {
     const followerId = await this.requireCallerId(clerkUserId);
@@ -150,13 +169,56 @@ export class SocialService {
       throw new BadRequestException("You cannot follow yourself.");
     }
 
-    await this.prisma.client.follow.upsert({
-      where: { followerId_followingId: { followerId, followingId } },
-      create: { followerId, followingId },
-      update: {},
-    });
+    let created = true;
+    try {
+      await this.prisma.client.follow.create({
+        data: { followerId, followingId },
+      });
+    } catch (err) {
+      // The only unique constraint on `Follow` is its composite PK
+      // `[followerId, followingId]`, so a P2002 here can only mean "already
+      // following" — the idempotent case, not a failure. Letting the database
+      // arbitrate leaves no TOCTOU window for a `findUnique` pre-check to lose.
+      if (!isUniqueConstraintViolation(err)) {
+        throw err;
+      }
+      created = false;
+    }
+
+    if (created) {
+      await this.notifyNewFollower(followerId, followingId);
+    }
 
     return { following: true };
+  }
+
+  /**
+   * Best-effort new-follower notification, fired only once the `Follow` row is
+   * committed and only when this call is the one that created it. Non-fatal by
+   * construction: a notification or queue failure must never fail the follow it
+   * describes (design Decision 6, layer A) — the same shape as
+   * `TrackingService.enqueueRecoGeneration`.
+   *
+   * Self-follow can never reach this helper in practice: `follow()` already
+   * rejects it with a 400 before any `Follow` row exists, so `notifyFollow`'s
+   * own `actorUserId === recipientUserId` guard is defense-in-depth for this
+   * call path, not the primary mechanism. The refollow-while-unread dedup
+   * (Decisions 4 and 17) is a silent no-op inside `notifyFollow`, so anything
+   * reaching this catch is a genuine failure — already warned about, with more
+   * context, by `notifyFollow` itself, so it is swallowed here without a
+   * second log line.
+   */
+  private async notifyNewFollower(
+    actorId: string,
+    recipientId: string,
+  ): Promise<void> {
+    try {
+      await this.notifications.notifyFollow(actorId, recipientId);
+    } catch {
+      // Swallowed on purpose: `notifyFollow` already warned about this exact
+      // failure (with more specific context) before rethrowing, so re-warning
+      // here would double-log the same incident.
+    }
   }
 
   /**

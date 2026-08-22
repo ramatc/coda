@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { BadRequestException, NotFoundException } from "@nestjs/common";
-import { ActivityType } from "@coda/db";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BadRequestException, Logger, NotFoundException } from "@nestjs/common";
+import { ActivityType, NotificationType, Prisma } from "@coda/db";
+import { NotificationsService } from "../src/notifications/notifications.service.js";
 import { SocialService } from "../src/social/social.service.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
 
@@ -16,6 +17,21 @@ const REVIEW_ID = "77777777-7777-4777-8777-777777777777";
 interface FollowRow {
   followerId: string;
   followingId: string;
+}
+
+/**
+ * A notification row, trimmed to what the follow hook actually exercises.
+ * `NotificationsService.notifyFollow` only ever INSERTS, so there is no read
+ * projection to model here — but the `(recipient, actor, type)` triple and
+ * `readAt` must be addressable, because that is precisely what the Decision 17
+ * partial unique index keys on.
+ */
+interface NotificationRow {
+  id: string;
+  recipientUserId: string;
+  actorUserId: string;
+  type: NotificationType;
+  readAt: Date | null;
 }
 
 /** An activity-event row in the shape {@link SocialService.getFeed} selects it. */
@@ -61,7 +77,7 @@ const ALBUM = {
 /**
  * In-memory Prisma stand-in honouring the exact queries {@link SocialService}
  * issues for the follow graph: `user.findUnique` by clerk id, `profile.findUnique`
- * by username, and `follow.upsert` / `follow.deleteMany` / `follow.count`. Proves
+ * by username, and `follow.create` / `follow.deleteMany` / `follow.count`. Proves
  * the follow/unfollow/stats logic deterministically without a live Postgres
  * (the project's no-docker sandbox convention, mirroring activity.service.spec).
  */
@@ -75,6 +91,14 @@ function createFakePrisma() {
   // actor profile the feed nests per event.
   const activityEvents: FeedEventRow[] = [];
   const profilesByUserId = new Map<string, ActorProfile>();
+  // Rows minted by the follow → notification hook, via the REAL
+  // NotificationsService running over this same fake.
+  const notifications: NotificationRow[] = [];
+  /** Set by a test to make the NEXT notification insert fail for a non-dedup reason. */
+  const control: { nextNotificationError: unknown } = {
+    nextNotificationError: null,
+  };
+  let notificationSeq = 0;
 
   function findFollowIndex(followerId: string, followingId: string): number {
     return follows.findIndex(
@@ -100,15 +124,19 @@ function createFakePrisma() {
       },
     },
     follow: {
-      async upsert(args: {
-        where: { followerId_followingId: { followerId: string; followingId: string } };
-        create: FollowRow;
-      }): Promise<FollowRow> {
-        const { followerId, followingId } = args.where.followerId_followingId;
-        const idx = findFollowIndex(followerId, followingId);
-        if (idx === -1) {
-          follows.push({ ...args.create });
+      // `follow()` inserts DIRECTLY and tolerates the collision rather than
+      // upserting, so it can tell a brand-new follow from a repeat click of an
+      // already-active button (design Decision 5) — an `upsert` can report
+      // neither. The composite PK `[followerId, followingId]` is what raises
+      // here, exactly as Postgres would. There is deliberately NO `upsert` arm
+      // on this fake any more: reverting the service to one would fail loudly
+      // rather than quietly re-opening the repeat-notification hole.
+      async create(args: { data: FollowRow }): Promise<FollowRow> {
+        const { followerId, followingId } = args.data;
+        if (findFollowIndex(followerId, followingId) !== -1) {
+          throw uniqueConstraintError(["follower_id", "following_id"]);
         }
+        follows.push({ followerId, followingId });
         return { followerId, followingId };
       },
       async deleteMany(args: {
@@ -182,6 +210,50 @@ function createFakePrisma() {
         }));
       },
     },
+    notification: {
+      async create(args: {
+        data: {
+          recipientUserId: string;
+          actorUserId: string;
+          type: NotificationType;
+        };
+      }): Promise<{ id: string }> {
+        if (control.nextNotificationError !== null) {
+          const err = control.nextNotificationError;
+          control.nextNotificationError = null;
+          throw err;
+        }
+        // Stands in for `notifications_active_follow_dedup_idx` — the partial
+        // UNIQUE index on (recipient, actor, type) scoped to
+        // `WHERE read_at IS NULL AND type = 'FOLLOW'` (design Decision 17).
+        // Enforcing it HERE, inside the insert, is the whole point: the service
+        // deliberately never pre-checks, so the database is the sole arbiter.
+        // Faithful in BOTH directions — an already-READ row does not block, or
+        // the "notifies again once read" test below would pass for free.
+        const blocked =
+          args.data.type === NotificationType.FOLLOW &&
+          notifications.some(
+            (n) =>
+              n.recipientUserId === args.data.recipientUserId &&
+              n.actorUserId === args.data.actorUserId &&
+              n.type === NotificationType.FOLLOW &&
+              n.readAt === null,
+          );
+        if (blocked) {
+          throw uniqueConstraintError(["recipient_user_id"]);
+        }
+        notificationSeq += 1;
+        const row: NotificationRow = {
+          id: `00000000-0000-4000-8000-00000000000${notificationSeq}`,
+          recipientUserId: args.data.recipientUserId,
+          actorUserId: args.data.actorUserId,
+          type: args.data.type,
+          readAt: null,
+        };
+        notifications.push(row);
+        return { id: row.id };
+      },
+    },
   };
 
   return {
@@ -191,19 +263,60 @@ function createFakePrisma() {
     follows,
     activityEvents,
     profilesByUserId,
+    notifications,
+    control,
   };
+}
+
+/**
+ * Builds the P2002 this project's Prisma 7 client raises on a unique collision.
+ * The conflicting columns live on `meta.driverAdapterError.cause.constraint`,
+ * never the classic `meta.target` (see `prisma-error.util.ts`). Shared by BOTH
+ * collisions the follow path tolerates: `Follow`'s composite PK (Decision 5)
+ * and `notifications_active_follow_dedup_idx` (Decision 17).
+ */
+function uniqueConstraintError(
+  fields: string[],
+): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    `Unique constraint failed on the fields: (${fields.join(",")})`,
+    {
+      code: "P2002",
+      clientVersion: "test",
+      meta: {
+        driverAdapterError: {
+          cause: {
+            kind: "UniqueConstraintViolation",
+            constraint: { fields },
+          },
+        },
+      },
+    },
+  );
 }
 
 describe("SocialService", () => {
   let fake: ReturnType<typeof createFakePrisma>;
   let service: SocialService;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     fake = createFakePrisma();
-    service = new SocialService(fake.prisma);
+    // The REAL notifier, over the same fake Prisma — see the hook block below.
+    service = new SocialService(
+      fake.prisma,
+      new NotificationsService(fake.prisma),
+    );
+    warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
     fake.usersByClerk.set(CALLER_CLERK, CALLER_ID);
     fake.usersByClerk.set(TARGET_CLERK, TARGET_ID);
     fake.usersByUsername.set(TARGET_USERNAME, TARGET_ID);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe("follow", () => {
@@ -290,6 +403,116 @@ describe("SocialService", () => {
         service.unfollow("unsynced_clerk_id", TARGET_USERNAME),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(fake.follows).toHaveLength(0);
+    });
+  });
+
+  /**
+   * The Decision 5 + Decision 17 regression net for the follow → notification
+   * hook. These tests wire the REAL {@link NotificationsService} over the SAME
+   * in-memory Prisma, so the entire path runs for real: `follow()` reports
+   * whether it actually created a row, and the dedup index — not the service —
+   * arbitrates whether a notification is minted. A mocked notifier would make
+   * every assertion below vacuous, since the two dedup layers it exists to
+   * separate both live below `SocialService`.
+   *
+   * The design's own risk note applies here: `follow()`'s contract is
+   * status- and body-preserving, so every pre-existing follow/unfollow test in
+   * this file MUST keep passing untouched.
+   */
+  describe("follow → notification hook", () => {
+    it("notifies the followed user exactly once on a first follow", async () => {
+      await service.follow(CALLER_CLERK, TARGET_USERNAME);
+
+      expect(fake.notifications).toHaveLength(1);
+      expect(fake.notifications[0]).toMatchObject({
+        recipientUserId: TARGET_ID,
+        actorUserId: CALLER_ID,
+        type: NotificationType.FOLLOW,
+        readAt: null,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not notify again when an active follow is re-followed, even after the first notification was read", async () => {
+      await service.follow(CALLER_CLERK, TARGET_USERNAME);
+      // Deliberately clear the dedup index's guard so it CANNOT be what stops
+      // the second notification. The only thing left standing is `follow()`
+      // knowing the row already existed — which `upsert` could never report.
+      fake.notifications[0].readAt = new Date("2026-08-11T09:00:00.000Z");
+
+      const again = await service.follow(CALLER_CLERK, TARGET_USERNAME);
+
+      expect(again).toEqual({ following: true });
+      expect(fake.follows).toHaveLength(1);
+      expect(fake.notifications).toHaveLength(1);
+    });
+
+    it("does not notify on an unfollow → refollow loop while the first notification is unread", async () => {
+      await service.follow(CALLER_CLERK, TARGET_USERNAME);
+      await service.unfollow(CALLER_CLERK, TARGET_USERNAME);
+
+      const refollow = await service.follow(CALLER_CLERK, TARGET_USERNAME);
+
+      // The Follow row really was recreated, so `created` is true and the hook
+      // DID fire — the partial index is what refuses the duplicate, closing the
+      // spam vector Decision 5 alone leaves open (Decision 17).
+      expect(refollow).toEqual({ following: true });
+      expect(fake.follows).toHaveLength(1);
+      expect(fake.notifications).toHaveLength(1);
+      // An expected refollow is a no-op, not an incident (Decision 6).
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("notifies again on a refollow once the earlier notification has been read", async () => {
+      await service.follow(CALLER_CLERK, TARGET_USERNAME);
+      fake.notifications[0].readAt = new Date("2026-08-11T09:00:00.000Z");
+      await service.unfollow(CALLER_CLERK, TARGET_USERNAME);
+
+      await service.follow(CALLER_CLERK, TARGET_USERNAME);
+
+      // No UNREAD follow notification remained, so the partial index does not
+      // apply and a genuinely new follow is legitimately newsworthy again.
+      expect(fake.notifications).toHaveLength(2);
+      expect(fake.notifications[1]).toMatchObject({
+        recipientUserId: TARGET_ID,
+        actorUserId: CALLER_ID,
+        type: NotificationType.FOLLOW,
+        readAt: null,
+      });
+    });
+
+    it("still follows successfully, and warns exactly once, when the notification write fails", async () => {
+      fake.control.nextNotificationError = new Error("connection terminated");
+
+      const result = await service.follow(CALLER_CLERK, TARGET_USERNAME);
+
+      // The follow itself is committed and reported normally; only the
+      // best-effort side channel was lost (Decision 6, layer A).
+      expect(result).toEqual({ following: true });
+      expect(fake.follows).toHaveLength(1);
+      expect(fake.notifications).toHaveLength(0);
+      // `NotificationsService.notifyFollow` is the sole owner of this log line
+      // (it has the most context); `SocialService.notifyNewFollower` swallows
+      // the rethrow silently instead of re-warning, so a genuine failure must
+      // produce exactly ONE warning, not two — a regression that drops the
+      // recipient id, or double-logs the same incident, must fail this test.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        `Could not create follow notification for user ${TARGET_ID}: connection terminated`,
+      );
+    });
+
+    it("creates no notification on unfollow, and leaves the earlier one standing", async () => {
+      await service.follow(CALLER_CLERK, TARGET_USERNAME);
+
+      await service.unfollow(CALLER_CLERK, TARGET_USERNAME);
+
+      // "X followed you" is a historical record: unfollowing neither mints a
+      // new notification nor retracts the old one (spec: there is no `followId`
+      // FK precisely so this cannot cascade away).
+      expect(fake.follows).toHaveLength(0);
+      expect(fake.notifications).toHaveLength(1);
+      expect(fake.notifications[0].type).toBe(NotificationType.FOLLOW);
     });
   });
 
