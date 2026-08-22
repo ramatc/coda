@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma } from "@coda/db";
+import { NotificationType, Prisma } from "@coda/db";
+import { NotificationsService } from "../src/notifications/notifications.service.js";
 import { ReviewsService } from "../src/reviews/reviews.service.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
 
@@ -61,6 +63,22 @@ interface StoredComment {
 interface StoredLike {
   userId: string;
   reviewId: string;
+}
+
+/**
+ * A notification row, trimmed to what the comment hook actually exercises.
+ * `NotificationsService.notifyComment` only ever INSERTS, so there is no read
+ * projection to model — but `reviewCommentId` must be addressable, because it
+ * is the only thing tying a COMMENT notification back to the comment that
+ * caused it, and a hook that dropped it would still produce a row.
+ */
+interface StoredNotification {
+  id: string;
+  recipientUserId: string;
+  actorUserId: string;
+  type: NotificationType;
+  reviewCommentId: string | null;
+  readAt: Date | null;
 }
 
 interface CommentOrderBy {
@@ -137,6 +155,13 @@ function createFakePrisma() {
   const reviews: StoredReview[] = [];
   const comments: StoredComment[] = [];
   const likes: StoredLike[] = [];
+  // Rows minted by the createComment → notification hook, via the REAL
+  // NotificationsService running over this same fake.
+  const notifications: StoredNotification[] = [];
+  /** Set by a test to make the NEXT notification insert fail. */
+  const control: { nextNotificationError: unknown } = {
+    nextNotificationError: null,
+  };
   const userLookups: (string | undefined)[] = [];
   const likeLookups: { userId: string; reviewId: string }[] = [];
   const hooks: {
@@ -144,6 +169,7 @@ function createFakePrisma() {
     afterCommentUpdate?: () => void;
   } = {};
   let commentSeq = 0;
+  let notificationSeq = 0;
   let clock = COMMENT_2_AT.getTime() + 60_000;
 
   /** Monotonic timestamps so newly written comments sort after the seeded ones. */
@@ -261,8 +287,10 @@ function createFakePrisma() {
     reviewComment: {
       async create(args: {
         data: { reviewId: string; userId: string; body: string };
+        select: { review?: unknown };
       }): Promise<Record<string, unknown>> {
-        if (!reviews.some((r) => r.id === args.data.reviewId)) {
+        const parent = reviews.find((r) => r.id === args.data.reviewId);
+        if (!parent) {
           throw foreignKeyError();
         }
         const now = nextDate();
@@ -275,7 +303,14 @@ function createFakePrisma() {
           updatedAt: now,
         };
         comments.push(row);
-        return projectComment(row);
+        // Prisma returns EXACTLY the requested projection, so this arm honours
+        // `select` rather than always handing back the widest shape. That
+        // fidelity is load-bearing: with an unconditional `review` field, a
+        // service that reverted to the narrow `COMMENT_SELECT` would still find
+        // the author sitting there and every hook test would pass for free.
+        return args.select.review
+          ? { ...projectComment(row), review: { userId: parent.userId } }
+          : projectComment(row);
       },
       async findFirst(args: {
         where: { id: string; reviewId: string };
@@ -319,6 +354,39 @@ function createFakePrisma() {
         return { count: 1 };
       },
     },
+    notification: {
+      async create(args: {
+        data: {
+          recipientUserId: string;
+          actorUserId: string;
+          type: NotificationType;
+          reviewCommentId?: string;
+        };
+      }): Promise<{ id: string }> {
+        if (control.nextNotificationError !== null) {
+          const err = control.nextNotificationError;
+          control.nextNotificationError = null;
+          throw err;
+        }
+        // Deliberately UNCONSTRAINED, unlike the twin arm in
+        // `social.service.spec.ts`: `notifications_active_follow_dedup_idx` is
+        // scoped to `WHERE read_at IS NULL AND type = 'FOLLOW'`, so it cannot
+        // apply to a COMMENT row. Reproducing a dedup branch here would be
+        // infidelity to the real schema AND would hide an over-eager service —
+        // the "two comments, two notifications" test below is what proves it.
+        notificationSeq += 1;
+        const row: StoredNotification = {
+          id: `00000000-0000-4000-8000-00000000000${notificationSeq}`,
+          recipientUserId: args.data.recipientUserId,
+          actorUserId: args.data.actorUserId,
+          type: args.data.type,
+          reviewCommentId: args.data.reviewCommentId ?? null,
+          readAt: null,
+        };
+        notifications.push(row);
+        return { id: row.id };
+      },
+    },
   };
 
   return {
@@ -328,6 +396,8 @@ function createFakePrisma() {
     reviews,
     comments,
     likes,
+    notifications,
+    control,
     userLookups,
     likeLookups,
     hooks,
@@ -347,7 +417,10 @@ describe("ReviewsService.getReview", () => {
 
   beforeEach(() => {
     fake = createFakePrisma();
-    service = new ReviewsService(fake.prisma);
+    service = new ReviewsService(
+      fake.prisma,
+      new NotificationsService(fake.prisma),
+    );
     fake.usersByClerk.set(AUTHOR_CLERK, AUTHOR_ID);
     fake.usersByClerk.set(VIEWER_CLERK, VIEWER_ID);
     fake.profilesByUserId.set(AUTHOR_ID, AUTHOR_PROFILE);
@@ -501,10 +574,18 @@ describe("ReviewsService.getReview", () => {
 describe("ReviewsService write path", () => {
   let fake: ReturnType<typeof createFakePrisma>;
   let service: ReviewsService;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     fake = createFakePrisma();
-    service = new ReviewsService(fake.prisma);
+    // The REAL notifier, over the same fake Prisma — see the hook block below.
+    service = new ReviewsService(
+      fake.prisma,
+      new NotificationsService(fake.prisma),
+    );
+    warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
     fake.usersByClerk.set(AUTHOR_CLERK, AUTHOR_ID);
     fake.usersByClerk.set(VIEWER_CLERK, VIEWER_ID);
     fake.profilesByUserId.set(AUTHOR_ID, AUTHOR_PROFILE);
@@ -517,6 +598,10 @@ describe("ReviewsService write path", () => {
       createdAt: REVIEW_CREATED_AT,
       updatedAt: REVIEW_UPDATED_AT,
     });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe("likeReview", () => {
@@ -696,6 +781,148 @@ describe("ReviewsService write path", () => {
         service.createComment(UNSYNCED_CLERK, REVIEW_ID, { body: "Hi." }),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(fake.comments).toEqual([]);
+    });
+  });
+
+  /**
+   * The regression net for the createComment → notification hook (slice 4
+   * Phase 7). Like the follow-hook block in `social.service.spec.ts`, these
+   * tests wire the REAL {@link NotificationsService} over the SAME in-memory
+   * Prisma rather than mocking it, so the whole path runs for real: the
+   * widened create projection supplies the recipient, and self-suppression is
+   * arbitrated where it actually lives (inside `notifyComment`, design
+   * Decision 4). A mocked notifier would only record that a method was called
+   * and could not tell a correctly-suppressed self-comment from a hook that
+   * silently passed the wrong recipient.
+   *
+   * The load-bearing case is the failure one. The notify call sits INSIDE
+   * `createComment`'s existing `try`, whose `catch` maps a foreign-key
+   * violation to a 404 — so a notification error that escaped the hook's own
+   * catch would turn a perfectly committed comment into a bogus "Review not
+   * found." The failing test below injects exactly that error shape.
+   */
+  describe("createComment → notification hook", () => {
+    it("notifies the review author exactly once, tied to the new comment", async () => {
+      const comment = await service.createComment(VIEWER_CLERK, REVIEW_ID, {
+        body: "Completely agree.",
+      });
+
+      expect(fake.notifications).toHaveLength(1);
+      expect(fake.notifications[0]).toMatchObject({
+        recipientUserId: AUTHOR_ID,
+        actorUserId: VIEWER_ID,
+        type: NotificationType.COMMENT,
+        reviewCommentId: comment.id,
+        readAt: null,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("suppresses a self-comment but still notifies when someone else comments on the same review", async () => {
+      // Self-commenting is explicitly allowed (slice 3), so this guard is live
+      // rather than theoretical. Pairing both actors against the SAME review in
+      // one test is what makes it discriminating: a hook that notified nobody,
+      // or one that mixed up actor and recipient, fails one half or the other.
+      await service.createComment(AUTHOR_CLERK, REVIEW_ID, {
+        body: "Replying to my own take.",
+      });
+
+      expect(fake.notifications).toEqual([]);
+
+      await service.createComment(VIEWER_CLERK, REVIEW_ID, {
+        body: "Great review.",
+      });
+
+      expect(fake.notifications).toHaveLength(1);
+      expect(fake.notifications[0]).toMatchObject({
+        recipientUserId: AUTHOR_ID,
+        actorUserId: VIEWER_ID,
+      });
+    });
+
+    it("notifies again for a second comment by the same actor on the same review", async () => {
+      const first = await service.createComment(VIEWER_CLERK, REVIEW_ID, {
+        body: "First thought.",
+      });
+      const second = await service.createComment(VIEWER_CLERK, REVIEW_ID, {
+        body: "Second thought.",
+      });
+
+      // `notifications_active_follow_dedup_idx` is scoped to unread FOLLOW
+      // rows, so it must NOT constrain comments — every comment is its own
+      // event. This is the direction a service that over-applied the follow
+      // dedup would break, and it is invisible to the first test.
+      expect(fake.notifications.map((n) => n.reviewCommentId)).toEqual([
+        first.id,
+        second.id,
+      ]);
+    });
+
+    it("returns the created comment — never a 404 — when the notification write fails with a foreign-key error", async () => {
+      // The precise trap the design names: `createComment`'s outer catch maps
+      // `isForeignKeyViolation` to "Review not found.". If the hook's own catch
+      // did not swallow first, THIS error would be re-classified and a
+      // successfully committed comment would surface as a 404.
+      fake.control.nextNotificationError = foreignKeyError();
+
+      const comment = await service.createComment(VIEWER_CLERK, REVIEW_ID, {
+        body: "Survives a broken notifier.",
+      });
+
+      expect(comment).toMatchObject({
+        body: "Survives a broken notifier.",
+        author: VIEWER_PROFILE,
+        isOwn: true,
+      });
+      // The comment really committed; only the best-effort side channel is lost.
+      expect(fake.comments).toHaveLength(1);
+      expect(fake.notifications).toEqual([]);
+      // `notifyComment` has no catch of its own (unlike `notifyFollow`, which
+      // owns its warn), so this hook is the SOLE owner of the log line — one
+      // warning, naming the recipient, not zero and not two.
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        `Could not create comment notification for user ${AUTHOR_ID}: ` +
+          "Foreign key constraint failed on the field: `review_id`",
+      );
+    });
+
+    it("returns the created comment when the notification write fails for any other reason", async () => {
+      fake.control.nextNotificationError = new Error("connection terminated");
+
+      const comment = await service.createComment(VIEWER_CLERK, REVIEW_ID, {
+        body: "Survives a dead database too.",
+      });
+
+      expect(comment.body).toBe("Survives a dead database too.");
+      expect(fake.comments).toHaveLength(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        `Could not create comment notification for user ${AUTHOR_ID}: connection terminated`,
+      );
+    });
+
+    it("leaves toCommentView's output byte-unchanged despite the widened create select", async () => {
+      // An APPROVAL test: it passed before `COMMENT_CREATE_SELECT` existed and
+      // must keep passing after. Widening the projection is only free if the
+      // extra `review` field never reaches the response — so the created view
+      // is compared field-for-field against the SAME row read back through the
+      // narrow `COMMENT_SELECT` path, which cannot have seen it.
+      const created = await service.createComment(VIEWER_CLERK, REVIEW_ID, {
+        body: "Shape must not drift.",
+      });
+
+      const detail = await service.getReview(VIEWER_CLERK, REVIEW_ID);
+
+      expect(detail.comments).toHaveLength(1);
+      expect(created).toEqual(detail.comments[0]);
+      expect(Object.keys(created).sort()).toEqual([
+        "author",
+        "body",
+        "createdAt",
+        "id",
+        "isOwn",
+        "updatedAt",
+      ]);
     });
   });
 
