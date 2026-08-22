@@ -5,6 +5,7 @@ import {
   ResendSendError,
   ResendService,
 } from "../src/notifications/resend.service.js";
+import { RESEND_SEND_TIMEOUT_MS } from "../src/notifications/notifications.constants.js";
 
 /**
  * `ResendService` is a thin `fetch` wrapper over Resend's REST API (design
@@ -31,6 +32,7 @@ interface FakeCall {
   method: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  signal: AbortSignal | null | undefined;
 }
 
 function config(values: Record<string, string> = {}): ConfigService {
@@ -54,6 +56,33 @@ function jsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
+/** Same shape as {@link jsonResponse}, but `.json()` rejects instead of
+ * resolving — simulates the abort firing while the body is being read. */
+function abortingJsonResponse(err: Error): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw err;
+    },
+    text: async () => "",
+  } as unknown as Response;
+}
+
+/** Same idea as {@link abortingJsonResponse}, but for the non-OK path: a
+ * non-2xx status whose error-body `.text()` read rejects instead of
+ * resolving — simulates the abort firing while the error body is stalled. */
+function abortingTextResponse(status: number, err: Error): Response {
+  return {
+    ok: false,
+    status,
+    json: async () => ({}),
+    text: async () => {
+      throw err;
+    },
+  } as unknown as Response;
+}
+
 function stubFetch(
   calls: FakeCall[],
   responder: () => Response = () => jsonResponse(200, { id: "email-1" }),
@@ -65,6 +94,7 @@ function stubFetch(
         method: init.method ?? "GET",
         headers: (init.headers as Record<string, string>) ?? {},
         body: JSON.parse(init.body as string) as Record<string, unknown>,
+        signal: init.signal,
       });
       return responder();
     },
@@ -168,6 +198,54 @@ describe("ResendService", () => {
     expect(result).toEqual({ status: "sent", id: "email-1" });
   });
 
+  it("wires an AbortSignal to the fetch that is actually tied to RESEND_SEND_TIMEOUT_MS, not just any signal", async () => {
+    // `AbortSignal.timeout()`'s abort fires from Node's internal timer
+    // machinery, which `vi.useFakeTimers()` cannot intercept — so instead of
+    // trying to fast-forward a real abort, assert on the one thing that
+    // actually distinguishes "tied to RESEND_SEND_TIMEOUT_MS" from "any
+    // signal": the exact millisecond value passed to `AbortSignal.timeout`,
+    // and that its returned signal is the very one handed to `fetch`.
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    stubFetch(calls);
+    const service = new ResendService(enabledConfig());
+
+    await service.send(email);
+
+    expect(timeoutSpy).toHaveBeenCalledWith(RESEND_SEND_TIMEOUT_MS);
+    expect(calls[0]!.signal).toBe(timeoutSpy.mock.results[0]?.value);
+  });
+
+  it("rethrows a genuine timeout that fires during the body read instead of treating it as a successful send", async () => {
+    // `AbortSignal.timeout()` rejects with a `DOMException` named
+    // `"TimeoutError"` (confirmed against this repo's Node version) — never
+    // `"AbortError"`, which is what a manually-triggered `AbortController`
+    // would produce. The source keeps an `"AbortError"` check too for
+    // forward-compat, but the test must exercise the branch Node actually
+    // hits in production, or a narrowing of that check to just
+    // `"AbortError"` would keep this test green while silently
+    // reintroducing the fake-success regression.
+    const timeoutError = new DOMException(
+      "The operation was aborted due to timeout",
+      "TimeoutError",
+    );
+    stubFetch(calls, () => abortingJsonResponse(timeoutError));
+    const service = new ResendService(enabledConfig());
+
+    const error = await service.send(email).catch((err: unknown) => err);
+
+    expect(error).toBe(timeoutError);
+  });
+
+  it("warns when a 2xx response has no `id` in the body, but still reports success", async () => {
+    stubFetch(calls, () => jsonResponse(200, {}));
+    const service = new ResendService(enabledConfig());
+
+    const result = await service.send(email);
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no `id`"));
+    expect(result).toEqual({ status: "sent", id: "" });
+  });
+
   it("passes `html` through opaquely — escaping belongs to the worker, not here", async () => {
     stubFetch(calls);
     const service = new ResendService(enabledConfig());
@@ -192,6 +270,25 @@ describe("ResendService", () => {
     expect(error).toBeInstanceOf(ResendSendError);
     expect((error as ResendSendError).status).toBe(422);
     expect((error as ResendSendError).message).toContain("Invalid `to` field");
+  });
+
+  it("rethrows a genuine timeout that fires while reading a non-OK response's error body, instead of an empty-detail ResendSendError", async () => {
+    // Same bug class as the success-path body-read timeout: `AbortSignal
+    // .timeout()` governs the error body read too, so an abort firing while
+    // `.text()` is pending on a non-OK response must propagate as the real
+    // timeout — not be swallowed by the `.catch(() => "")` into a
+    // `ResendSendError` with an empty detail, which would hide that this was
+    // actually a timeout rather than a genuine 4xx/5xx from Resend.
+    const timeoutError = new DOMException(
+      "The operation was aborted due to timeout",
+      "TimeoutError",
+    );
+    stubFetch(calls, () => abortingTextResponse(500, timeoutError));
+    const service = new ResendService(enabledConfig());
+
+    const error = await service.send(email).catch((err: unknown) => err);
+
+    expect(error).toBe(timeoutError);
   });
 
   it("throws a ResendSendError carrying the HTTP status on a 5xx response", async () => {

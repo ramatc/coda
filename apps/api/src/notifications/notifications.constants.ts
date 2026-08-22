@@ -48,4 +48,12 @@ export const RESEND_API_KEY_ENV = "RESEND_API_KEY";
  * produce 422s — it is treated as disabled too, and the construction-time warn
  * names whichever variable is missing.
  */
-export const RESEND_FROM_ENV = "RESEND_FROM_EMAIL";
+export const RESEND_FROM_EMAIL_ENV = "RESEND_FROM_EMAIL";
+
+/**
+ * Timeout for the outbound `fetch` to Resend's send endpoint, in
+ * milliseconds. Without a bound, a hung connection stalls
+ * {@link ResendService.send} forever — worse than an ordinary error, because
+ * it never rejects to trigger the caller's retry/backoff.
+ */
+export const RESEND_SEND_TIMEOUT_MS = 10_000;

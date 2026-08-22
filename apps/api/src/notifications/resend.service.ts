@@ -2,7 +2,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   RESEND_API_KEY_ENV,
-  RESEND_FROM_ENV,
+  RESEND_FROM_EMAIL_ENV,
+  RESEND_SEND_TIMEOUT_MS,
 } from "./notifications.constants.js";
 
 /** Resend's transactional-send endpoint. */
@@ -60,7 +61,7 @@ export class ResendSendError extends Error {
  * identical posture to {@link MeiliService}.
  *
  * **No-op fallback, and it never throws.** With {@link RESEND_API_KEY_ENV}
- * (or {@link RESEND_FROM_ENV}) missing the client is disabled and
+ * (or {@link RESEND_FROM_EMAIL_ENV}) missing the client is disabled and
  * {@link ResendService.send} returns `{ status: "skipped" }`. Throwing instead
  * would burn all three BullMQ attempts and dump every dev notification into the
  * failed set, for a machine that was never going to send mail. One
@@ -76,13 +77,13 @@ export class ResendService {
 
   constructor(config: ConfigService) {
     this.apiKey = config.get<string>(RESEND_API_KEY_ENV);
-    this.from = config.get<string>(RESEND_FROM_ENV);
+    this.from = config.get<string>(RESEND_FROM_EMAIL_ENV);
     this.enabled = Boolean(this.apiKey) && Boolean(this.from);
 
     if (!this.enabled) {
       const missing = [
         this.apiKey ? undefined : RESEND_API_KEY_ENV,
-        this.from ? undefined : RESEND_FROM_ENV,
+        this.from ? undefined : RESEND_FROM_EMAIL_ENV,
       ].filter((name): name is string => name !== undefined);
       this.logger.warn(
         `Email delivery is disabled: ${missing.join(", ")} not configured. ` +
@@ -117,16 +118,47 @@ export class ResendService {
         subject: email.subject,
         html: email.html,
       }),
+      signal: AbortSignal.timeout(RESEND_SEND_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => "");
+      const detail = await response.text().catch((err: unknown) => {
+        // Same class of bug as the success-path `.json()` read below: the
+        // timeout signal governs the error body read too, so an abort firing
+        // while `.text()` is pending must propagate as the genuine timeout,
+        // not be swallowed into an empty detail on `ResendSendError`.
+        if (
+          err instanceof Error &&
+          (err.name === "AbortError" || err.name === "TimeoutError")
+        ) {
+          throw err;
+        }
+        return "";
+      });
       throw new ResendSendError(response.status, detail);
     }
 
-    const body = (await response.json().catch(() => undefined)) as
-      | { id?: string }
-      | undefined;
+    const body = (await response.json().catch((err: unknown) => {
+      // `AbortSignal.timeout()` governs the body read too, not just the
+      // connection phase: if headers arrive but the body stalls, the abort
+      // fires while `.json()` is pending. That must reject `send()` like any
+      // other timeout — NOT be reclassified as a successful send with no
+      // `id`, which would silently swallow the very failure this timeout
+      // exists to surface.
+      if (
+        err instanceof Error &&
+        (err.name === "AbortError" || err.name === "TimeoutError")
+      ) {
+        throw err;
+      }
+      return undefined;
+    })) as { id?: string } | undefined;
+    if (!body?.id) {
+      this.logger.warn(
+        `Resend returned ${response.status} with no \`id\` in the response body; ` +
+          `the send is being treated as successful but cannot be traced.`,
+      );
+    }
     return { status: "sent", id: body?.id ?? "" };
   }
 }
