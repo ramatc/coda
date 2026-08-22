@@ -31,3 +31,21 @@ export const COMMENT_EXCERPT_LENGTH = 140;
  */
 export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Env var: Resend API key. Unset ⇒ {@link ResendService} is DISABLED and every
+ * send is a logged no-op. This is a deliberate divergence from `MeiliService`,
+ * which falls back to sending unauthenticated when its key is missing: there is
+ * no keyless Resend, so "no key" means *disabled*, not *anonymous*. Expected to
+ * be unset in dev and CI; provisioning it is what turns production email on.
+ */
+export const RESEND_API_KEY_ENV = "RESEND_API_KEY";
+
+/**
+ * Env var: the `from` address every notification email is sent as (Resend
+ * accepts either a bare address or `Name <address>`). Resend rejects a send
+ * with no sender, so a client holding a key but no sender could only ever
+ * produce 422s — it is treated as disabled too, and the construction-time warn
+ * names whichever variable is missing.
+ */
+export const RESEND_FROM_ENV = "RESEND_FROM_EMAIL";
