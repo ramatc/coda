@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   Injectable,
-  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { ActivityType } from "@coda/db";
@@ -142,8 +141,6 @@ interface FeedEventRow {
  */
 @Injectable()
 export class SocialService {
-  private readonly logger = new Logger(SocialService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
