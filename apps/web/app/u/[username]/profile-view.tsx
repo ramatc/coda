@@ -79,7 +79,7 @@ export function ProfileView({
           />
         ) : (
           <div
-            className="flex h-20 w-20 items-center justify-center rounded-full bg-brand-100 text-2xl font-semibold text-brand-700"
+            className="flex h-20 w-20 items-center justify-center rounded-full bg-surface-2 text-2xl font-semibold text-text-primary"
             data-testid="avatar-placeholder"
           >
             {profile.displayName.charAt(0).toUpperCase()}

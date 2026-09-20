@@ -99,7 +99,7 @@ export function SearchExperience({ initialPopular }: SearchExperienceProps) {
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold text-brand-600">Discover</h1>
+        <h1 className="text-3xl font-semibold text-text-primary">Discover</h1>
         <p className="text-base opacity-70">
           Search albums and artists across the catalog.
         </p>
@@ -111,7 +111,7 @@ export function SearchExperience({ initialPopular }: SearchExperienceProps) {
         onChange={(e) => onChange(e.target.value)}
         placeholder="Search albums and artists…"
         aria-label="Search the catalog"
-        className="rounded-card border border-brand-200 px-4 py-3 text-base"
+        className="rounded-card border border-border-subtle bg-surface-1 px-4 py-3 text-base text-text-primary placeholder:text-text-tertiary"
       />
 
       {showingResults ? (

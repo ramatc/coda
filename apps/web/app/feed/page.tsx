@@ -7,6 +7,7 @@ import {
   resolveOnboardingRedirect,
 } from "../../lib/onboarding";
 import { FeedList } from "./feed-list";
+import { AppShell } from "../_shell/app-shell";
 
 interface FeedPageProps {
   searchParams: Promise<{ cursor?: string }>;
@@ -49,20 +50,26 @@ export default async function FeedPage({ searchParams }: FeedPageProps) {
     throw new Error("Failed to load feed.");
   }
 
-  return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-6 py-12">
-      <h1 className="text-3xl font-semibold text-brand-600">Your feed</h1>
+  // Called (and awaited) as a plain async function rather than used as JSX —
+  // see the matching comment in `app/home/page.tsx` for why.
+  return await AppShell({
+    children: (
+      <main className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-8">
+        <h1 className="text-2xl font-semibold text-text-primary">
+          Your feed
+        </h1>
 
-      <FeedList items={page.items} />
+        <FeedList items={page.items} />
 
-      {page.nextCursor ? (
-        <Link
-          href={`/feed?cursor=${encodeURIComponent(page.nextCursor)}`}
-          className="self-center text-sm font-medium text-brand-600 hover:underline"
-        >
-          Load older activity
-        </Link>
-      ) : null}
-    </main>
-  );
+        {page.nextCursor ? (
+          <Link
+            href={`/feed?cursor=${encodeURIComponent(page.nextCursor)}`}
+            className="self-center text-sm font-medium text-coda hover:underline"
+          >
+            Load older activity
+          </Link>
+        ) : null}
+      </main>
+    ),
+  });
 }

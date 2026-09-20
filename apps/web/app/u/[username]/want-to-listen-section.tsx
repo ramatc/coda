@@ -110,7 +110,7 @@ export function WantToListenSection({
           {EMPTY_WANT_TO_LISTEN_MESSAGE}
         </p>
       ) : (
-        <ul className="flex flex-col divide-y divide-brand-100">
+        <ul className="flex flex-col divide-y divide-border-subtle">
           {visible.map((item) => (
             <li key={item.id} className="flex items-center gap-3 py-2 text-sm">
               <span className="flex flex-1 flex-col">
@@ -129,7 +129,7 @@ export function WantToListenSection({
                   aria-label={`Remove ${item.album.title} by ${item.album.primaryArtistName} from want to listen`}
                   disabled={busy}
                   onClick={() => void remove(item)}
-                  className="rounded-card border border-brand-200 px-2 py-1 opacity-70"
+                  className="rounded-card border border-border-subtle px-2 py-1 opacity-70"
                 >
                   Remove
                 </button>

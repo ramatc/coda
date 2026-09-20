@@ -50,7 +50,7 @@ export function AlbumDetailView({ album, children }: AlbumDetailViewProps) {
           />
         ) : (
           <div
-            className="flex h-48 w-48 items-center justify-center rounded-card bg-brand-100 text-5xl font-semibold text-brand-700"
+            className="flex h-48 w-48 items-center justify-center rounded-card bg-surface-2 text-5xl font-semibold text-text-primary"
             data-testid="album-cover-placeholder"
           >
             {album.title.charAt(0).toUpperCase()}
@@ -68,7 +68,7 @@ export function AlbumDetailView({ album, children }: AlbumDetailViewProps) {
               </span>
             ) : null}
           </p>
-          <p className="text-sm font-medium text-brand-600" data-testid="aggregate-rating">
+          <p className="text-sm font-medium text-text-primary" data-testid="aggregate-rating">
             {formatAggregate(
               album.aggregateRating.average,
               album.aggregateRating.count,
@@ -79,7 +79,7 @@ export function AlbumDetailView({ album, children }: AlbumDetailViewProps) {
               {album.genres.map((genre) => (
                 <li
                   key={genre.id}
-                  className="rounded-full border border-brand-200 px-3 py-1 text-xs opacity-80"
+                  className="rounded-full border border-border-subtle px-3 py-1 text-xs opacity-80"
                 >
                   {genre.name}
                 </li>
@@ -98,7 +98,7 @@ export function AlbumDetailView({ album, children }: AlbumDetailViewProps) {
           Tracklist
         </h2>
         {album.tracks.length > 0 ? (
-          <ol className="flex flex-col divide-y divide-brand-100">
+          <ol className="flex flex-col divide-y divide-border-subtle">
             {album.tracks.map((track) => (
               <li
                 key={track.id}

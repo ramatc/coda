@@ -4,10 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { buttonVariants, cn } from "@coda/ui";
+import { buttonVariants, cn, RatingScale } from "@coda/ui";
 import {
-  MAX_RATING,
-  MIN_RATING,
   deleteListen,
   deleteRating,
   markListened,
@@ -37,11 +35,6 @@ interface AlbumActionsProps {
 }
 
 type Status = "idle" | "saving" | "error";
-
-const RATING_OPTIONS = Array.from(
-  { length: MAX_RATING - MIN_RATING + 1 },
-  (_, i) => MIN_RATING + i,
-);
 
 /**
  * Album action island (client): mark listened, rate (1-10), write/edit a
@@ -197,7 +190,7 @@ export function AlbumActions({
   const reviewBusy = busy || pendingRefresh;
 
   return (
-    <div className="flex flex-col gap-4 rounded-card border border-brand-100 p-4">
+    <div className="flex flex-col gap-4 rounded-card border border-border-subtle p-4">
       <div className="flex flex-wrap items-center gap-3">
         {viewer.listened ? (
           <button
@@ -249,44 +242,55 @@ export function AlbumActions({
           </button>
         )}
 
-        <label className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-sm">
           <span className="opacity-70">Your rating</span>
-          <select
-            aria-label="Your rating"
+          <RatingScale
+            value={viewer.score}
+            variant="personal"
+            interactive
             // Also gated on `pendingRefresh`, not just `busy`: clearing the
             // rating fires `deleteRating`, which cascades to delete the
             // review server-side (Decision #12) and arms the same gate the
-            // review controls use. Left on `busy` alone, this select would
+            // review controls use. Left on `busy` alone, this control would
             // re-enable as soon as a DIFFERENT in-flight action (e.g. a
             // review save) returns its mutation promise but before its own
             // `router.refresh()` lands — letting the user clear the rating
             // mid-flight and race two action+refresh cycles over the one
             // shared `pendingRefresh` boolean (judgment-day round 4).
             disabled={reviewBusy}
-            value={viewer.score ?? ""}
-            onChange={(e) => {
-              const value = e.target.value;
-              if (value === "") {
-                // Arms the review-draft gate too: deleting the rating
-                // cascade-deletes the review server-side (Decision #12), so
-                // the review controls must stay disabled until the refreshed
-                // props land rather than re-enable over a stale rating and a
-                // review the server has already removed.
+            onChange={(score) =>
+              void run((t) => rateAlbum(t, albumId, score))
+            }
+          />
+          {viewer.score !== null ? (
+            <button
+              type="button"
+              disabled={reviewBusy}
+              onClick={() => {
+                // A present rating is cascade-deleted along with its review
+                // server-side (Decision #12) — an irreversible loss with no
+                // undo, so a present review gets one blocking confirmation
+                // before it happens. An unrated-but-scored clear (no review)
+                // is not destructive beyond the rating the user already
+                // explicitly chose to remove, so it proceeds immediately.
+                if (
+                  viewer.review &&
+                  !window.confirm(
+                    "Clearing your rating will also delete your review. Continue?",
+                  )
+                ) {
+                  return;
+                }
+                // Same call (and `affectsReviewDraft = true` gate) the old
+                // select's empty-value branch used — see the comment above.
                 void run((t) => deleteRating(t, albumId), true);
-              } else {
-                void run((t) => rateAlbum(t, albumId, Number(value)));
-              }
-            }}
-            className="rounded-card border border-brand-200 px-3 py-2"
-          >
-            <option value="">—</option>
-            {RATING_OPTIONS.map((score) => (
-              <option key={score} value={score}>
-                {score}
-              </option>
-            ))}
-          </select>
-        </label>
+              }}
+              className="text-xs underline opacity-70 hover:opacity-100"
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
 
         {ownLists.length === 0 ? (
           // Shown rather than hidden: a viewer with no lists is exactly who
@@ -312,7 +316,7 @@ export function AlbumActions({
                   void addToList(listId);
                 }
               }}
-              className="rounded-card border border-brand-200 px-3 py-2"
+              className="rounded-card border border-border-subtle bg-surface-1 px-3 py-2 text-text-primary"
             >
               <option value="">Add to list…</option>
               {ownLists.map((list) => (
@@ -340,7 +344,7 @@ export function AlbumActions({
               : "Write a plain-text review…"
           }
           rows={4}
-          className="rounded-card border border-brand-200 px-3 py-2 text-sm"
+          className="rounded-card border border-border-subtle bg-surface-1 px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary"
         />
         <button
           type="button"

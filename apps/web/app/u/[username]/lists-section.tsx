@@ -45,7 +45,7 @@ export function ListsSection({ lists, isOwnProfile }: ListsSectionProps) {
       {lists.length === 0 ? (
         <EmptyLists isOwnProfile={isOwnProfile} />
       ) : (
-        <ul className="flex flex-col divide-y divide-brand-100">
+        <ul className="flex flex-col divide-y divide-border-subtle">
           {lists.map((list) => (
             <li key={list.id} className="flex flex-col gap-1 py-2 text-sm">
               <Link href={`/lists/${list.id}`} className="font-medium">
