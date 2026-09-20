@@ -20,6 +20,25 @@ const WRITE_HANDLERS = [
   "deleteComment",
 ] as const;
 
+const popular = [
+  {
+    id: REVIEW_ID,
+    body: "A masterpiece, front to back.",
+    isSpoiler: false,
+    score: 9,
+    createdAt: "2026-07-25T10:00:00.000Z",
+    album: {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      title: "OK Computer",
+      coverUrl: null,
+      primaryArtistName: "Radiohead",
+    },
+    author: { username: "author", displayName: "The Author", avatarUrl: null },
+    likeCount: 4,
+    commentCount: 2,
+  },
+];
+
 const detail = {
   id: REVIEW_ID,
   body: "A masterpiece, front to back.",
@@ -69,6 +88,7 @@ function handlerNames(): string[] {
  */
 describe("ReviewsController", () => {
   let getReview: ReturnType<typeof vi.fn>;
+  let popularReviews: ReturnType<typeof vi.fn>;
   let likeReview: ReturnType<typeof vi.fn>;
   let unlikeReview: ReturnType<typeof vi.fn>;
   let createComment: ReturnType<typeof vi.fn>;
@@ -78,6 +98,7 @@ describe("ReviewsController", () => {
 
   beforeEach(() => {
     getReview = vi.fn().mockResolvedValue(detail);
+    popularReviews = vi.fn().mockResolvedValue(popular);
     likeReview = vi.fn().mockResolvedValue({ likeCount: 1, hasLiked: true });
     unlikeReview = vi.fn().mockResolvedValue({ likeCount: 0, hasLiked: false });
     createComment = vi.fn().mockResolvedValue(comment);
@@ -85,6 +106,7 @@ describe("ReviewsController", () => {
     deleteComment = vi.fn().mockResolvedValue(undefined);
     controller = new ReviewsController({
       getReview,
+      popularReviews,
       likeReview,
       unlikeReview,
       createComment,
@@ -129,6 +151,63 @@ describe("ReviewsController", () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, ReviewsController)).toBe(
       undefined,
     );
+  });
+
+  it("GET /reviews/popular forwards the raw limit and returns the cards", async () => {
+    const result = await controller.popularReviews("5");
+
+    // Unvalidated at this layer, like every other input here — the service
+    // types it as `unknown` and clamps it.
+    expect(popularReviews).toHaveBeenCalledWith("5");
+    expect(result).toBe(popular);
+  });
+
+  it("forwards an absent limit as undefined rather than coercing it", async () => {
+    await controller.popularReviews(undefined);
+
+    expect(popularReviews).toHaveBeenCalledWith(undefined);
+  });
+
+  it("marks popularReviews @Public() at METHOD level and never at class level", () => {
+    expect(
+      Reflect.getMetadata(
+        IS_PUBLIC_KEY,
+        ReviewsController.prototype.popularReviews,
+      ),
+    ).toBe(true);
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, ReviewsController)).toBe(
+      undefined,
+    );
+  });
+
+  it("leaves popularReviews free of OptionalClerkGuard: the payload has no viewer block", () => {
+    // Unlike `getReview`, nothing in a popular-review card depends on who is
+    // asking, so resolving the caller would be cost with no consumer.
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        ReviewsController.prototype.popularReviews,
+      ),
+    ).toBe(undefined);
+  });
+
+  it("declares popularReviews ABOVE getReview so /reviews/popular is not eaten by :id", () => {
+    // Nest registers routes in declaration order, and it reads that order from
+    // the prototype's own property order (`MetadataScanner.getAllMethodNames`
+    // → `Object.getOwnPropertyNames`). Declared after `@Get("reviews/:id")`,
+    // the literal `popular` segment would match `:id` first and the service's
+    // UUID guard would answer the landing page with a 400. This assertion is
+    // the regression guard for that ordering.
+    const names = handlerNames();
+    const popularAt = names.indexOf("popularReviews");
+    const detailAt = names.indexOf("getReview");
+
+    // Both looked up explicitly: a bare `indexOf(a) < indexOf(b)` would pass
+    // for a MISSING handler too (-1 beats everything), which is a test that
+    // goes green while the endpoint does not exist.
+    expect(popularAt).toBeGreaterThanOrEqual(0);
+    expect(detailAt).toBeGreaterThanOrEqual(0);
+    expect(popularAt).toBeLessThan(detailAt);
   });
 
   it("POST /reviews/:id/like forwards the caller and review id", async () => {
@@ -199,10 +278,15 @@ describe("ReviewsController", () => {
     },
   );
 
-  it("exposes exactly the read handler plus the five write handlers", () => {
+  it("exposes exactly the two read handlers plus the five write handlers", () => {
     // Pinning the surface so any handler added here later has to extend the
     // negative auth assertions above deliberately, rather than silently
-    // inheriting no coverage.
-    expect(handlerNames()).toEqual(["getReview", ...WRITE_HANDLERS]);
+    // inheriting no coverage. The order is load-bearing too — see the
+    // declaration-order test above.
+    expect(handlerNames()).toEqual([
+      "popularReviews",
+      "getReview",
+      ...WRITE_HANDLERS,
+    ]);
   });
 });

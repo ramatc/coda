@@ -25,6 +25,7 @@ const VIEWER_ID = "22222222-2222-4222-8222-222222222222";
 const AUTHOR_ID = "11111111-1111-4111-8111-111111111111";
 const REVIEW_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const UNKNOWN_REVIEW_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const LOW_RATED_REVIEW_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const COMMENT_ID = "10000000-0000-4000-8000-000000000001";
 const NOTIFICATION_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -56,6 +57,55 @@ function foreignKeyError(): Prisma.PrismaClientKnownRequestError {
 }
 
 /**
+ * Rows behind `GET /reviews/popular`: one comfortably above the score floor and
+ * one below it, so the public payload can be proven to drop the second.
+ */
+const POPULAR_ROWS = [
+  {
+    id: REVIEW_ID,
+    body: "A masterpiece, front to back.",
+    isSpoiler: false,
+    createdAt: new Date("2026-07-25T10:00:00.000Z"),
+    album: {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      title: "OK Computer",
+      coverUrl: null,
+      primaryArtist: { name: "Radiohead" },
+    },
+    user: {
+      profile: {
+        username: "author",
+        displayName: "The Author",
+        avatarUrl: null,
+      },
+    },
+    rating: { score: 9 },
+    _count: { likes: 1, comments: 0 },
+  },
+  {
+    id: LOW_RATED_REVIEW_ID,
+    body: "Didn't land for me.",
+    isSpoiler: false,
+    createdAt: new Date("2026-07-24T10:00:00.000Z"),
+    album: {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+      title: "Pablo Honey",
+      coverUrl: null,
+      primaryArtist: { name: "Radiohead" },
+    },
+    user: {
+      profile: {
+        username: "critic",
+        displayName: "The Critic",
+        avatarUrl: null,
+      },
+    },
+    rating: { score: 6 },
+    _count: { likes: 0, comments: 0 },
+  },
+];
+
+/**
  * The narrow Prisma surface the `/reviews` routes touch, stubbed so they can be
  * exercised end to end without a live Postgres (the project's no-docker sandbox
  * convention). One review, authored by someone else, liked by the viewer —
@@ -82,6 +132,17 @@ function stubPrisma() {
       },
     },
     review: {
+      // Backs `GET /reviews/popular`. Honours the score floor the service
+      // builds so the low-rated row is dropped by the query rather than by an
+      // empty fixture, and honours `take` so the bound is observable.
+      async findMany(args: {
+        where: { rating: { score: { gte: number } } };
+        take: number;
+      }) {
+        return POPULAR_ROWS.filter(
+          (row) => row.rating.score >= args.where.rating.score.gte,
+        ).slice(0, args.take);
+      },
       async findUnique(args: { where: { id: string } }) {
         if (args.where.id !== REVIEW_ID) return null;
         return {
@@ -235,6 +296,46 @@ describe("Reviews API (e2e)", () => {
   beforeEach(() => {
     mockedVerifyToken.mockReset();
     stub.reset();
+  });
+
+  it("serves GET /reviews/popular to an anonymous caller (200 array, never 401)", async () => {
+    const res = await request(app.getHttpServer()).get("/reviews/popular");
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    // A 400 here would mean `@Get("reviews/:id")` matched first and the UUID
+    // guard rejected the literal string "popular" — the route-order regression
+    // this landing-page endpoint is most exposed to.
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({
+      id: REVIEW_ID,
+      score: 9,
+      album: { title: "OK Computer", primaryArtistName: "Radiohead" },
+      author: { username: "author" },
+      likeCount: 1,
+      commentCount: 0,
+    });
+    // Bounded top-N, not a page: no cursor rides along in the payload.
+    expect(res.body[0]).not.toHaveProperty("nextCursor");
+    expect(mockedVerifyToken).not.toHaveBeenCalled();
+  });
+
+  it("omits a review rated below the floor from the public popular payload", async () => {
+    const res = await request(app.getHttpServer()).get("/reviews/popular");
+
+    expect(res.status).toBe(200);
+    expect(res.body.map((review: { id: string }) => review.id)).not.toContain(
+      LOW_RATED_REVIEW_ID,
+    );
+  });
+
+  it("clamps ?limit= on GET /reviews/popular instead of rejecting it", async () => {
+    const res = await request(app.getHttpServer()).get(
+      "/reviews/popular?limit=1",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
   });
 
   it("serves GET /reviews/:id to an anonymous caller (200, never 401)", async () => {
