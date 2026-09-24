@@ -10,8 +10,10 @@ import {
 import { AppModule } from "../src/app.module.js";
 import { IS_PUBLIC_KEY } from "../src/auth/auth.types.js";
 import { NotificationsController } from "../src/notifications/notifications.controller.js";
+import { NotificationEmailQueue } from "../src/notifications/notification-email.queue.js";
 import { NotificationsModule } from "../src/notifications/notifications.module.js";
 import { NotificationsService } from "../src/notifications/notifications.service.js";
+import { ResendService } from "../src/notifications/resend.service.js";
 
 /**
  * The handlers this controller exposes, in DECLARATION order, paired with the
@@ -193,7 +195,7 @@ describe("NotificationsModule", () => {
     ).toEqual([NotificationsController]);
     expect(
       Reflect.getMetadata(MODULE_METADATA.PROVIDERS, NotificationsModule),
-    ).toEqual([NotificationsService]);
+    ).toEqual([NotificationsService, NotificationEmailQueue, ResendService]);
   });
 
   it("exports NotificationsService so the hook-site modules can inject it", () => {

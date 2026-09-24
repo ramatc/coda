@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 import { NotificationsController } from "./notifications.controller.js";
+import { NotificationEmailQueue } from "./notification-email.queue.js";
 import { NotificationsService } from "./notifications.service.js";
+import { ResendService } from "./resend.service.js";
 
 /**
  * In-app notifications module (Fase 2 slice 4). Owns the notification read
@@ -18,7 +20,7 @@ import { NotificationsService } from "./notifications.service.js";
  */
 @Module({
   controllers: [NotificationsController],
-  providers: [NotificationsService],
+  providers: [NotificationsService, NotificationEmailQueue, ResendService],
   exports: [NotificationsService],
 })
 export class NotificationsModule {}

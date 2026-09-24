@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { NotificationType } from "@coda/db";
 import { isUniqueConstraintViolation } from "../prisma/prisma-error.util.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { NotificationEmailQueue } from "./notification-email.queue.js";
 import {
   COMMENT_EXCERPT_LENGTH,
   DEFAULT_NOTIFICATION_LIMIT,
@@ -130,7 +131,10 @@ const NOTIFICATION_SELECT = {
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailQueue: NotificationEmailQueue,
+  ) {}
 
   /**
    * Returns one cursor-paginated page of the caller's notifications, newest
@@ -266,8 +270,9 @@ export class NotificationsService {
       return;
     }
 
+    let notification: { id: string };
     try {
-      await this.prisma.client.notification.create({
+      notification = await this.prisma.client.notification.create({
         data: { recipientUserId, actorUserId, type: NotificationType.FOLLOW },
       });
     } catch (err) {
@@ -290,6 +295,7 @@ export class NotificationsService {
       );
       throw err;
     }
+    await this.enqueueEmail(notification.id);
   }
 
   /**
@@ -301,11 +307,12 @@ export class NotificationsService {
    * allows commenting on your own review, so this guard is the only thing
    * stopping an author from notifying themselves (design Decision 4).
    *
-   * A plain insert with no catch, because there is nothing expected to absorb:
+   * The insert has no catch, because there is nothing expected to absorb:
    * the dedup index is scoped to `type = 'FOLLOW'`, so a second comment from the
    * same actor is a legitimate second notification and must produce a second row.
    * Any failure propagates to the hook site's `try/catch`, which logs it and
-   * still returns the created comment.
+   * still returns the created comment. Email enqueue happens only after that
+   * insert succeeds and has its own best-effort failure boundary.
    */
   async notifyComment(
     actorUserId: string,
@@ -319,7 +326,7 @@ export class NotificationsService {
     // No catch here BY DESIGN: unlike `notifyFollow`, there is no dedup-noop
     // to discriminate from a genuine failure, so an insert failure is expected
     // to propagate as-is to the Phase 6/7 hook site's own try/catch.
-    await this.prisma.client.notification.create({
+    const notification = await this.prisma.client.notification.create({
       data: {
         recipientUserId,
         actorUserId,
@@ -327,6 +334,23 @@ export class NotificationsService {
         reviewCommentId,
       },
     });
+    await this.enqueueEmail(notification.id);
+  }
+
+  /**
+   * Enqueues email only after the notification row is committed. Queue failure
+   * loses the best-effort email, never the durable in-app notification or its
+   * parent follow/comment action (design Decision 6, Layer B).
+   */
+  private async enqueueEmail(notificationId: string): Promise<void> {
+    try {
+      await this.emailQueue.enqueue(notificationId);
+    } catch (err) {
+      this.logger.warn(
+        `Could not enqueue email for notification ${notificationId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /** Unread rows for one recipient, covered by the `[recipientUserId, readAt]` index. */

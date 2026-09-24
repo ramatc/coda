@@ -1,4 +1,32 @@
+import type { JobsOptions } from "bullmq";
+
 /** Notifications domain constants (Fase 2 slice 4 — in-app notifications). */
+
+/** Env var: Redis connection URL used by the notification email queue. */
+export const REDIS_URL_ENV = "REDIS_URL";
+
+/** BullMQ queue holding one immediate email job per notification. */
+export const NOTIFICATION_EMAIL_QUEUE = "notification-email";
+
+/** BullMQ job name for sending one notification email. */
+export const NOTIFICATION_EMAIL_JOB_NAME = "send-notification-email";
+
+/**
+ * Deterministic per-notification job id used to deduplicate enqueue retries.
+ * BullMQ custom ids cannot use the former single-colon form, so the separator
+ * is deliberately a hyphen.
+ */
+export function notificationEmailJobId(notificationId: string): string {
+  return `notification-email-${notificationId}`;
+}
+
+/** Retry and bounded-retention policy for immediate notification emails. */
+export const NOTIFICATION_EMAIL_JOB_OPTIONS: JobsOptions = {
+  attempts: 3,
+  backoff: { type: "exponential", delay: 5000 },
+  removeOnComplete: { count: 1000 },
+  removeOnFail: { count: 5000 },
+};
 
 /** Default page size for `GET /notifications` when no `limit` is supplied. */
 export const DEFAULT_NOTIFICATION_LIMIT = 20;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BadRequestException, Logger } from "@nestjs/common";
 import { NotificationType, Prisma } from "@coda/db";
 import { COMMENT_EXCERPT_LENGTH } from "../src/notifications/notifications.constants.js";
+import type { NotificationEmailQueue } from "../src/notifications/notification-email.queue.js";
 import { NotificationsService } from "../src/notifications/notifications.service.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
 
@@ -260,13 +261,21 @@ function push(
   });
 }
 
+function createFakeEmailQueue() {
+  const enqueue = vi.fn().mockResolvedValue(undefined);
+  return {
+    queue: { enqueue } as unknown as NotificationEmailQueue,
+    enqueue,
+  };
+}
+
 describe("NotificationsService (read surface)", () => {
   let fake: ReturnType<typeof createFakePrisma>;
   let service: NotificationsService;
 
   beforeEach(() => {
     fake = createFakePrisma();
-    service = new NotificationsService(fake.prisma);
+    service = new NotificationsService(fake.prisma, createFakeEmailQueue().queue);
     fake.users.set(CLERK_ID, RECIPIENT_ID);
   });
 
@@ -568,7 +577,7 @@ describe("NotificationsService (mark-as-read)", () => {
 
   beforeEach(() => {
     fake = createFakePrisma();
-    service = new NotificationsService(fake.prisma);
+    service = new NotificationsService(fake.prisma, createFakeEmailQueue().queue);
     fake.users.set(CLERK_ID, RECIPIENT_ID);
   });
 
@@ -699,12 +708,14 @@ describe("NotificationsService (mark-as-read)", () => {
  */
 describe("NotificationsService (write surface, unit layer)", () => {
   let fake: ReturnType<typeof createFakePrisma>;
+  let emailQueue: ReturnType<typeof createFakeEmailQueue>;
   let service: NotificationsService;
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     fake = createFakePrisma();
-    service = new NotificationsService(fake.prisma);
+    emailQueue = createFakeEmailQueue();
+    service = new NotificationsService(fake.prisma, emailQueue.queue);
     fake.users.set(CLERK_ID, RECIPIENT_ID);
     warnSpy = vi
       .spyOn(Logger.prototype, "warn")
@@ -728,6 +739,7 @@ describe("NotificationsService (write surface, unit layer)", () => {
     expect(row.reviewComment).toBeNull();
     expect(row.readAt).toBeNull();
     expect(await service.getUnreadCount(CLERK_ID)).toEqual({ unreadCount: 1 });
+    expect(emailQueue.enqueue).toHaveBeenCalledExactlyOnceWith(row.id);
   });
 
   it("suppresses a self-follow notification without touching the table", async () => {
@@ -737,6 +749,7 @@ describe("NotificationsService (write surface, unit layer)", () => {
     await service.notifyFollow(RECIPIENT_ID, RECIPIENT_ID);
 
     expect(fake.notifications).toEqual([]);
+    expect(emailQueue.enqueue).not.toHaveBeenCalled();
   });
 
   it("creates a COMMENT notification linked to the comment that triggered it", async () => {
@@ -752,6 +765,7 @@ describe("NotificationsService (write surface, unit layer)", () => {
     expect(row.reviewComment).not.toBeNull();
     const page = await service.list(CLERK_ID);
     expect(page.items[0].reviewId).toBe(REVIEW_ID);
+    expect(emailQueue.enqueue).toHaveBeenCalledExactlyOnceWith(row.id);
   });
 
   it("suppresses a self-comment notification without touching the table", async () => {
@@ -760,6 +774,7 @@ describe("NotificationsService (write surface, unit layer)", () => {
     await service.notifyComment(RECIPIENT_ID, RECIPIENT_ID, COMMENT_ID);
 
     expect(fake.notifications).toEqual([]);
+    expect(emailQueue.enqueue).not.toHaveBeenCalled();
   });
 
   it("does not dedup COMMENT notifications: two comments from the same actor create two rows", async () => {
@@ -782,6 +797,7 @@ describe("NotificationsService (write surface, unit layer)", () => {
 
     expect(fake.notifications).toHaveLength(1);
     expect(await service.getUnreadCount(CLERK_ID)).toEqual({ unreadCount: 1 });
+    expect(emailQueue.enqueue).toHaveBeenCalledTimes(1);
     // A refollow-while-unread is an EXPECTED outcome, not a failure. Logging it
     // would make every normal refollow look like a production error (Decision 6).
     expect(warnSpy).not.toHaveBeenCalled();
@@ -830,6 +846,7 @@ describe("NotificationsService (write surface, unit layer)", () => {
     // silently absorbed. It is surfaced to the log AND propagated to the hook
     // site's own try/catch, which is what keeps the follow itself a 200.
     expect(fake.notifications).toEqual([]);
+    expect(emailQueue.enqueue).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledTimes(1);
     const warnMessage = String(warnSpy.mock.calls[0][0]);
     expect(warnMessage).toContain("connection terminated");
@@ -838,5 +855,36 @@ describe("NotificationsService (write surface, unit layer)", () => {
     // uselessly, since nobody could tell which user's follow notification
     // failed to send.
     expect(warnMessage).toContain(RECIPIENT_ID);
+  });
+
+  it("keeps a FOLLOW notification committed when its email enqueue fails", async () => {
+    emailQueue.enqueue.mockRejectedValueOnce(new Error("Redis unavailable"));
+
+    await expect(
+      service.notifyFollow(ACTOR_ID, RECIPIENT_ID),
+    ).resolves.toBeUndefined();
+
+    expect(fake.notifications).toHaveLength(1);
+    const [row] = fake.notifications;
+    expect(emailQueue.enqueue).toHaveBeenCalledExactlyOnceWith(row.id);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0][0])).toContain(row.id);
+    expect(String(warnSpy.mock.calls[0][0])).toContain("Redis unavailable");
+  });
+
+  it("keeps a COMMENT notification committed when its email enqueue fails", async () => {
+    emailQueue.enqueue.mockRejectedValueOnce(new Error("queue timeout"));
+
+    await expect(
+      service.notifyComment(ACTOR_ID, RECIPIENT_ID, COMMENT_ID),
+    ).resolves.toBeUndefined();
+
+    expect(fake.notifications).toHaveLength(1);
+    const [row] = fake.notifications;
+    expect(row.type).toBe(NotificationType.COMMENT);
+    expect(emailQueue.enqueue).toHaveBeenCalledExactlyOnceWith(row.id);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0][0])).toContain(row.id);
+    expect(String(warnSpy.mock.calls[0][0])).toContain("queue timeout");
   });
 });
