@@ -7,10 +7,13 @@ interface PopularRowProps {
 }
 
 /**
- * Compact horizontal row of popular albums for the Home dashboard. Reuses the
- * discover page's album-card convention (`lib/search.ts`'s `PopularAlbum` and
- * `albumHref`) but lays it out as a horizontally-scrolling row instead of a
- * grid — Home surfaces a glance, not a full browse (that stays on `/search`).
+ * Row of popular albums for the Home dashboard. Reuses the discover page's
+ * album-card convention (`lib/search.ts`'s `PopularAlbum` and `albumHref`).
+ * Below `lg` it lays out as a horizontally-scrolling row (Home surfaces a
+ * glance, not a full browse — that stays on `/search`); from `lg` up it
+ * becomes a fixed one-row grid with large artwork, matching the desktop
+ * "what is alive in music" treatment — deliberately no floating score and no
+ * #1/#2/#3 ranking, which would misread this as an official chart.
  */
 export function PopularRow({ albums }: PopularRowProps) {
   if (albums.length === 0) {
@@ -22,9 +25,9 @@ export function PopularRow({ albums }: PopularRowProps) {
   }
 
   return (
-    <ul className="scrollbar-hide flex gap-4 overflow-x-auto pb-1">
+    <ul className="scrollbar-hide flex gap-4 overflow-x-auto pb-1 lg:grid lg:grid-cols-6 lg:gap-5 lg:overflow-visible lg:pb-0">
       {albums.map((album) => (
-        <li key={album.id} className="w-36 shrink-0">
+        <li key={album.id} className="w-36 shrink-0 lg:w-full">
           <Link href={albumHref(album.id)} className="flex flex-col gap-2">
             {album.coverUrl ? (
               // Remote cover art rendered with a plain <img>; next/image

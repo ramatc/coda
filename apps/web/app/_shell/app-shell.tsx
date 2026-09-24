@@ -23,6 +23,9 @@ interface AppShellProps {
  * onboarding gate, so a `null` profile here is a transient blip, not a
  * legitimate "no profile" state — it degrades the "You" link to `/home`
  * rather than guessing a username that might not resolve.
+ *
+ * `BottomNav` is hidden from `lg` up: `Header`'s `DesktopNav` takes over its
+ * job on wide viewports, so showing both would duplicate the primary nav.
  */
 export async function AppShell({ children }: AppShellProps) {
   const { getToken } = await auth();
@@ -34,8 +37,10 @@ export async function AppShell({ children }: AppShellProps) {
   return (
     <div className="flex min-h-screen flex-col">
       <Header youHref={youHref} youInitial={youInitial} />
-      <div className="flex-1 pb-16">{children}</div>
-      <BottomNav youHref={youHref} />
+      <div className="flex-1 pb-16 lg:pb-0">{children}</div>
+      <div className="lg:hidden">
+        <BottomNav youHref={youHref} />
+      </div>
     </div>
   );
 }

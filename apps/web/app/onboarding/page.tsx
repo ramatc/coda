@@ -5,7 +5,12 @@ import {
   fetchOnboardingStatus,
   resolveOnboardingRedirect,
 } from "../../lib/onboarding";
+import { fetchPopularAlbums } from "../../lib/search";
 import { OnboardingWizard } from "./onboarding-wizard";
+
+/** Real popular albums shown in the editorial panel's record collage — purely
+ * editorial dressing, never mocked. */
+const SPOTLIGHT_ALBUM_COUNT = 3;
 
 /**
  * Onboarding page at `/onboarding` (server component). Protected by the Clerk
@@ -23,6 +28,14 @@ export default async function OnboardingPage() {
     redirect(redirectTo);
   }
 
-  const genres = await fetchGenres(token);
-  return <OnboardingWizard genres={genres} />;
+  const [genres, popularAlbums] = await Promise.all([
+    fetchGenres(token),
+    fetchPopularAlbums(token),
+  ]);
+  return (
+    <OnboardingWizard
+      genres={genres}
+      spotlightAlbums={popularAlbums.slice(0, SPOTLIGHT_ALBUM_COUNT)}
+    />
+  );
 }

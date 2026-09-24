@@ -84,21 +84,24 @@ const FEED_ITEM = {
 
 /**
  * Routes the page's parallel reads by URL — `/search/popular`, `/feed`,
- * `/recommendations`, plus `/profile` (read by the {@link AppShell} wrapper
- * to resolve the viewer's own username for the shell's "You" link) — each
- * independently overridable so a test can isolate one section without
- * hand-building every payload every time.
+ * `/recommendations`, `/me/activity` (the viewer's own log, for the sidebar),
+ * plus `/profile` (read by the {@link AppShell} wrapper to resolve the
+ * viewer's own username for the shell's "You" link) — each independently
+ * overridable so a test can isolate one section without hand-building every
+ * payload every time.
  */
 function mockFetch(
   overrides: {
     popular?: unknown[];
     feed?: { items: unknown[]; nextCursor: string | null };
     recommendations?: unknown[];
+    activity?: { items: unknown[]; nextCursor: string | null };
   } = {},
 ) {
   const popular = overrides.popular ?? [POPULAR_ALBUM];
   const feed = overrides.feed ?? { items: [FEED_ITEM], nextCursor: null };
   const recommendations = overrides.recommendations ?? [];
+  const activity = overrides.activity ?? { items: [], nextCursor: null };
 
   return vi
     .spyOn(globalThis, "fetch")
@@ -111,6 +114,9 @@ function mockFetch(
       }
       if (url.includes("/search/popular")) {
         return Promise.resolve(jsonResponse(popular));
+      }
+      if (url.includes("/me/activity")) {
+        return Promise.resolve(jsonResponse(activity));
       }
       if (url.includes("/feed")) {
         return Promise.resolve(jsonResponse(feed));
@@ -169,7 +175,7 @@ describe("HomePage", () => {
 
     expect(screen.getByText(/Alfredo 2/)).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: "See full feed" }),
+      screen.getByRole("link", { name: "View all activity →" }),
     ).toHaveProperty("href", expect.stringContaining("/feed"));
   });
 
