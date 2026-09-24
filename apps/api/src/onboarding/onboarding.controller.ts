@@ -50,6 +50,30 @@ export class OnboardingController {
   }
 
   /**
+   * Genre-based artist suggestions for a "browse by genre" picker step, e.g.
+   * `GET /onboarding/artists/suggested?genres=rock,jazz`. Unknown genre slugs
+   * are dropped, not rejected — see {@link OnboardingService.suggestArtists}.
+   */
+  @Get("artists/suggested")
+  suggestArtists(
+    @Query("genres") genres: unknown = "",
+  ): Promise<ArtistSearchResult[]> {
+    return this.onboarding.suggestArtists(this.parseGenreSlugsQuery(genres));
+  }
+
+  /**
+   * Genre-based album suggestions, e.g.
+   * `GET /onboarding/albums/suggested?genres=rock,jazz`. Same validation
+   * posture as {@link suggestArtists}.
+   */
+  @Get("albums/suggested")
+  suggestAlbums(
+    @Query("genres") genres: unknown = "",
+  ): Promise<AlbumSearchResult[]> {
+    return this.onboarding.suggestAlbums(this.parseGenreSlugsQuery(genres));
+  }
+
+  /**
    * Persists the selection and returns the resulting (complete) status.
    * `200`, not Nest's default `201`: this is an idempotent "replace my
    * preferences" operation, not a resource creation.
@@ -74,5 +98,19 @@ export class OnboardingController {
       return typeof first === "string" ? first : "";
     }
     return typeof value === "string" ? value : "";
+  }
+
+  /**
+   * Parses a comma-separated `?genres=` query param into a raw slug list,
+   * reusing {@link normalizeQuery} for the same repeated-`?genres=`-param
+   * coercion `?q=` gets. Slug validity (known vs. unknown) is checked in
+   * {@link OnboardingService}, not here — this method only splits the string.
+   */
+  private parseGenreSlugsQuery(value: unknown): string[] {
+    const raw = this.normalizeQuery(value);
+    return raw
+      .split(",")
+      .map((slug) => slug.trim())
+      .filter((slug) => slug.length > 0);
   }
 }

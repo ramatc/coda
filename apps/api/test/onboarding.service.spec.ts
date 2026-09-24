@@ -71,6 +71,9 @@ interface Ref {
   imageUrl?: string | null;
   coverUrl?: string | null;
   primaryArtistName?: string;
+  /** Album fixtures only: links the album back to its primary artist, so the
+   * genre-suggestion fakes below can join artist -> album -> genre tag. */
+  primaryArtistId?: string;
 }
 
 interface GenreRow {
@@ -85,17 +88,22 @@ function createFakePrisma(): {
   artists: Map<string, Ref>;
   albums: Map<string, Ref>;
   genres: Map<string, GenreRow>; // slug -> row
+  albumGenreTags: Map<string, Set<string>>; // albumId -> genre slugs
   genrePrefs: Map<string, { userId: string; genreId: string }>;
   artistFavs: Map<string, { userId: string; artistId: string; rank: number }>;
   albumFavs: Map<string, { userId: string; albumId: string; rank: number }>;
   /** Test-only trigger: makes the NEXT `userArtistFavorite.createMany` throw a
    * P2002, simulating a concurrent/overlapping submission racing this one. */
   triggerArtistConflictOnce: () => void;
+  /** Tags an album (already present in `albums`) with genre slugs, mirroring
+   * the real `AlbumGenre` join table for `suggestArtists`/`suggestAlbums`. */
+  tagAlbumGenres: (albumId: string, slugs: string[]) => void;
 } {
   const users = new Map<string, string>();
   const artists = new Map<string, Ref>();
   const albums = new Map<string, Ref>();
   const genres = new Map<string, GenreRow>();
+  const albumGenreTags = new Map<string, Set<string>>();
   const genrePrefs = new Map<string, { userId: string; genreId: string }>();
   const artistFavs = new Map<
     string,
@@ -156,12 +164,39 @@ function createFakePrisma(): {
     },
     artist: {
       async findMany(args: {
-        where: { id?: { in: string[] }; name?: { contains: string } };
+        where: {
+          id?: { in: string[] };
+          name?: { contains: string };
+          albums?: {
+            some: { genres: { some: { genre: { slug: { in: string[] } } } } };
+          };
+        };
       }): Promise<Ref[]> {
         if (args.where.id) {
           return args.where.id.in
             .filter((id) => artists.has(id))
             .map((id) => ({ id, name: artists.get(id)?.name }));
+        }
+        if (args.where.albums) {
+          const slugs = new Set(
+            args.where.albums.some.genres.some.genre.slug.in,
+          );
+          return [...artists.values()]
+            .filter((artist) =>
+              [...albums.values()].some(
+                (album) =>
+                  album.primaryArtistId === artist.id &&
+                  [...(albumGenreTags.get(album.id) ?? [])].some((slug) =>
+                    slugs.has(slug),
+                  ),
+              ),
+            )
+            .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+            .map((artist) => ({
+              id: artist.id,
+              name: artist.name,
+              imageUrl: artist.imageUrl ?? null,
+            }));
         }
         const needle = args.where.name?.contains.toLowerCase() ?? "";
         return [...artists.values()].filter((a) =>
@@ -171,12 +206,29 @@ function createFakePrisma(): {
     },
     album: {
       async findMany(args: {
-        where: { id?: { in: string[] }; title?: { contains: string } };
+        where: {
+          id?: { in: string[] };
+          title?: { contains: string };
+          genres?: { some: { genre: { slug: { in: string[] } } } };
+        };
       }): Promise<Ref[]> {
         if (args.where.id) {
           return args.where.id.in
             .filter((id) => albums.has(id))
             .map((id) => ({ id }));
+        }
+        if (args.where.genres) {
+          const slugs = new Set(args.where.genres.some.genre.slug.in);
+          return [...albums.values()]
+            .filter((a) =>
+              [...(albumGenreTags.get(a.id) ?? [])].some((slug) =>
+                slugs.has(slug),
+              ),
+            )
+            .map((a) => ({
+              ...a,
+              primaryArtist: { name: a.primaryArtistName ?? "Unknown" },
+            }));
         }
         const needle = args.where.title?.contains.toLowerCase() ?? "";
         return [...albums.values()]
@@ -280,11 +332,15 @@ function createFakePrisma(): {
     artists,
     albums,
     genres,
+    albumGenreTags,
     genrePrefs,
     artistFavs,
     albumFavs,
     triggerArtistConflictOnce: () => {
       forceArtistConflict = true;
+    },
+    tagAlbumGenres: (albumId: string, slugs: string[]) => {
+      albumGenreTags.set(albumId, new Set(slugs));
     },
   };
 }
@@ -308,6 +364,17 @@ describe("OnboardingService", () => {
     const genres = service.listGenres();
     expect(genres.length).toBeGreaterThanOrEqual(3);
     expect(genres.map((g) => g.slug)).toContain("rock");
+  });
+
+  it("includes a non-empty category and descriptor for every genre in the taxonomy", () => {
+    const genres = service.listGenres();
+    expect(genres.length).toBe(18);
+    for (const genre of genres) {
+      expect(typeof genre.category).toBe("string");
+      expect(genre.category.length).toBeGreaterThan(0);
+      expect(typeof genre.descriptor).toBe("string");
+      expect(genre.descriptor.length).toBeGreaterThan(0);
+    }
   });
 
   it("reports incomplete for a fresh user", async () => {
@@ -534,5 +601,86 @@ describe("OnboardingService", () => {
   it("returns an empty artist search gracefully (empty catalog / blank query)", async () => {
     expect(await service.searchArtists("   ")).toEqual([]);
     expect(await service.searchAlbums("nothing-here")).toEqual([]);
+  });
+
+  describe("suggestArtists / suggestAlbums", () => {
+    const JAZZ_ALBUM_ID = "55555555-5555-4555-8555-555555555555";
+    const ROCK_ALBUM_ID = "66666666-6666-4666-8666-666666666666";
+
+    beforeEach(() => {
+      // ARTIST_1 (Radiohead) has a rock album; ARTIST_2 (Portishead) has a
+      // jazz album — genre-tagged via the fake `AlbumGenre` join.
+      fake.albums.set(ROCK_ALBUM_ID, {
+        id: ROCK_ALBUM_ID,
+        title: "OK Computer",
+        coverUrl: "https://example.test/ok-computer.jpg",
+        primaryArtistName: "Radiohead",
+        primaryArtistId: ARTIST_1_ID,
+      });
+      fake.albums.set(JAZZ_ALBUM_ID, {
+        id: JAZZ_ALBUM_ID,
+        title: "Dummy",
+        coverUrl: "https://example.test/dummy.jpg",
+        primaryArtistName: "Portishead",
+        primaryArtistId: ARTIST_2_ID,
+      });
+      fake.tagAlbumGenres(ROCK_ALBUM_ID, ["rock"]);
+      fake.tagAlbumGenres(JAZZ_ALBUM_ID, ["jazz"]);
+    });
+
+    it("suggestArtists returns [] immediately for an empty genre list", async () => {
+      expect(await service.suggestArtists([])).toEqual([]);
+    });
+
+    it("suggestAlbums returns [] immediately for an empty genre list", async () => {
+      expect(await service.suggestAlbums([])).toEqual([]);
+    });
+
+    it("suggestArtists returns artists whose primary-artist album is tagged with a selected genre", async () => {
+      const results = await service.suggestArtists(["rock"]);
+      expect(results).toEqual([
+        { id: ARTIST_1_ID, name: "Radiohead", imageUrl: null },
+      ]);
+    });
+
+    it("suggestAlbums returns albums tagged with a selected genre, in the search-result shape", async () => {
+      const results = await service.suggestAlbums(["jazz"]);
+      expect(results).toEqual([
+        {
+          id: JAZZ_ALBUM_ID,
+          title: "Dummy",
+          coverUrl: "https://example.test/dummy.jpg",
+          primaryArtistName: "Portishead",
+        },
+      ]);
+    });
+
+    it("suggestArtists/suggestAlbums match across multiple selected genres", async () => {
+      const artists = await service.suggestArtists(["rock", "jazz"]);
+      expect(artists.map((a) => a.id).sort()).toEqual(
+        [ARTIST_1_ID, ARTIST_2_ID].sort(),
+      );
+
+      const albums = await service.suggestAlbums(["rock", "jazz"]);
+      expect(albums.map((a) => a.id).sort()).toEqual(
+        [ROCK_ALBUM_ID, JAZZ_ALBUM_ID].sort(),
+      );
+    });
+
+    it("drops unknown genre slugs rather than erroring, and returns [] when none are known", async () => {
+      // Mixed known + unknown: the unknown slug is ignored, the known one still matches.
+      expect(await service.suggestArtists(["rock", "not-a-genre"])).toEqual([
+        { id: ARTIST_1_ID, name: "Radiohead", imageUrl: null },
+      ]);
+
+      // All-unknown: nothing survives validation, so this short-circuits to [].
+      expect(await service.suggestAlbums(["not-a-genre", "also-fake"])).toEqual(
+        [],
+      );
+    });
+
+    it("suggestArtists returns [] when no album is tagged with the selected genre", async () => {
+      expect(await service.suggestArtists(["metal"])).toEqual([]);
+    });
   });
 });

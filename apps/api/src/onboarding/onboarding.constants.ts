@@ -31,36 +31,136 @@ export { MIN_GENRES, MIN_ARTISTS, MAX_ARTISTS, MAX_ALBUMS };
 export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A genre in the fixed onboarding taxonomy. */
+/**
+ * A genre in the fixed onboarding taxonomy.
+ *
+ * `category` is a purely editorial grouping label (NOT the `Genre.parentGenreId`
+ * self-relation in the Prisma schema, which is unused and untouched here) — it
+ * exists only to let the genre picker render genres in sensible sections.
+ * `descriptor` is a short, human-facing subtitle for the genre tile.
+ */
 export interface GenreSeed {
   slug: string;
   name: string;
+  category: string;
+  descriptor: string;
 }
 
 /**
  * The fixed genre taxonomy offered during onboarding. Ordered for stable
  * rendering; `slug` is the canonical key (unique in the `Genre` table) used to
- * upsert the row on submit.
+ * upsert the row on submit. `category`/`descriptor` are editorial content for
+ * the picker UI only and are never persisted or validated against the DB.
  */
 export const GENRE_CATALOG: readonly GenreSeed[] = [
-  { slug: "rock", name: "Rock" },
-  { slug: "pop", name: "Pop" },
-  { slug: "hip-hop", name: "Hip-Hop" },
-  { slug: "r-n-b", name: "R&B" },
-  { slug: "soul", name: "Soul" },
-  { slug: "funk", name: "Funk" },
-  { slug: "jazz", name: "Jazz" },
-  { slug: "blues", name: "Blues" },
-  { slug: "electronic", name: "Electronic" },
-  { slug: "ambient", name: "Ambient" },
-  { slug: "classical", name: "Classical" },
-  { slug: "folk", name: "Folk" },
-  { slug: "country", name: "Country" },
-  { slug: "metal", name: "Metal" },
-  { slug: "punk", name: "Punk" },
-  { slug: "indie", name: "Indie" },
-  { slug: "reggae", name: "Reggae" },
-  { slug: "latin", name: "Latin" },
+  {
+    slug: "rock",
+    name: "Rock",
+    category: "Rock & Punk",
+    descriptor: "Guitar-driven, riff-heavy, arena to garage",
+  },
+  {
+    slug: "pop",
+    name: "Pop",
+    category: "Pop & Global",
+    descriptor: "Hook-driven, polished, chart-focused mainstream",
+  },
+  {
+    slug: "hip-hop",
+    name: "Hip-Hop",
+    category: "Hip-Hop & R&B",
+    descriptor: "Boom bap, lyrical, East Coast, underground",
+  },
+  {
+    slug: "r-n-b",
+    name: "R&B",
+    category: "Hip-Hop & R&B",
+    descriptor: "Smooth vocals, groove-based, contemporary soul",
+  },
+  {
+    slug: "soul",
+    name: "Soul",
+    category: "Hip-Hop & R&B",
+    descriptor: "Gospel-rooted, emotive, Motown & Southern",
+  },
+  {
+    slug: "funk",
+    name: "Funk",
+    category: "Hip-Hop & R&B",
+    descriptor: "Syncopated bass, horn-driven, groove-first",
+  },
+  {
+    slug: "jazz",
+    name: "Jazz",
+    category: "Jazz & Blues",
+    descriptor: "Modal, spiritual, fusion & hard bop",
+  },
+  {
+    slug: "blues",
+    name: "Blues",
+    category: "Jazz & Blues",
+    descriptor: "12-bar, guitar-led, Delta & Chicago",
+  },
+  {
+    slug: "electronic",
+    name: "Electronic",
+    category: "Electronic & Ambient",
+    descriptor: "Synth-driven, dance floor, house & techno",
+  },
+  {
+    slug: "ambient",
+    name: "Ambient",
+    category: "Electronic & Ambient",
+    descriptor: "Atmospheric, textural, slow-evolving soundscapes",
+  },
+  {
+    slug: "classical",
+    name: "Classical",
+    category: "Classical & Folk",
+    descriptor: "Orchestral, composed, Baroque to Romantic",
+  },
+  {
+    slug: "folk",
+    name: "Folk",
+    category: "Classical & Folk",
+    descriptor: "Acoustic, storytelling, traditional & singer-songwriter",
+  },
+  {
+    slug: "country",
+    name: "Country",
+    category: "Classical & Folk",
+    descriptor: "Twangy, narrative, Nashville & outlaw",
+  },
+  {
+    slug: "metal",
+    name: "Metal",
+    category: "Rock & Punk",
+    descriptor: "Distorted, heavy, thrash to doom",
+  },
+  {
+    slug: "punk",
+    name: "Punk",
+    category: "Rock & Punk",
+    descriptor: "Raw, fast, DIY & anti-establishment",
+  },
+  {
+    slug: "indie",
+    name: "Indie",
+    category: "Rock & Punk",
+    descriptor: "Lo-fi, independent, jangly guitar pop",
+  },
+  {
+    slug: "reggae",
+    name: "Reggae",
+    category: "Pop & Global",
+    descriptor: "Offbeat skank, bass-heavy, Jamaican roots",
+  },
+  {
+    slug: "latin",
+    name: "Latin",
+    category: "Pop & Global",
+    descriptor: "Rhythmic, percussive, salsa to reggaeton",
+  },
 ] as const;
 
 /** Fast lookup of a genre by slug, so a submitted slug can be validated + named. */

@@ -11,14 +11,20 @@ import type { OnboardingService } from "../src/onboarding/onboarding.service.js"
 describe("OnboardingController", () => {
   let searchArtists: ReturnType<typeof vi.fn>;
   let searchAlbums: ReturnType<typeof vi.fn>;
+  let suggestArtists: ReturnType<typeof vi.fn>;
+  let suggestAlbums: ReturnType<typeof vi.fn>;
   let controller: OnboardingController;
 
   beforeEach(() => {
     searchArtists = vi.fn().mockResolvedValue([]);
     searchAlbums = vi.fn().mockResolvedValue([]);
+    suggestArtists = vi.fn().mockResolvedValue([]);
+    suggestAlbums = vi.fn().mockResolvedValue([]);
     const onboarding = {
       searchArtists,
       searchAlbums,
+      suggestArtists,
+      suggestAlbums,
     } as unknown as OnboardingService;
     controller = new OnboardingController(onboarding);
   });
@@ -51,5 +57,35 @@ describe("OnboardingController", () => {
   it("falls back to an empty string for an empty array", async () => {
     await controller.searchArtists([]);
     expect(searchArtists).toHaveBeenCalledWith("");
+  });
+
+  it("splits a comma-separated ?genres= param and forwards the slugs for suggested artists", async () => {
+    await controller.suggestArtists("rock, jazz ,electronic");
+    expect(suggestArtists).toHaveBeenCalledWith(["rock", "jazz", "electronic"]);
+  });
+
+  it("splits a comma-separated ?genres= param and forwards the slugs for suggested albums", async () => {
+    await controller.suggestAlbums("rock,jazz");
+    expect(suggestAlbums).toHaveBeenCalledWith(["rock", "jazz"]);
+  });
+
+  it("coerces a repeated ?genres= query param (string[]) to its first value before splitting", async () => {
+    await controller.suggestArtists(["rock,jazz", "pop"]);
+    expect(suggestArtists).toHaveBeenCalledWith(["rock", "jazz"]);
+  });
+
+  it("drops empty segments from a trailing/leading/double comma", async () => {
+    await controller.suggestAlbums(",rock,,jazz,");
+    expect(suggestAlbums).toHaveBeenCalledWith(["rock", "jazz"]);
+  });
+
+  it("forwards an empty slug list for a missing ?genres= param", async () => {
+    await controller.suggestArtists(undefined);
+    expect(suggestArtists).toHaveBeenCalledWith([]);
+  });
+
+  it("forwards an empty slug list for a non-string, non-array ?genres= value", async () => {
+    await controller.suggestAlbums(42);
+    expect(suggestAlbums).toHaveBeenCalledWith([]);
   });
 });
