@@ -14,7 +14,10 @@ import {
   isUniqueConstraintViolation,
 } from "../prisma/prisma-error.util.js";
 import {
+  DEFAULT_POPULAR_REVIEW_LIMIT,
   MAX_COMMENT_LENGTH,
+  MAX_POPULAR_REVIEW_LIMIT,
+  POPULAR_REVIEW_MIN_SCORE,
   UUID_PATTERN,
   ZERO_WIDTH_PATTERN,
 } from "./reviews.constants.js";
@@ -68,6 +71,28 @@ export interface ReviewLikeResult {
 /** Body accepted by comment create and edit. `unknown` because it is raw input. */
 export interface CommentInput {
   body?: unknown;
+}
+
+/**
+ * One review card on the public landing page. A flattened, viewer-independent
+ * projection: `score` is lifted out of the joined `Rating` and there is no
+ * `viewer` block at all, because `GET /reviews/popular` is served identically
+ * to anonymous and signed-in callers.
+ *
+ * `body` is the FULL text — the card truncates visually with a line clamp, so
+ * the API stays free of a presentation-shaped excerpt length.
+ */
+export interface PopularReview {
+  id: string;
+  body: string;
+  isSpoiler: boolean;
+  /** The author's own 1-10 rating of the album, from the joined `Rating`. */
+  score: number;
+  createdAt: string;
+  album: ReviewAlbum;
+  author: ReviewAuthor;
+  likeCount: number;
+  commentCount: number;
 }
 
 /** The full detail of a single review, consumed by `apps/web/app/reviews/[id]`. */
@@ -166,6 +191,36 @@ export class ReviewsService {
       ),
       viewer: { hasLiked, canInteract: viewerId !== null },
     };
+  }
+
+  /**
+   * The public landing page's popular-reviews strip: a bounded top-N of recent
+   * reviews whose author rated the album at least
+   * {@link POPULAR_REVIEW_MIN_SCORE}.
+   *
+   * Takes no caller at all — unlike {@link getReview} there is no viewer block,
+   * so the payload is byte-identical for an anonymous and a signed-in visitor
+   * and the route needs no `OptionalClerkGuard`.
+   *
+   * The score floor is a nested relation filter rather than a join written by
+   * hand: `Review.rating` is a declared NON-optional relation on the composite
+   * `(userId, albumId)` (`schema.prisma:262`), so Prisma expresses both the
+   * `where` and the `score` projection natively and a `$queryRaw` would only
+   * cost the typed client for nothing.
+   *
+   * Deliberately cursor-free. This is a shop window, not a feed: the response
+   * is a plain array with no `nextCursor`, and {@link clampPopularLimit} is the
+   * only bound on how much an anonymous caller can ask Postgres to scan.
+   */
+  async popularReviews(rawLimit?: unknown): Promise<PopularReview[]> {
+    const rows = (await this.prisma.client.review.findMany({
+      where: { rating: { score: { gte: POPULAR_REVIEW_MIN_SCORE } } },
+      select: POPULAR_REVIEW_SELECT,
+      orderBy: POPULAR_REVIEW_ORDER_BY,
+      take: this.clampPopularLimit(rawLimit),
+    })) as PopularReviewRow[];
+
+    return rows.map(toPopularReview);
   }
 
   /**
@@ -450,6 +505,41 @@ export class ReviewsService {
     return like !== null;
   }
 
+  /**
+   * Bounds `?limit=` for {@link popularReviews}. An absent, malformed or
+   * non-positive value falls back to the default and an oversized one is capped
+   * — never a 400, because the caller is a page render and a clamped list is a
+   * better answer than an error.
+   *
+   * Mirrors `SearchService.clampLimit` (`search.service.ts:123`) rather than
+   * importing it: `apps/api` has no cross-module util layer, and per-module
+   * duplication of these guards is the established convention here (the same
+   * reason `UUID_PATTERN` is redeclared in every feature module). Accepted
+   * duplication, recorded so it is a choice and not an oversight.
+   */
+  private clampPopularLimit(value: unknown): number {
+    const limit = this.toInt(value);
+    if (limit === null || limit < 1) {
+      return DEFAULT_POPULAR_REVIEW_LIMIT;
+    }
+    return Math.min(limit, MAX_POPULAR_REVIEW_LIMIT);
+  }
+
+  /**
+   * Parses a query-string number, else `null`. Express delivers every query
+   * param as a string, so `?limit=5` arrives as `"5"` and must be coerced
+   * before it can be compared to a bound.
+   */
+  private toInt(value: unknown): number | null {
+    if (typeof value === "number" && Number.isInteger(value)) {
+      return value;
+    }
+    if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+      return Number.parseInt(value, 10);
+    }
+    return null;
+  }
+
   /** Validates a UUID-shaped review id before it reaches Postgres (clean 400). */
   private validateReviewId(value: unknown): string {
     return this.validateUuid(value, "review id");
@@ -547,6 +637,33 @@ function toAuthor(profile: ProfileRow | null): ReviewAuthor {
   };
 }
 
+/**
+ * Flattens a popular-review row into its card projection: the joined
+ * `Rating.score` is lifted to the top level and the nested `_count` is split
+ * into the two counters the card renders. Reuses {@link toAuthor}, so a review
+ * whose author has no `Profile` row degrades to empty strings here exactly as
+ * it does on the detail page, instead of throwing mid-render on the landing
+ * page — the surface anonymous visitors see first.
+ */
+function toPopularReview(row: PopularReviewRow): PopularReview {
+  return {
+    id: row.id,
+    body: row.body,
+    isSpoiler: row.isSpoiler,
+    score: row.rating.score,
+    createdAt: row.createdAt.toISOString(),
+    album: {
+      id: row.album.id,
+      title: row.album.title,
+      coverUrl: row.album.coverUrl,
+      primaryArtistName: row.album.primaryArtist.name,
+    },
+    author: toAuthor(row.user.profile),
+    likeCount: row._count.likes,
+    commentCount: row._count.comments,
+  };
+}
+
 /** Maps a persisted comment row to the API view, resolving the caller's ownership. */
 function toCommentView(
   row: CommentRow,
@@ -637,6 +754,61 @@ const REVIEW_DETAIL_SELECT = {
   _count: { select: { likes: true, comments: true } },
   comments: { orderBy: COMMENT_ORDER_BY, select: COMMENT_SELECT },
 } as const;
+
+/**
+ * The projection for one landing-page review card. Deliberately NARROWER than
+ * {@link REVIEW_DETAIL_SELECT}: it drops `updatedAt` and, crucially, the nested
+ * `comments` list — loading every comment of every card would turn one landing
+ * render into a large multi-row fan-out for data no card displays. Only the
+ * comment COUNT is read, from the same `_count` aggregate as the like count.
+ *
+ * `rating: { select: { score: true } }` is the join: `Review.rating` is a
+ * required relation, so this is a plain inner join, never a nullable one.
+ */
+const POPULAR_REVIEW_SELECT = {
+  id: true,
+  body: true,
+  isSpoiler: true,
+  createdAt: true,
+  album: {
+    select: {
+      id: true,
+      title: true,
+      coverUrl: true,
+      primaryArtist: { select: { name: true } },
+    },
+  },
+  user: { select: { profile: { select: PROFILE_SELECT } } },
+  rating: { select: { score: true } },
+  _count: { select: { likes: true, comments: true } },
+} as const;
+
+/**
+ * Newest first, with `id` as a secondary tiebreak so two reviews sharing a
+ * `createdAt` cannot swap places between two renders of the same page — the
+ * same determinism rule {@link COMMENT_ORDER_BY} and the activity cursor apply.
+ */
+const POPULAR_REVIEW_ORDER_BY: Prisma.ReviewOrderByWithRelationInput[] = [
+  { createdAt: "desc" },
+  { id: "desc" },
+];
+
+/** Row shape returned by {@link POPULAR_REVIEW_SELECT}. */
+interface PopularReviewRow {
+  id: string;
+  body: string;
+  isSpoiler: boolean;
+  createdAt: Date;
+  album: {
+    id: string;
+    title: string;
+    coverUrl: string | null;
+    primaryArtist: { name: string };
+  };
+  user: { profile: ProfileRow | null };
+  rating: { score: number };
+  _count: { likes: number; comments: number };
+}
 
 /** Profile projection returned by {@link PROFILE_SELECT}. */
 interface ProfileRow {

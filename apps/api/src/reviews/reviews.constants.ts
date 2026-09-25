@@ -28,3 +28,30 @@ export const ZERO_WIDTH_PATTERN = /[\u200B-\u200D\uFEFF]/g;
  */
 export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/* -------------------------------------------------------------------------- */
+/* Popular reviews (public landing page)                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How many popular reviews `GET /reviews/popular` returns when the caller does
+ * not ask for a size. Twelve fills the landing page's card grid at every
+ * breakpoint without a second row of filler.
+ */
+export const DEFAULT_POPULAR_REVIEW_LIMIT = 12;
+
+/**
+ * The hard ceiling on `?limit=`. The endpoint is a bounded top-N read with NO
+ * cursor, so this bound is the only thing standing between an anonymous caller
+ * and an unbounded scan — it is clamped, never rejected, because an oversized
+ * limit is a client mistake rather than an error worth a 400.
+ */
+export const MAX_POPULAR_REVIEW_LIMIT = 24;
+
+/**
+ * The joined `Rating.score` (1-10) a review must meet to be shown publicly.
+ * The landing page is an editorial shop window, not a feed: seven is the floor
+ * for "this person recommends the record", so a lukewarm or negative review is
+ * never the first thing a logged-out visitor reads.
+ */
+export const POPULAR_REVIEW_MIN_SCORE = 7;

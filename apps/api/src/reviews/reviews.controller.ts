@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator.js";
@@ -15,6 +16,7 @@ import { OptionalClerkGuard } from "../auth/optional-clerk.guard.js";
 import {
   ReviewsService,
   type CommentInput,
+  type PopularReview,
   type ReviewCommentView,
   type ReviewDetail,
   type ReviewLikeResult,
@@ -25,6 +27,7 @@ import {
  * prefix so the routes carry their absolute paths, and all validation and
  * access logic lives in {@link ReviewsService}.
  *
+ * - `GET    /reviews/popular`                  → public landing top-N (anonymous OK)
  * - `GET    /reviews/:id`                      → detail + comments + viewer (anonymous OK)
  * - `POST   /reviews/:id/like`                 → like (`200`; duplicate → `409`)
  * - `DELETE /reviews/:id/like`                 → unlike (`200`, tolerant)
@@ -52,10 +55,38 @@ import {
  * silently exempt every write endpoint added here later, and a class-level
  * `OptionalClerkGuard` would additionally downgrade those writes to
  * anonymous-tolerant. `reviews.controller.spec.ts` asserts this placement.
+ *
+ * `popularReviews` is the second anonymous-readable route, and it takes
+ * `@Public()` ALONE — no `OptionalClerkGuard`, because no field in its payload
+ * depends on who is asking, so resolving the caller would be cost with no
+ * consumer.
+ *
+ * ## Route order — read before reordering anything below
+ *
+ * `@Get("reviews/popular")` MUST stay declared ABOVE `@Get("reviews/:id")`.
+ * Nest registers routes in declaration order, so with the two swapped the
+ * literal request `/reviews/popular` matches `:id` first and
+ * `ReviewsService.validateReviewId` answers the public landing page with a 400
+ * for a path that is not malformed at all. `reviews.controller.spec.ts` pins
+ * the order and `reviews.e2e.spec.ts` proves the resulting 200 over the real
+ * router.
  */
 @Controller()
 export class ReviewsController {
   constructor(private readonly reviews: ReviewsService) {}
+
+  /**
+   * Bounded top-N of well-rated recent reviews for the public landing page.
+   *
+   * Declared FIRST on purpose — see the route-order note on the class. `limit`
+   * is `unknown` and reaches the service unvalidated, matching every other
+   * handler here: all validation and clamping lives in {@link ReviewsService}.
+   */
+  @Public()
+  @Get("reviews/popular")
+  popularReviews(@Query("limit") limit?: unknown): Promise<PopularReview[]> {
+    return this.reviews.popularReviews(limit);
+  }
 
   /**
    * Reads a single review with its album, author, counts, comments and the
