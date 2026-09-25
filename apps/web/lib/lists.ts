@@ -70,6 +70,30 @@ export interface ListSummary {
 }
 
 /**
+ * One card from `GET /lists/popular`, the public landing page's top-N of
+ * recent public lists (mirrors the API's own `PopularList`). Carries the owner
+ * and a handful of cover URLs instead of the items, so a card never ships the
+ * whole list.
+ */
+export interface PopularList {
+  id: string;
+  title: string;
+  description: string | null;
+  isRanked: boolean;
+  /** Every item on the list, not just the ones that contribute a cover. */
+  itemCount: number;
+  likeCount: number;
+  createdAt: string;
+  owner: {
+    username: string;
+    displayName: string;
+    avatarUrl: string | null;
+  };
+  /** Up to four non-null cover URLs, in item position order. */
+  previewCovers: string[];
+}
+
+/**
  * The viewer's own identity as `GET /profile` reports it: the LOCAL `User.id`
  * (see {@link fetchViewerUserId}) plus the `username` the public routes are
  * keyed by (`/users/:username/lists`, `/u/[username]`).
@@ -418,6 +442,34 @@ export async function fetchUserLists(
     }
     const body = (await response.json()) as unknown;
     return Array.isArray(body) ? (body as ListSummary[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches the popular public lists shown on the public landing page. `GET
+ * /lists/popular` is a bare `@Public()` route, so the landing passes `null` and
+ * the module's usual blank bearer is let through as anonymous.
+ *
+ * Fails safe to an EMPTY array on any failure — network error, non-OK
+ * response, or a body that is not a JSON array — exactly like
+ * {@link fetchUserLists}: the section shows its empty state instead of taking
+ * the whole landing down.
+ */
+export async function fetchPopularLists(
+  token: string | null,
+): Promise<PopularList[]> {
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/lists/popular`, {
+      headers: authHeaders(token),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const body = (await response.json()) as unknown;
+    return Array.isArray(body) ? (body as PopularList[]) : [];
   } catch {
     return [];
   }

@@ -64,6 +64,26 @@ export interface ReviewDetail {
 }
 
 /**
+ * One card from `GET /reviews/popular`, the public landing page's top-N of
+ * recent, well-rated reviews (mirrors the API's own `PopularReview`). Flatter
+ * than {@link ReviewDetail}: no comments and no viewer block, because the
+ * endpoint answers the same payload to every visitor.
+ */
+export interface PopularReview {
+  id: string;
+  /** The full body; a card truncates it visually. */
+  body: string;
+  isSpoiler: boolean;
+  /** The author's own 1-10 rating of the album, from the joined `Rating`. */
+  score: number;
+  createdAt: string;
+  album: ReviewAlbum;
+  author: ReviewAuthor;
+  likeCount: number;
+  commentCount: number;
+}
+
+/**
  * Sentinel distinguishing a 404 from a transport error, mirroring
  * `ALBUM_NOT_FOUND` in `lib/albums.ts` and `LIST_NOT_FOUND` in `lib/lists.ts`.
  *
@@ -296,6 +316,35 @@ export async function fetchReview(
     throw new Error(`Failed to load review (${response.status})`);
   }
   return (await response.json()) as ReviewDetail;
+}
+
+/**
+ * Fetches the popular reviews shown on the public landing page. `GET
+ * /reviews/popular` is a bare `@Public()` route, so the landing passes `null`
+ * and the request goes out with no Authorization header (see
+ * {@link reviewHeaders}); a real token is still forwarded if a caller has one.
+ *
+ * Fails safe to an EMPTY array on any failure — network error, non-OK
+ * response, or a body that is not a JSON array — rather than throwing during
+ * render, the same posture as `fetchPopularAlbums` in `lib/search.ts`: the
+ * section shows its empty state instead of taking the whole landing down.
+ */
+export async function fetchPopularReviews(
+  token: string | null,
+): Promise<PopularReview[]> {
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/reviews/popular`, {
+      headers: reviewHeaders(token),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const body = (await response.json()) as unknown;
+    return Array.isArray(body) ? (body as PopularReview[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** The `/reviews/:id/like` URL for a review. */

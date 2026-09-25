@@ -6,6 +6,7 @@ import {
   commentCountLabel,
   createComment,
   deleteComment,
+  fetchPopularReviews,
   fetchReview,
   isBlankCommentBody,
   likeCountLabel,
@@ -14,6 +15,7 @@ import {
   reviewPath,
   unlikeReview,
   updateComment,
+  type PopularReview,
   type ReviewComment,
   type ReviewDetail,
   type ReviewLikeResult,
@@ -203,6 +205,91 @@ describe("fetchReview", () => {
     await fetchReview(null, "not a/uuid");
 
     expect(urlOf(fetchMock)).toContain("/reviews/not%20a%2Fuuid");
+  });
+});
+
+/**
+ * The `GET /reviews/popular` payload exactly as `ReviewsService.popularReviews`
+ * emits it: a flat card per review, with the author's own score joined in and
+ * no comments or viewer block.
+ */
+const POPULAR_REVIEWS: PopularReview[] = [
+  {
+    id: REVIEW_ID,
+    body: "A slow burn that finally clicks on the fourth listen.",
+    isSpoiler: false,
+    score: 9,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    album: REVIEW.album,
+    author: REVIEW.author,
+    likeCount: 3,
+    commentCount: 1,
+  },
+  {
+    id: "44444444-4444-4444-8444-444444444444",
+    body: "The closer still wrecks me.",
+    isSpoiler: true,
+    score: 7,
+    createdAt: "2026-06-30T00:00:00.000Z",
+    album: { ...REVIEW.album, coverUrl: null },
+    author: { username: "ed", displayName: "", avatarUrl: null },
+    likeCount: 0,
+    commentCount: 0,
+  },
+];
+
+describe("fetchPopularReviews", () => {
+  it("returns the popular review cards from the public endpoint", async () => {
+    const fetchMock = mockFetch(jsonResponse(POPULAR_REVIEWS));
+
+    const result = await fetchPopularReviews(null);
+
+    expect(result).toEqual(POPULAR_REVIEWS);
+    expect(result.map((review) => review.score)).toEqual([9, 7]);
+    expect(urlOf(fetchMock)).toMatch(/\/reviews\/popular$/);
+    expect(initOf(fetchMock).cache).toBe("no-store");
+  });
+
+  it("goes out unauthenticated for an anonymous visitor", async () => {
+    const fetchMock = mockFetch(jsonResponse(POPULAR_REVIEWS));
+
+    await fetchPopularReviews(null);
+
+    // The landing page resolves no session; the route is `@Public()`, so the
+    // request carries no Authorization header at all (same as `fetchReview`).
+    expect(headersOf(fetchMock)).not.toHaveProperty("Authorization");
+  });
+
+  it("forwards a real token when a caller has one", async () => {
+    const fetchMock = mockFetch(jsonResponse(POPULAR_REVIEWS));
+
+    await fetchPopularReviews("test-token");
+
+    expect(headersOf(fetchMock).Authorization).toBe("Bearer test-token");
+  });
+
+  it("fails safe to an empty list on a non-OK response", async () => {
+    mockFetch(errorResponse(500, "Internal server error"));
+
+    expect(await fetchPopularReviews(null)).toEqual([]);
+  });
+
+  it("fails safe to an empty list on a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+
+    expect(await fetchPopularReviews(null)).toEqual([]);
+  });
+
+  it("fails safe to an empty list when the body is not an array", async () => {
+    mockFetch(jsonResponse({ reviews: POPULAR_REVIEWS }));
+
+    expect(await fetchPopularReviews(null)).toEqual([]);
+  });
+
+  it("fails safe to an empty list when the body is not JSON", async () => {
+    mockFetch(new Response("<html>502</html>", { status: 200 }));
+
+    expect(await fetchPopularReviews(null)).toEqual([]);
   });
 });
 

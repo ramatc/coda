@@ -6,6 +6,7 @@ import {
   createList,
   deleteList,
   fetchList,
+  fetchPopularLists,
   fetchUserLists,
   fetchViewerOwnLists,
   fetchViewerProfile,
@@ -18,6 +19,7 @@ import {
   type ListDetail,
   type ListLikeResult,
   type ListSummary,
+  type PopularList,
 } from "../lib/lists";
 
 const LIST_ID = "11111111-1111-4111-8111-111111111111";
@@ -506,6 +508,98 @@ describe("fetchViewerOwnLists", () => {
     // Exactly one call: with no username there is no list URL to build, and
     // guessing one would ask the API about a user that does not exist.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The `GET /lists/popular` payload exactly as `ListsService.popularLists`
+ * emits it: public lists only, owner flattened in, and up to four preview
+ * covers instead of the full item array.
+ */
+const POPULAR_LISTS: PopularList[] = [
+  {
+    id: LIST_ID,
+    title: "Best of 2026",
+    description: "A ranked run through the year.",
+    isRanked: true,
+    itemCount: 12,
+    likeCount: 5,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    owner: { username: "ada", displayName: "Ada", avatarUrl: null },
+    previewCovers: [
+      "https://cdn.example/1.jpg",
+      "https://cdn.example/2.jpg",
+      "https://cdn.example/3.jpg",
+      "https://cdn.example/4.jpg",
+    ],
+  },
+  {
+    id: "55555555-5555-4555-8555-555555555555",
+    title: "Night drives",
+    description: null,
+    isRanked: false,
+    itemCount: 3,
+    likeCount: 0,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    owner: { username: "lin", displayName: "", avatarUrl: null },
+    previewCovers: [],
+  },
+];
+
+describe("fetchPopularLists", () => {
+  it("returns the popular list cards from the public endpoint", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse(POPULAR_LISTS));
+
+    const result = await fetchPopularLists(null);
+
+    expect(result).toEqual(POPULAR_LISTS);
+    expect(result.map((list) => list.itemCount)).toEqual([12, 3]);
+    expect(urlOf(fetchMock)).toMatch(/\/lists\/popular$/);
+    expect(initOf(fetchMock).cache).toBe("no-store");
+  });
+
+  it("sends the module's blank bearer for an anonymous visitor", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse(POPULAR_LISTS));
+
+    await fetchPopularLists(null);
+
+    // The route is `@Public()`, so the global guard lets the blank bearer
+    // through as anonymous — the same header every other read here sends.
+    expect(
+      (initOf(fetchMock).headers as Record<string, string>).Authorization,
+    ).toBe("Bearer ");
+  });
+
+  it("fails safe to an empty list on a non-OK response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(errorResponse(500));
+
+    expect(await fetchPopularLists(null)).toEqual([]);
+  });
+
+  it("fails safe to an empty list on a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+
+    expect(await fetchPopularLists(null)).toEqual([]);
+  });
+
+  it("fails safe to an empty list when the body is not an array", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ lists: POPULAR_LISTS }),
+    );
+
+    expect(await fetchPopularLists(null)).toEqual([]);
+  });
+
+  it("fails safe to an empty list when the body is not JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<html>502</html>", { status: 200 }),
+    );
+
+    expect(await fetchPopularLists(null)).toEqual([]);
   });
 });
 
