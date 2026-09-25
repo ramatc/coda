@@ -1,25 +1,43 @@
-import type { IsoDateTime } from "@coda/types";
-import { Button } from "@coda/ui";
+import { fetchPopularAlbums } from "../lib/search";
+import { fetchPopularReviews } from "../lib/reviews";
+import { fetchPopularLists } from "../lib/lists";
+import { PublicShell } from "./_landing/public-shell";
+import { Hero } from "./_landing/hero";
+import { FeatureGrid } from "./_landing/feature-grid";
+import { TrendingSection } from "./_landing/trending-section";
+import { PopularReviewsSection } from "./_landing/popular-reviews-section";
+import { PopularListsSection } from "./_landing/popular-lists-section";
+import { BrandStatement } from "./_landing/brand-statement";
+import { FinalCta } from "./_landing/final-cta";
 
 /**
- * Public landing page. Renders without authentication and exercises the shared
- * `@coda/ui` (Button) and `@coda/types` packages so their workspace resolution
- * is proven under a real Next build, not just typecheck.
+ * Public landing page (`/`), rendered identically for anonymous and signed-in
+ * visitors: it makes no Clerk call and never redirects to `/home`.
+ *
+ * The three popular-content reads run in parallel against the `@Public()`
+ * endpoints with no viewer token (`null`). Each helper fails safe to `[]`, so
+ * an unreachable API degrades every data-wired section to its empty state
+ * instead of failing the render.
+ *
+ * {@link PublicShell} owns the `<main>` landmark and {@link Hero} owns the
+ * page's only `<h1>`, so this page adds neither.
  */
-const builtAt: IsoDateTime = "2026-07-08T00:00:00.000Z";
+export default async function LandingPage() {
+  const [albums, reviews, lists] = await Promise.all([
+    fetchPopularAlbums(null),
+    fetchPopularReviews(null),
+    fetchPopularLists(null),
+  ]);
 
-export default function HomePage() {
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-6 px-6">
-      <h1 className="text-4xl font-semibold text-brand-600">Coda</h1>
-      <p className="text-lg">Track, rate, and review the music you love.</p>
-      <div className="flex gap-3">
-        <Button>Get started</Button>
-        <Button variant="outline">Learn more</Button>
-      </div>
-      <p className="text-sm opacity-60" data-testid="built-at">
-        Fase 0 skeleton · {builtAt}
-      </p>
-    </main>
+    <PublicShell>
+      <Hero />
+      <FeatureGrid />
+      <TrendingSection albums={albums} />
+      <PopularReviewsSection reviews={reviews} />
+      <PopularListsSection lists={lists} />
+      <BrandStatement />
+      <FinalCta />
+    </PublicShell>
   );
 }
