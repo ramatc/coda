@@ -56,7 +56,6 @@ const baseProfile: ProfileDto = {
   displayName: "Ada Lovelace",
   bio: "Analytical Engine enthusiast",
   avatarUrl: "https://cdn.coda.test/avatars/avatars/local_1/x.png",
-  isPrivate: false,
 };
 
 const baseStats: ProfileSocialStats = {

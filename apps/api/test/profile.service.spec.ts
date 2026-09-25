@@ -23,7 +23,6 @@ interface ProfileRow {
   bio: string | null;
   avatarUrl: string | null;
   bannerUrl: string | null;
-  isPrivate: boolean;
 }
 
 /**
@@ -144,7 +143,6 @@ describe("ProfileService", () => {
       bio: null,
       avatarUrl: null,
       bannerUrl: null,
-      isPrivate: false,
       ...overrides,
     };
     profiles.set(profile.userId, profile);
@@ -166,6 +164,7 @@ describe("ProfileService", () => {
 
     expect(result.username).toBe("ada");
     expect(result.bio).toBe("hi");
+    expect(result).not.toHaveProperty("isPrivate");
   });
 
   it("throws NotFound when the current user has no profile", async () => {
@@ -247,7 +246,6 @@ describe("ProfileService", () => {
       bio: null,
       avatarUrl: null,
       bannerUrl: null,
-      isPrivate: false,
     });
 
     await expect(

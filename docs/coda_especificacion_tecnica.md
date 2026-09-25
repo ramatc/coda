@@ -397,7 +397,6 @@ model Profile {
   bio          String? @db.Text
   avatarUrl    String? @map("avatar_url")
   bannerUrl    String? @map("banner_url")
-  isPrivate    Boolean @default(false) @map("is_private")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
