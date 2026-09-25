@@ -10,6 +10,7 @@ import { AvatarUpload } from "./avatar-upload";
 import { FollowButton } from "./follow-button";
 import { ListsSection } from "./lists-section";
 import { WantToListenSection } from "./want-to-listen-section";
+import { AppShell } from "../../_shell/app-shell";
 
 interface PublicProfileDto extends ProfileDto {
   isOwnProfile: boolean;
@@ -71,28 +72,32 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
   const profile = (await response.json()) as PublicProfileDto;
   const isOwnProfile = profile.isOwnProfile;
 
-  return (
-    <ProfileView
-      profile={profile}
-      isOwnProfile={isOwnProfile}
-      stats={stats}
-      followButton={
-        <FollowButton
-          username={profile.username}
-          initialFollowing={stats.isFollowing}
-        />
-      }
-      listsSection={
-        <ListsSection lists={lists} isOwnProfile={isOwnProfile} />
-      }
-      wantToListenSection={
-        <WantToListenSection
-          entries={wantToListen}
-          isOwnProfile={isOwnProfile}
-        />
-      }
-    >
-      <AvatarUpload />
-    </ProfileView>
-  );
+  // Called (and awaited) as a plain async function rather than used as JSX —
+  // see the comment in `app/home/page.tsx` for why.
+  return await AppShell({
+    children: (
+      <ProfileView
+        profile={profile}
+        isOwnProfile={isOwnProfile}
+        stats={stats}
+        followButton={
+          <FollowButton
+            username={profile.username}
+            initialFollowing={stats.isFollowing}
+          />
+        }
+        listsSection={
+          <ListsSection lists={lists} isOwnProfile={isOwnProfile} />
+        }
+        wantToListenSection={
+          <WantToListenSection
+            entries={wantToListen}
+            isOwnProfile={isOwnProfile}
+          />
+        }
+      >
+        <AvatarUpload />
+      </ProfileView>
+    ),
+  });
 }

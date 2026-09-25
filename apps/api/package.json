@@ -11,11 +11,11 @@
     "lint": "eslint .",
     "test": "vitest run",
     "start": "node dist/main.js",
-    "dev": "tsx watch src/main.ts",
-    "seed:catalog": "tsx src/catalog-import/seed.script.ts",
-    "worker:catalog": "tsx src/catalog-import/catalog-worker.ts",
-    "worker:reco": "tsx src/recommendations/reco-worker.ts",
-    "reindex:search": "tsx src/search/search-reindex.script.ts"
+    "dev": "nest start --watch",
+    "seed:catalog": "pnpm build && node dist/catalog-import/seed.script.js",
+    "worker:catalog": "pnpm build && node dist/catalog-import/catalog-worker.js",
+    "worker:reco": "pnpm build && node dist/recommendations/reco-worker.js",
+    "reindex:search": "pnpm build && node dist/search/search-reindex.script.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.658.0",
@@ -29,12 +29,14 @@
     "@nestjs/platform-express": "^11.1.6",
     "@prisma/client-runtime-utils": "^7.0.0",
     "bullmq": "^5.34.0",
+    "dotenv": "^18.0.0",
     "ioredis": "5.10.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@coda/config": "workspace:*",
+    "@nestjs/cli": "^11.0.24",
     "@nestjs/testing": "^11.1.6",
     "@swc/core": "^1.13.5",
     "@types/express": "^5.0.3",

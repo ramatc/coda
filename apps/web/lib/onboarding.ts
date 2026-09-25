@@ -13,6 +13,8 @@ export interface OnboardingStatus {
 export interface GenreOption {
   slug: string;
   name: string;
+  category: string;
+  descriptor: string;
 }
 
 /** An artist search result (`GET /onboarding/artists`). */

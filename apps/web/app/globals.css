@@ -8,7 +8,13 @@
 @import "tailwindcss";
 @import "@coda/config/tailwind/preset.css";
 
-@theme {
-  --color-surface: oklch(0.99 0 0);
-  --color-ink: oklch(0.2 0.02 300);
+/* Hides the native scrollbar on horizontally-scrolling rows (e.g. Home's
+   Popular row) while keeping the element scrollable. */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }

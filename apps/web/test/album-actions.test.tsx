@@ -174,9 +174,8 @@ describe("AlbumActions", () => {
     expect(screen.getByText(/Listened/)).toBeTruthy();
     expect(screen.queryByText("Mark as listened")).toBeNull();
 
-    // Existing rating is the selected value.
-    const rating = screen.getByLabelText("Your rating") as HTMLSelectElement;
-    expect(rating.value).toBe("8");
+    // Existing rating is reflected by the interactive RatingScale's readout.
+    expect(screen.getByTestId("rating-scale-value").textContent).toBe("8.0");
 
     // Existing review pre-fills the textarea and the button reads "Update".
     const review = screen.getByLabelText("Your review") as HTMLTextAreaElement;
@@ -195,8 +194,9 @@ describe("AlbumActions", () => {
 
     expect(screen.getByText("Mark as listened")).toBeTruthy();
 
-    const rating = screen.getByLabelText("Your rating") as HTMLSelectElement;
-    expect(rating.value).toBe("");
+    // No rating yet → the RatingScale's neutral placeholder, not a fake value.
+    expect(screen.getByTestId("rating-scale-value").textContent).toBe("–");
+    expect(screen.queryByText("Clear")).toBeNull();
 
     // The review textarea is disabled until the album is rated (the API
     // subordinates a review to a rating).
@@ -232,12 +232,10 @@ describe("AlbumActions", () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
 
-  it("calls rateAlbum with the selected numeric score", async () => {
+  it("calls rateAlbum with the clicked segment's score", async () => {
     renderActions(UNTRACKED);
 
-    fireEvent.change(screen.getByLabelText("Your rating"), {
-      target: { value: "8" },
-    });
+    fireEvent.click(screen.getByLabelText("Rate 8 out of 10"));
 
     await waitFor(() =>
       expect(rateAlbum).toHaveBeenCalledWith("test-token", ALBUM_ID, 8),
@@ -245,12 +243,46 @@ describe("AlbumActions", () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
 
-  it("calls deleteRating when the rating is cleared", async () => {
+  it("calls deleteRating immediately, without confirming, when clearing a rating that has no review", async () => {
+    const confirmMock = vi.spyOn(window, "confirm");
     renderActions({ listened: false, listenId: null, score: 8, review: null });
 
-    fireEvent.change(screen.getByLabelText("Your rating"), {
-      target: { value: "" },
+    fireEvent.click(screen.getByText("Clear"));
+
+    await waitFor(() =>
+      expect(deleteRating).toHaveBeenCalledWith("test-token", ALBUM_ID),
+    );
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+    expect(confirmMock).not.toHaveBeenCalled();
+  });
+
+  it("confirms before clearing a rating that has an attached review, and does NOT clear when the user declines", () => {
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderActions({
+      listened: false,
+      listenId: null,
+      score: 8,
+      review: "A landmark record.",
     });
+
+    fireEvent.click(screen.getByText("Clear"));
+
+    expect(confirmMock).toHaveBeenCalledWith(
+      "Clearing your rating will also delete your review. Continue?",
+    );
+    expect(deleteRating).not.toHaveBeenCalled();
+  });
+
+  it("clears the rating (and its review) once the user confirms", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderActions({
+      listened: false,
+      listenId: null,
+      score: 8,
+      review: "A landmark record.",
+    });
+
+    fireEvent.click(screen.getByText("Clear"));
 
     await waitFor(() =>
       expect(deleteRating).toHaveBeenCalledWith("test-token", ALBUM_ID),
@@ -451,16 +483,22 @@ describe("AlbumActions", () => {
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
 
     // `busy` is already back to "idle" here — this only holds if the rating
-    // select is also gated on `pendingRefresh`. Left ungated, the user could
+    // control is also gated on `pendingRefresh`. Left ungated, the user could
     // clear the rating in this window, firing `deleteRating` (which cascades
     // to delete the review server-side — Decision #12) while the review
     // save's own refresh is still in flight: two independent action+refresh
     // cycles racing over the single shared `pendingRefresh` gate.
-    const rating = screen.getByLabelText("Your rating") as HTMLSelectElement;
-    expect(rating.disabled).toBe(true);
+    const rateButton = screen.getByLabelText(
+      "Rate 1 out of 10",
+    ) as HTMLButtonElement;
+    expect(rateButton.disabled).toBe(true);
+    expect((screen.getByText("Clear") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it("keeps the review controls disabled after clearing the rating until the refreshed viewer props land (the delete cascades to the review — Decision #12)", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { rerender } = renderActions({
       listened: false,
       listenId: null,
@@ -472,9 +510,7 @@ describe("AlbumActions", () => {
     const save = screen.getByText("Update review") as HTMLButtonElement;
     expect(review.disabled).toBe(false);
 
-    fireEvent.change(screen.getByLabelText("Your rating"), {
-      target: { value: "" },
-    });
+    fireEvent.click(screen.getByText("Clear"));
 
     await waitFor(() =>
       expect(deleteRating).toHaveBeenCalledWith("test-token", ALBUM_ID),

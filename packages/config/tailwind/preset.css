@@ -8,12 +8,51 @@
  * Tailwind 4 reads `@theme` tokens at build time via the PostCSS plugin.
  */
 @theme {
+  /*
+   * Legacy numeric scale — kept for screens not yet migrated to the semantic
+   * tokens below (search, albums, lists, profiles, reviews). Do not add new
+   * usages of `brand-*`; use the semantic tokens instead.
+   */
   --color-brand-50: oklch(0.97 0.02 300);
   --color-brand-500: oklch(0.62 0.19 300);
   --color-brand-600: oklch(0.55 0.2 300);
   --color-brand-900: oklch(0.3 0.12 300);
 
-  --radius-card: 0.75rem;
+  /*
+   * "After Hours Archive" — dark-first semantic tokens. Violet (`coda-*`)
+   * carries one specific meaning: the viewer's own relationship with the
+   * music (personal rating, active/saved state, recommendation provenance),
+   * never a generic accent.
+   *
+   * `coda`'s hue/chroma (H293) is tuned to the brand mark's violet, #7C3AED
+   * — but lightness is raised from the mark's own L0.5413 to L0.598 so the
+   * token still clears 4.5:1 text contrast against `--color-background`
+   * (the exact brand hex only hits ~3.5:1, which is fine for the logo
+   * artwork itself but not for `text-coda` UI copy like the "+LOG" label or
+   * the active BottomNav state). Use the literal #7C3AED for the logo/
+   * favicon/app-icon assets themselves, not this token.
+   */
+  --color-background: oklch(0.125 0.014 300);
+  --color-surface-1: oklch(0.165 0.018 300);
+  --color-surface-2: oklch(0.205 0.022 300);
+  --color-surface-raised: oklch(0.24 0.026 300);
+  --color-border-subtle: oklch(0.26 0.022 300);
+  --color-border-strong: oklch(0.35 0.028 300);
+  --color-text-primary: oklch(0.965 0.008 290);
+  --color-text-secondary: oklch(0.735 0.018 290);
+  --color-text-tertiary: oklch(0.56 0.02 290);
+  --color-coda: oklch(0.598 0.2466 293);
+  --color-coda-hover: oklch(0.648 0.2516 293);
+  --color-coda-muted: oklch(0.327 0.1233 293);
+  --color-coda-subtle: oklch(0.206 0.0617 293);
 
-  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --radius-card: 0.75rem;
+  /* Album artwork specifically wants a tighter radius than cards/buttons. */
+  --radius-artwork: 0.375rem;
+
+  /* UI/data — next/font in apps/web binds `--font-inter-tight`; the fallback
+     chain inside `var()` keeps this token safe for any consumer that hasn't. */
+  --font-sans: var(--font-inter-tight, ui-sans-serif, system-ui, sans-serif);
+  /* Reviews and human opinion — never UI chrome or data. */
+  --font-serif: var(--font-source-serif, Georgia, serif);
 }

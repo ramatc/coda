@@ -95,7 +95,11 @@ describe("FeedList", () => {
     // Actor attribution — the distinguishing feature of the followed feed.
     expect(html).toContain("Thom Yorke");
     expect(html).toContain("Jonny Greenwood");
-    expect(html).toContain("Rated 9/10");
+    // A present rating score renders as a RatingScale, not plain "N/10" text.
+    expect(html).toContain("Rated");
+    expect(html).toContain('data-testid="rating-scale"');
+    expect(html).toContain('aria-label="Rating 9.0 out of 10"');
+    expect(html).not.toContain("Rated 9/10");
     expect(html).toContain("Listened to");
     expect(html).toContain("Reviewed — &quot;A landmark record.&quot;");
     expect(html).toContain("OK Computer");

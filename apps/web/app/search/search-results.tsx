@@ -42,7 +42,7 @@ export function SearchResults({
           <ul className="flex flex-wrap gap-2">
             {artists.map((artist) => (
               <li key={artist.id}>
-                <span className="rounded-full border border-brand-200 bg-white px-4 py-2 text-sm">
+                <span className="rounded-full border border-border-subtle bg-surface-2 px-4 py-2 text-sm text-text-primary">
                   {artist.name}
                 </span>
               </li>
@@ -61,7 +61,7 @@ export function SearchResults({
               <li key={album.id}>
                 <Link
                   href={albumHref(album.id)}
-                  className="flex flex-col gap-2 rounded-card border border-brand-100 p-2 hover:border-brand-300"
+                  className="flex flex-col gap-2 rounded-card border border-border-subtle p-2 hover:border-border-strong"
                 >
                   {album.coverUrl ? (
                     // Remote cover art rendered with a plain <img>; next/image
@@ -74,7 +74,7 @@ export function SearchResults({
                     />
                   ) : (
                     <div
-                      className="flex aspect-square w-full items-center justify-center rounded-card bg-brand-100 text-xl font-semibold text-brand-700"
+                      className="flex aspect-square w-full items-center justify-center rounded-card bg-surface-2 text-xl font-semibold text-text-primary"
                       data-testid="album-cover-placeholder"
                     >
                       {album.title.charAt(0).toUpperCase()}

@@ -11,6 +11,7 @@ import {
 import { fetchViewerOwnLists } from "../../../lib/lists";
 import { AlbumDetailView } from "./album-detail";
 import { AlbumActions } from "./album-actions";
+import { AppShell } from "../../_shell/app-shell";
 
 interface AlbumPageProps {
   params: Promise<{ id: string }>;
@@ -29,6 +30,7 @@ interface AlbumPageProps {
  * populate the action island's "add to list" picker) and never gate the page:
  * an unresolved viewer or an unavailable lists endpoint degrades to an empty
  * picker, which renders the create-a-list hint instead of failing the render.
+ * Wrapped in {@link AppShell}, matching `/home` and `/feed`.
  */
 export default async function AlbumPage({ params }: AlbumPageProps) {
   const { id } = await params;
@@ -49,13 +51,17 @@ export default async function AlbumPage({ params }: AlbumPageProps) {
     notFound();
   }
 
-  return (
-    <AlbumDetailView album={album}>
-      <AlbumActions
-        albumId={album.id}
-        viewer={album.viewer}
-        ownLists={ownLists}
-      />
-    </AlbumDetailView>
-  );
+  // Called (and awaited) as a plain async function rather than used as JSX —
+  // see the comment in `app/home/page.tsx` for why.
+  return await AppShell({
+    children: (
+      <AlbumDetailView album={album}>
+        <AlbumActions
+          albumId={album.id}
+          viewer={album.viewer}
+          ownLists={ownLists}
+        />
+      </AlbumDetailView>
+    ),
+  });
 }

@@ -77,10 +77,11 @@ export const ENRICH_JOB_NAME = "musicbrainz-enrich";
 export const CHECKPOINT_KEY = "catalog-import:spotify:offset";
 
 /**
- * Albums fetched per Spotify page. Spotify's browse/search endpoints cap `limit`
- * at 50, so this is both the page size and the API max.
+ * Albums fetched per Spotify page. Spotify tightened `/v1/search`'s `limit`
+ * cap to 10 (down from the historical 50) as part of its 2025 API policy
+ * changes; a request above this returns a 400 "Invalid limit".
  */
-export const SPOTIFY_PAGE_LIMIT = 50;
+export const SPOTIFY_PAGE_LIMIT = 10;
 
 /**
  * Spotify's documented hard cap on `/v1/search`'s `offset` + `limit`: once

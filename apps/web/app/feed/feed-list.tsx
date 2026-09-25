@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { RatingScale } from "@coda/ui";
 import type { FeedItem } from "../../lib/feed";
 import {
   commentCountLabel,
@@ -174,9 +175,21 @@ export function FeedList({ items }: FeedListProps) {
                 </div>
               )}
               <div className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium text-brand-600">
-                  {feedLabel(item)}
-                </span>
+                {item.type === "RATING" && item.score !== null ? (
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-brand-600">
+                    <span>Rated</span>
+                    <RatingScale
+                      value={item.score}
+                      variant="other"
+                      size="sm"
+                      showValue={false}
+                    />
+                  </span>
+                ) : (
+                  <span className="text-sm font-medium text-brand-600">
+                    {feedLabel(item)}
+                  </span>
+                )}
                 <span className="text-sm font-semibold">
                   {item.album.title}
                 </span>

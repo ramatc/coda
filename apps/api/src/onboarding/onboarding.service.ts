@@ -126,6 +126,78 @@ export class OnboardingService {
     }));
   }
 
+  /**
+   * Suggests catalog artists tagged (via their albums) with any of the given
+   * genres — powers a "browse by genre" picker step that needs no free-text
+   * query. Unknown/malformed slugs are dropped rather than rejected (this is
+   * a suggestion endpoint, not a mutation, so a stale or mistyped slug should
+   * just yield fewer results, not a 400). Returns `[]` immediately when no
+   * *known* genre slug remains, mirroring {@link searchArtists}'s empty-query
+   * guard.
+   */
+  async suggestArtists(genreSlugs: string[]): Promise<ArtistSearchResult[]> {
+    const slugs = this.resolveKnownGenreSlugs(genreSlugs);
+    if (slugs.length === 0) {
+      return [];
+    }
+    const artists = await this.prisma.client.artist.findMany({
+      where: {
+        albums: {
+          some: { genres: { some: { genre: { slug: { in: slugs } } } } },
+        },
+      },
+      select: { id: true, name: true, imageUrl: true },
+      orderBy: { name: "asc" },
+      take: SEARCH_RESULT_LIMIT,
+    });
+    return artists.map((artist) => ({
+      id: artist.id,
+      name: artist.name,
+      imageUrl: artist.imageUrl,
+    }));
+  }
+
+  /**
+   * Suggests catalog albums tagged with any of the given genres, ordered by
+   * popularity — same "browse by genre" use case as {@link suggestArtists},
+   * same empty/unknown-slug handling.
+   */
+  async suggestAlbums(genreSlugs: string[]): Promise<AlbumSearchResult[]> {
+    const slugs = this.resolveKnownGenreSlugs(genreSlugs);
+    if (slugs.length === 0) {
+      return [];
+    }
+    const albums = await this.prisma.client.album.findMany({
+      where: { genres: { some: { genre: { slug: { in: slugs } } } } },
+      select: {
+        id: true,
+        title: true,
+        coverUrl: true,
+        primaryArtist: { select: { name: true } },
+      },
+      orderBy: { popularityScore: "desc" },
+      take: SEARCH_RESULT_LIMIT,
+    });
+    return albums.map((album) => ({
+      id: album.id,
+      title: album.title,
+      coverUrl: album.coverUrl,
+      primaryArtistName: album.primaryArtist.name,
+    }));
+  }
+
+  /**
+   * Dedupes `genreSlugs` and drops anything not in the fixed taxonomy — the
+   * shared validation posture for the suggestion endpoints (unlike
+   * {@link parseGenreSlugs}, used by `complete`, which throws on an unknown
+   * slug because that path is a mutation).
+   */
+  private resolveKnownGenreSlugs(genreSlugs: string[]): string[] {
+    return [...new Set(genreSlugs)].filter((slug) =>
+      GENRE_CATALOG_BY_SLUG.has(slug),
+    );
+  }
+
   /** The current user's onboarding progress (drives the `/onboarding` gate). */
   async getStatus(clerkUserId: string): Promise<OnboardingStatus> {
     const userId = await this.resolveUserId(clerkUserId);
