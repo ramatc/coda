@@ -4,6 +4,27 @@ import { ListsController } from "../src/lists/lists.controller.js";
 import type { ListsService } from "../src/lists/lists.service.js";
 import { IS_PUBLIC_KEY } from "../src/auth/auth.types.js";
 
+/** The controller's handler names in declaration (= route registration) order. */
+function handlerNames(): string[] {
+  return Object.getOwnPropertyNames(ListsController.prototype).filter(
+    (name) => name !== "constructor",
+  );
+}
+
+const popular = [
+  {
+    id: "list-1",
+    title: "Late-night records",
+    description: null,
+    isRanked: false,
+    itemCount: 4,
+    likeCount: 2,
+    createdAt: "2026-07-25T10:00:00.000Z",
+    owner: { username: "curator", displayName: "The Curator", avatarUrl: null },
+    previewCovers: ["https://cdn.example/cover-1.jpg"],
+  },
+];
+
 /**
  * Unit test for {@link ListsController}: it is a thin pass-through to
  * {@link ListsService} (the domain logic is covered in `lists.service.spec.ts`).
@@ -22,6 +43,7 @@ describe("ListsController", () => {
   let reorder: ReturnType<typeof vi.fn>;
   let likeList: ReturnType<typeof vi.fn>;
   let unlikeList: ReturnType<typeof vi.fn>;
+  let popularLists: ReturnType<typeof vi.fn>;
   let controller: ListsController;
 
   const detail = {
@@ -49,6 +71,7 @@ describe("ListsController", () => {
     reorder = vi.fn().mockResolvedValue(detail);
     likeList = vi.fn().mockResolvedValue({ likeCount: 1, hasLiked: true });
     unlikeList = vi.fn().mockResolvedValue({ likeCount: 0, hasLiked: false });
+    popularLists = vi.fn().mockResolvedValue(popular);
     const service = {
       createList,
       getList,
@@ -60,6 +83,7 @@ describe("ListsController", () => {
       reorder,
       likeList,
       unlikeList,
+      popularLists,
     } as unknown as ListsService;
     controller = new ListsController(service);
   });
@@ -70,6 +94,73 @@ describe("ListsController", () => {
 
     expect(createList).toHaveBeenCalledWith("clerk_1", body);
     expect(result).toBe(detail);
+  });
+
+  it("GET /lists/popular forwards the raw limit and returns the cards", async () => {
+    const result = await controller.popularLists("5");
+
+    // Unvalidated at this layer, like every other input here — the service
+    // types it as `unknown` and clamps it.
+    expect(popularLists).toHaveBeenCalledWith("5");
+    expect(result).toBe(popular);
+  });
+
+  it("forwards an absent limit as undefined rather than coercing it", async () => {
+    await controller.popularLists(undefined);
+
+    expect(popularLists).toHaveBeenCalledWith(undefined);
+  });
+
+  it("marks popularLists @Public() at METHOD level and never at class level", () => {
+    expect(
+      Reflect.getMetadata(
+        IS_PUBLIC_KEY,
+        ListsController.prototype.popularLists,
+      ),
+    ).toBe(true);
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, ListsController)).toBe(undefined);
+  });
+
+  it("leaves popularLists free of any route-scoped guard: the payload has no viewer block", () => {
+    // Nothing in a popular-list card depends on who is asking, so an
+    // `OptionalClerkGuard` would resolve a caller that nothing consumes.
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        ListsController.prototype.popularLists,
+      ),
+    ).toBe(undefined);
+  });
+
+  it("keeps every other list route behind the global ClerkGuard", () => {
+    // `popularLists` is the ONLY anonymous-readable route on this controller;
+    // the owner-scoped reads and every mutation stay fail-closed. The length
+    // pin makes a new handler extend this assertion deliberately.
+    const guarded = handlerNames().filter((name) => name !== "popularLists");
+    expect(guarded).toHaveLength(10);
+    for (const name of guarded) {
+      const handler = ListsController.prototype[
+        name as keyof ListsController
+      ] as object;
+      expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler)).toBe(undefined);
+    }
+  });
+
+  it("declares popularLists ABOVE getList so /lists/popular is not eaten by :id", () => {
+    // Nest registers routes in declaration order, read from the prototype's
+    // own property order (`MetadataScanner.getAllMethodNames` →
+    // `Object.getOwnPropertyNames`). Declared after `@Get("lists/:id")`, the
+    // literal `popular` segment would match `:id` first and the service's UUID
+    // guard would answer the landing page with a 400.
+    const names = handlerNames();
+    const popularAt = names.indexOf("popularLists");
+    const detailAt = names.indexOf("getList");
+
+    // Presence asserted first: a bare `indexOf(a) < indexOf(b)` passes for a
+    // MISSING handler too (-1 beats everything).
+    expect(popularAt).toBeGreaterThanOrEqual(0);
+    expect(detailAt).toBeGreaterThanOrEqual(0);
+    expect(popularAt).toBeLessThan(detailAt);
   });
 
   it("GET /lists/:id forwards caller id and list id", async () => {

@@ -7,8 +7,10 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator.js";
+import { Public } from "../auth/public.decorator.js";
 import {
   ListsService,
   type AddItemInput,
@@ -16,15 +18,18 @@ import {
   type ListDetail,
   type ListLikeResult,
   type ListSummary,
+  type PopularList,
   type ReorderInput,
   type UpdateListInput,
 } from "./lists.service.js";
 
 /**
- * Curated-list endpoints (Fase 2 slice 2), all behind the global `ClerkGuard`.
+ * Curated-list endpoints (Fase 2 slice 2). Every route is behind the global
+ * `ClerkGuard` EXCEPT `GET /lists/popular`, the public landing page's read.
  * `@CurrentUser("sub")` yields the verified Clerk user id, which the service
  * maps to the local `User.id`, so a caller can only mutate their own lists.
  *
+ * - `GET    /lists/popular`              → public landing top-N (anonymous OK)
  * - `POST   /lists`                      → create a list (`201`)
  * - `GET    /lists/:id`                  → read a list + items (visibility-scoped)
  * - `PATCH  /lists/:id`                  → edit title/description/flags (owner only)
@@ -43,10 +48,42 @@ import {
  *
  * The controller has NO class-level prefix so the routes carry their absolute
  * paths. All validation and access logic lives in {@link ListsService}.
+ *
+ * ## `@Public()` is method-level only
+ *
+ * `popularLists` carries a bare `@Public()` on the HANDLER — never on the
+ * class, and with no `OptionalClerkGuard`, because no field in its payload
+ * depends on who is asking. `ClerkGuard` resolves the exemption with
+ * `getAllAndOverride([handler, class])`, so a class-level `@Public()` here
+ * would silently exempt every owner-only mutation above and every route added
+ * later. `lists.controller.spec.ts` asserts this placement.
+ *
+ * ## Route order — read before reordering anything below
+ *
+ * `@Get("lists/popular")` MUST stay declared ABOVE `@Get("lists/:id")`. Nest
+ * registers routes in declaration order, so with the two swapped the literal
+ * request `/lists/popular` matches `:id` first: an anonymous caller is turned
+ * away with a 401 and a signed-in one gets a 400 from the list-id UUID guard,
+ * for a path that is not malformed at all. `lists.controller.spec.ts` pins the
+ * order and `lists.e2e.spec.ts` proves the resulting 200 over the real router.
  */
 @Controller()
 export class ListsController {
   constructor(private readonly lists: ListsService) {}
+
+  /**
+   * Bounded top-N of recent, well-stocked public lists for the public landing
+   * page.
+   *
+   * Declared FIRST on purpose — see the route-order note on the class. `limit`
+   * is `unknown` and reaches the service unvalidated, matching every other
+   * handler here: all validation and clamping lives in {@link ListsService}.
+   */
+  @Public()
+  @Get("lists/popular")
+  popularLists(@Query("limit") limit?: unknown): Promise<PopularList[]> {
+    return this.lists.popularLists(limit);
+  }
 
   /** Creates a list owned by the caller. */
   @Post("lists")

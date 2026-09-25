@@ -14,9 +14,14 @@ import {
   isUniqueConstraintViolation,
 } from "../prisma/prisma-error.util.js";
 import {
+  DEFAULT_POPULAR_LIST_LIMIT,
+  LIST_PREVIEW_COVER_COUNT,
   MAX_DESCRIPTION_LENGTH,
   MAX_NOTE_LENGTH,
+  MAX_POPULAR_LIST_LIMIT,
   MAX_TITLE_LENGTH,
+  POPULAR_LIST_CANDIDATE_FACTOR,
+  POPULAR_LIST_MIN_ITEMS,
   UUID_PATTERN,
 } from "./lists.constants.js";
 
@@ -101,6 +106,30 @@ export interface ListSummary {
   itemCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * One list card on the public landing page. A viewer-independent projection:
+ * there is no `viewerHasLiked` and no `isPublic` (every row here is public by
+ * construction), because `GET /lists/popular` is served identically to
+ * anonymous and signed-in callers.
+ */
+export interface PopularList {
+  id: string;
+  title: string;
+  description: string | null;
+  isRanked: boolean;
+  /** Every item on the list, not just the ones that contribute a cover. */
+  itemCount: number;
+  likeCount: number;
+  createdAt: string;
+  owner: {
+    username: string;
+    displayName: string;
+    avatarUrl: string | null;
+  };
+  /** Up to {@link LIST_PREVIEW_COVER_COUNT} non-null covers, in item order. */
+  previewCovers: string[];
 }
 
 /** Access-check projection of a list: just what the visibility branch needs. */
@@ -275,6 +304,41 @@ export class ListsService {
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     }));
+  }
+
+  /**
+   * The public landing page's popular-lists row: a bounded top-N of the newest
+   * public lists holding at least {@link POPULAR_LIST_MIN_ITEMS} items.
+   *
+   * Takes no caller at all — unlike {@link getList} there is no viewer block,
+   * so the payload is byte-identical for an anonymous and a signed-in visitor
+   * and the route needs no `OptionalClerkGuard`. `isPublic: true` is applied in
+   * the query, so a private list never leaves Postgres.
+   *
+   * The item floor cannot be a `where` clause: Prisma does not filter on
+   * `_count`. Rather than drop to `$queryRaw` with a `HAVING`, this reads a
+   * bounded window of `limit * POPULAR_LIST_CANDIDATE_FACTOR` candidates (at
+   * most 36), filters the sparse ones in memory and slices to `limit`. The
+   * accepted trade-off: when more than two thirds of the newest public lists
+   * are sparse, the row comes back SHORTER than `limit` — never wrong, and the
+   * landing page renders whatever it gets.
+   *
+   * Deliberately cursor-free. This is a shop window, not a feed: the response
+   * is a plain array with no `nextCursor`.
+   */
+  async popularLists(rawLimit?: unknown): Promise<PopularList[]> {
+    const limit = this.clampPopularLimit(rawLimit);
+    const rows = (await this.prisma.client.list.findMany({
+      where: { isPublic: true },
+      select: POPULAR_LIST_SELECT,
+      orderBy: POPULAR_LIST_ORDER_BY,
+      take: limit * POPULAR_LIST_CANDIDATE_FACTOR,
+    })) as unknown as PopularListRow[];
+
+    return rows
+      .filter((row) => row._count.items >= POPULAR_LIST_MIN_ITEMS)
+      .slice(0, limit)
+      .map(toPopularList);
   }
 
   /**
@@ -759,6 +823,42 @@ export class ListsService {
     return value;
   }
 
+  /**
+   * Bounds `?limit=` for {@link popularLists}. An absent, malformed or
+   * non-positive value falls back to the default and an oversized one is capped
+   * — never a 400, because the caller is a page render and a clamped list is a
+   * better answer than an error.
+   *
+   * Mirrors `SearchService.clampLimit` and `ReviewsService.clampPopularLimit`
+   * rather than importing either: `apps/api` has no cross-module util layer,
+   * and per-module duplication of these guards is the established convention
+   * here (the same reason `UUID_PATTERN` is redeclared in every feature
+   * module). Accepted duplication, recorded so it is a choice and not an
+   * oversight.
+   */
+  private clampPopularLimit(value: unknown): number {
+    const limit = this.toInt(value);
+    if (limit === null || limit < 1) {
+      return DEFAULT_POPULAR_LIST_LIMIT;
+    }
+    return Math.min(limit, MAX_POPULAR_LIST_LIMIT);
+  }
+
+  /**
+   * Parses a query-string number, else `null`. Express delivers every query
+   * param as a string, so `?limit=5` arrives as `"5"` and must be coerced
+   * before it can be compared to a bound.
+   */
+  private toInt(value: unknown): number | null {
+    if (typeof value === "number" && Number.isInteger(value)) {
+      return value;
+    }
+    if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+      return Number.parseInt(value, 10);
+    }
+    return null;
+  }
+
   /** Validates a UUID-shaped id before it reaches Postgres (clean 400). */
   private validateListId(value: unknown): string {
     return this.validateUuid(value, "list id");
@@ -924,4 +1024,93 @@ interface ListSummaryRow {
   createdAt: Date;
   updatedAt: Date;
   _count: { items: number };
+}
+
+/**
+ * The projection for one landing-page list card. Deliberately NARROWER than
+ * {@link LIST_DETAIL_SELECT}: instead of every item with its album, it reads
+ * only the first {@link LIST_PREVIEW_COVER_COUNT} items that HAVE a cover, in
+ * position order, and only their `coverUrl` — so a 200-album list costs the
+ * same four rows as a four-album one. `_count.items` still counts EVERY item,
+ * which is what the item floor and the card's album count need.
+ */
+const POPULAR_LIST_SELECT = {
+  id: true,
+  title: true,
+  description: true,
+  isRanked: true,
+  createdAt: true,
+  user: {
+    select: {
+      profile: {
+        select: { username: true, displayName: true, avatarUrl: true },
+      },
+    },
+  },
+  items: {
+    where: { album: { coverUrl: { not: null } } },
+    orderBy: { position: "asc" as const },
+    take: LIST_PREVIEW_COVER_COUNT,
+    select: { album: { select: { coverUrl: true } } },
+  },
+  _count: { select: { items: true, likes: true } },
+} as const;
+
+/**
+ * Newest first, with `id` as a secondary tiebreak so two lists sharing a
+ * `createdAt` cannot swap places between two renders of the same page — the
+ * same determinism rule `GET /reviews/popular` applies.
+ */
+const POPULAR_LIST_ORDER_BY: Prisma.ListOrderByWithRelationInput[] = [
+  { createdAt: "desc" },
+  { id: "desc" },
+];
+
+/** Row shape returned by {@link POPULAR_LIST_SELECT}. */
+interface PopularListRow {
+  id: string;
+  title: string;
+  description: string | null;
+  isRanked: boolean;
+  createdAt: Date;
+  user: {
+    profile: {
+      username: string;
+      displayName: string;
+      avatarUrl: string | null;
+    } | null;
+  };
+  items: { album: { coverUrl: string | null } }[];
+  _count: { items: number; likes: number };
+}
+
+/**
+ * Flattens a popular-list row into its card projection. The cover filter and
+ * cut are re-applied here even though the query already does both: the mapper
+ * is the contract `previewCovers` promises (non-null, at most
+ * {@link LIST_PREVIEW_COVER_COUNT}), and it should not silently depend on the
+ * shape of a nested `select`. An owner with no `Profile` row degrades to empty
+ * strings, matching `GET /reviews/popular`, instead of throwing mid-render on
+ * the surface anonymous visitors see first.
+ */
+function toPopularList(row: PopularListRow): PopularList {
+  const profile = row.user.profile;
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    isRanked: row.isRanked,
+    itemCount: row._count.items,
+    likeCount: row._count.likes,
+    createdAt: row.createdAt.toISOString(),
+    owner: {
+      username: profile?.username ?? "",
+      displayName: profile?.displayName ?? "",
+      avatarUrl: profile?.avatarUrl ?? null,
+    },
+    previewCovers: row.items
+      .map((item) => item.album.coverUrl)
+      .filter((coverUrl): coverUrl is string => coverUrl !== null)
+      .slice(0, LIST_PREVIEW_COVER_COUNT),
+  };
 }
