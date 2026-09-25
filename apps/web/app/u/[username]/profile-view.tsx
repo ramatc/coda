@@ -7,7 +7,6 @@ export interface ProfileDto {
   displayName: string;
   bio: string | null;
   avatarUrl: string | null;
-  isPrivate: boolean;
 }
 
 /**

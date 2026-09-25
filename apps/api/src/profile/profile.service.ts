@@ -25,7 +25,6 @@ export interface ProfileResponse {
   displayName: string;
   bio: string | null;
   avatarUrl: string | null;
-  isPrivate: boolean;
 }
 
 /**
@@ -251,7 +250,6 @@ export class ProfileService {
       displayName: profile.displayName,
       bio: profile.bio,
       avatarUrl: profile.avatarUrl,
-      isPrivate: profile.isPrivate,
     };
   }
 }
