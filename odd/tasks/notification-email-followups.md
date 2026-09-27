@@ -34,4 +34,7 @@ Delegated direct: one writer (the writer trigger fires because two or more non-t
 `apps/api`: `pnpm vitest run`, `pnpm run -s typecheck`, `pnpm run -s lint` all clean.
 
 ## Progress
+All four tasks are done: cac2026 (T1), c0cd47c (T2), f75cd3c (T3), f1231f4 (T4). Writer verification: vitest 681/681, typecheck clean, lint clean. Parent spot check: the processor and resend specs pass (38/38).
+Review: RDD is on (default). The assessment (main, committed-only, untracked `.codegraph/` and `openspec/` excluded) is medium, 272 changed lines, so `review_due=false` (`under_budget`) and no native review is due.
+Next: push and open a PR (the user decides).
 Branch created off main 4b07cd5. TDD: strict, source is the user's CLAUDE.md, runner is vitest.
