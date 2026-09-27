@@ -177,6 +177,35 @@ describe("notification email processor", () => {
     await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBe(error);
   });
 
+  it("turns a 409 invalid_idempotent_request into an UnrecoverableError", async () => {
+    // The key was reused with a DIFFERENT payload than the original request —
+    // permanent, per https://resend.com/docs/dashboard/emails/idempotency-keys.
+    const worker = harness();
+    const error = new ResendSendError(
+      409,
+      "Idempotency key already used with a different payload",
+      "invalid_idempotent_request",
+    );
+    worker.send.mockRejectedValueOnce(error);
+
+    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBeInstanceOf(
+      UnrecoverableError,
+    );
+  });
+
+  it("leaves a 409 concurrent_idempotent_requests retryable", async () => {
+    // An earlier attempt with the SAME key is still in flight — transient.
+    const worker = harness();
+    const error = new ResendSendError(
+      409,
+      "An earlier request with this idempotency key is still in flight",
+      "concurrent_idempotent_requests",
+    );
+    worker.send.mockRejectedValueOnce(error);
+
+    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBe(error);
+  });
+
   it("leaves network failures retryable", async () => {
     const worker = harness();
     const error = new Error("socket closed");

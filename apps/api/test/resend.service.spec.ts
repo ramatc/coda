@@ -328,4 +328,46 @@ describe("ResendService", () => {
     expect(error).toBeInstanceOf(ResendSendError);
     expect((error as ResendSendError).status).toBe(503);
   });
+
+  it("parses the Resend error `code` from the JSON error body's `name` field", async () => {
+    // Resend's idempotency-key conflict body looks like
+    // `{ "statusCode": 409, "name": "invalid_idempotent_request", "message": "..." }`
+    // — the processor needs `name` to tell a permanent conflict apart from a
+    // retryable one, both of which arrive as plain 409s.
+    stubFetch(calls, () =>
+      jsonResponse(409, {
+        statusCode: 409,
+        name: "invalid_idempotent_request",
+        message: "Idempotency key already used with a different payload",
+      }),
+    );
+    const service = new ResendService(enabledConfig());
+
+    const error = await service.send(email).catch((err: unknown) => err);
+
+    expect((error as ResendSendError).code).toBe("invalid_idempotent_request");
+  });
+
+  it("leaves `code` undefined when the error body is not JSON", async () => {
+    stubFetch(calls, () => ({
+      ok: false,
+      status: 500,
+      json: () => Promise.reject(new Error("not json")),
+      text: async () => "Internal Server Error",
+    }) as unknown as Response);
+    const service = new ResendService(enabledConfig());
+
+    const error = await service.send(email).catch((err: unknown) => err);
+
+    expect((error as ResendSendError).code).toBeUndefined();
+  });
+
+  it("leaves `code` undefined when the JSON error body has no `name` field", async () => {
+    stubFetch(calls, () => jsonResponse(422, { message: "Invalid `to` field" }));
+    const service = new ResendService(enabledConfig());
+
+    const error = await service.send(email).catch((err: unknown) => err);
+
+    expect((error as ResendSendError).code).toBeUndefined();
+  });
 });

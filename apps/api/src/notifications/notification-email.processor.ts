@@ -4,6 +4,7 @@ import { UnrecoverableError } from "bullmq";
 import type { PrismaService } from "../prisma/prisma.service.js";
 import {
   COMMENT_EXCERPT_LENGTH,
+  RESEND_INVALID_IDEMPOTENT_REQUEST_CODE,
   RETRYABLE_RESEND_4XX_STATUSES,
   notificationEmailIdempotencyKey,
 } from "./notifications.constants.js";
@@ -82,13 +83,20 @@ export function createNotificationEmailProcessor({
         );
       }
     } catch (err) {
-      if (
-        err instanceof ResendSendError &&
-        err.status >= 400 &&
-        err.status < 500 &&
-        !RETRYABLE_RESEND_4XX_STATUSES.has(err.status)
-      ) {
-        throw new UnrecoverableError(err.message);
+      if (err instanceof ResendSendError) {
+        // Checked before the retryable-status set: a 409 is normally
+        // transient (`concurrent_idempotent_requests`), but this exact code
+        // means the idempotency key was reused with a DIFFERENT payload,
+        // which is permanent — retrying only ever reproduces it.
+        const isPermanentIdempotencyConflict =
+          err.status === 409 && err.code === RESEND_INVALID_IDEMPOTENT_REQUEST_CODE;
+        const isPermanent4xx =
+          err.status >= 400 &&
+          err.status < 500 &&
+          !RETRYABLE_RESEND_4XX_STATUSES.has(err.status);
+        if (isPermanentIdempotencyConflict || isPermanent4xx) {
+          throw new UnrecoverableError(err.message);
+        }
       }
       throw err;
     }

@@ -43,10 +43,28 @@ export function notificationEmailIdempotencyKey(notificationId: string): string 
  * timeout), 409 (an earlier attempt with the same idempotency key is still in
  * flight — `concurrent_idempotent_requests`) and 429 (rate limited). Every
  * other 4xx is a permanent rejection and fails the job without retrying.
+ *
+ * A `409` is a special case within this set: when its error `code` is
+ * {@link RESEND_INVALID_IDEMPOTENT_REQUEST_CODE} the key was reused with a
+ * DIFFERENT payload, which is permanent and never reaches this set — the
+ * processor checks for that code first. Every other 409 (including
+ * `concurrent_idempotent_requests` and an unknown/missing code) stays
+ * retryable via this set.
  */
 export const RETRYABLE_RESEND_4XX_STATUSES: ReadonlySet<number> = new Set([
   408, 409, 429,
 ]);
+
+/**
+ * Resend error `name` returned in a `409` body when the idempotency key was
+ * reused with a DIFFERENT payload than the request that first used it
+ * (source: https://resend.com/docs/dashboard/emails/idempotency-keys). This
+ * is a permanent conflict — retrying only ever reproduces it — unlike
+ * `concurrent_idempotent_requests` (an earlier attempt with the SAME key is
+ * still in flight), which is transient and left in
+ * {@link RETRYABLE_RESEND_4XX_STATUSES}.
+ */
+export const RESEND_INVALID_IDEMPOTENT_REQUEST_CODE = "invalid_idempotent_request";
 
 /** Retry and bounded-retention policy for immediate notification emails. */
 export const NOTIFICATION_EMAIL_JOB_OPTIONS: JobsOptions = {
