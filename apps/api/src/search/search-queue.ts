@@ -44,7 +44,7 @@ export class SearchQueue implements OnModuleDestroy {
 
   /**
    * Enqueues a search-sync job for a just-upserted album. The deterministic
-   * `search-album:{spotifyId}` job id dedupes re-enqueues (resume / overlapping
+   * `search-album-{spotifyId}` job id dedupes re-enqueues (resume / overlapping
    * pages / a re-sync after enrichment while an earlier sync is still pending).
    *
    * BullMQ's `Queue.add()` silently no-ops if a job with this id already

@@ -7,9 +7,11 @@
  * per-album job per album, and an album worker performs the idempotent upsert.
  * Two invariants make the whole thing safe to interrupt and re-run:
  *
- *  1. Per-album jobs use a DETERMINISTIC job id (`album:{spotifyId}`), so
+ *  1. Per-album jobs use a DETERMINISTIC job id (`album-{spotifyId}`), so
  *     BullMQ dedupes at the queue level — the same album surfacing again (on a
  *     resume, or across overlapping pages) never enqueues a duplicate job.
+ *     Every job id in the API separates with `-`, never `:`: BullMQ's
+ *     `queue.add()` throws "Custom Id cannot contain :" (test/job-ids.spec.ts).
  *  2. A Redis pagination checkpoint records the last completed page offset, so
  *     an import killed mid-run resumes from where it stopped instead of
  *     restarting from zero.
@@ -142,7 +144,7 @@ export const CATALOG_JOB_OPTIONS: JobsOptions = {
  * plentiful, but each enrich job costs a scarce, rate-limited MusicBrainz call
  * (≤1 req/s), so there are comparatively far fewer of them and each is far more
  * expensive to redo. A much larger `removeOnComplete` keeps the deterministic
- * `mbenrich:{spotifyId}` job id dedupe-able for a realistic ~100k-album seed run
+ * `mbenrich-{spotifyId}` job id dedupe-able for a realistic ~100k-album seed run
  * instead of aging out after only 1000 completions and silently reopening the
  * door to a wasted re-lookup. `attempts`/`backoff`/`removeOnFail` stay identical
  * to {@link CATALOG_JOB_OPTIONS} — only the completed-job retention widens.
@@ -155,28 +157,28 @@ export const CATALOG_ENRICH_JOB_OPTIONS: JobsOptions = {
 };
 
 /**
- * Deterministic per-album job id (`album:{spotifyId}`). Passing this as BullMQ's
+ * Deterministic per-album job id (`album-{spotifyId}`). Passing this as BullMQ's
  * `jobId` makes re-enqueuing the same album a no-op at the queue level — the
  * natural-dedup guarantee the resume path relies on.
  */
 export function albumJobId(spotifyId: string): string {
-  return `album:${spotifyId}`;
+  return `album-${spotifyId}`;
 }
 
 /**
- * Deterministic page job id (`spotify-page:{offset}`). Keeps a given page from
+ * Deterministic page job id (`spotify-page-{offset}`). Keeps a given page from
  * being enqueued twice when a resume re-derives the same offset.
  */
 export function pageJobId(offset: number): string {
-  return `${PAGE_JOB_NAME}:${offset}`;
+  return `${PAGE_JOB_NAME}-${offset}`;
 }
 
 /**
- * Deterministic MusicBrainz-enrichment job id (`mbenrich:{spotifyId}`). Keys the
+ * Deterministic MusicBrainz-enrichment job id (`mbenrich-{spotifyId}`). Keys the
  * enrich job to the album's stable Spotify id so re-enqueuing the same album
  * (on a resume, or an overlapping page) is a queue-level no-op — the same
  * natural-dedup guarantee the Spotify album jobs rely on.
  */
 export function enrichJobId(spotifyId: string): string {
-  return `mbenrich:${spotifyId}`;
+  return `mbenrich-${spotifyId}`;
 }

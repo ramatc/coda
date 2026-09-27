@@ -81,14 +81,14 @@ export const RECO_DEBOUNCE_MS = 5 * 60 * 1000;
 export const RECO_NIGHTLY_CRON = "0 3 * * *";
 
 /**
- * Deterministic per-user generation job id (`reco-gen:{userId}`). Passing this as
+ * Deterministic per-user generation job id (`reco-gen-{userId}`). Passing this as
  * BullMQ's `jobId` coalesces overlapping enqueues for the same user (the
  * onboarding-completion trigger and a debounced tracking trigger landing close
  * together) into a single job — generation is an idempotent upsert, so a
  * coalesced or duplicated run is harmless, just wasteful to run twice.
  */
 export function recoGenerationJobId(userId: string): string {
-  return `reco-gen:${userId}`;
+  return `reco-gen-${userId}`;
 }
 
 /**

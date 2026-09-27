@@ -567,8 +567,8 @@ describe("CatalogImportService", () => {
   it("derives deterministic, dedup-safe job ids for pages and albums", () => {
     // The queue-level natural-dedup guarantee (Decision #5) rides on these being
     // a pure function of the offset / spotifyId.
-    expect(pageJobId(100)).toBe("spotify-page:100");
-    expect(albumJobId("alb-0")).toBe("album:alb-0");
+    expect(pageJobId(100)).toBe("spotify-page-100");
+    expect(albumJobId("alb-0")).toBe("album-alb-0");
     expect(albumJobId("alb-0")).toBe(albumJobId(catalog[0].spotifyId));
   });
 });

@@ -120,7 +120,7 @@ export class CatalogQueue implements OnModuleDestroy {
    * Enqueues a MusicBrainz enrichment job for a just-upserted album (PR6). Called
    * by the album worker AFTER a successful upsert, so only albums that actually
    * persisted get chained into the rate-limited enrichment leg. The deterministic
-   * `mbenrich:{spotifyId}` job id dedupes re-enqueues (resume / overlapping pages).
+   * `mbenrich-{spotifyId}` job id dedupes re-enqueues (resume / overlapping pages).
    *
    * Uses {@link CATALOG_ENRICH_JOB_OPTIONS} (NOT the shared page/album
    * {@link CATALOG_JOB_OPTIONS}) — its wider `removeOnComplete` keeps this
