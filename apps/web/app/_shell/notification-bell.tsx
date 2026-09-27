@@ -6,7 +6,7 @@ import { Bell } from "lucide-react";
 import { useAuth } from "@clerk/nextjs";
 import { cn } from "@coda/ui";
 import {
-  fetchNotificationsOrThrow,
+  fetchNotifications,
   markAllRead,
   type NotificationItem,
 } from "../../lib/notifications";
@@ -127,10 +127,10 @@ export function NotificationBell() {
     setError(null);
 
     let token: string | null;
-    let page: Awaited<ReturnType<typeof fetchNotificationsOrThrow>>;
+    let page: Awaited<ReturnType<typeof fetchNotifications>>;
     try {
       token = await getToken();
-      page = await fetchNotificationsOrThrow(token);
+      page = await fetchNotifications(token);
     } catch {
       // A stale generation (superseded by a close or a later open) is
       // dropped silently — only the current open should ever touch state.

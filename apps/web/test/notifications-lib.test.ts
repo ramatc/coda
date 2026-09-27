@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchNotifications,
-  fetchNotificationsOrThrow,
   fetchUnreadCount,
   markAllRead,
   type NotificationPage,
@@ -118,38 +117,11 @@ describe("fetchNotifications", () => {
     );
   });
 
-  it("degrades to an empty page on a non-OK response, even one with a parseable body", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(PAGE, 401));
-
-    expect(await fetchNotifications("test-token")).toEqual({
-      items: [],
-      nextCursor: null,
-      unreadCount: 0,
-    });
-  });
-
-  it("degrades to an empty page on a network failure", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
-
-    expect(await fetchNotifications(null)).toEqual({
-      items: [],
-      nextCursor: null,
-      unreadCount: 0,
-    });
-  });
-});
-
-describe("fetchNotificationsOrThrow", () => {
-  it("returns the page from GET /notifications with the bearer token", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(PAGE));
-
-    expect(await fetchNotificationsOrThrow("test-token")).toEqual(PAGE);
-  });
-
   it("throws on a non-OK response instead of degrading to an empty page", async () => {
+    // A JSON body on purpose: the `ok` check, not a parse failure, must decide.
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(PAGE, 401));
 
-    await expect(fetchNotificationsOrThrow("test-token")).rejects.toThrow(
+    await expect(fetchNotifications("test-token")).rejects.toThrow(
       "Could not load notifications.",
     );
   });
@@ -157,7 +129,7 @@ describe("fetchNotificationsOrThrow", () => {
   it("propagates a network failure instead of swallowing it", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
 
-    await expect(fetchNotificationsOrThrow(null)).rejects.toThrow("offline");
+    await expect(fetchNotifications(null)).rejects.toThrow("offline");
   });
 });
 

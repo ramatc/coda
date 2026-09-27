@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import {
-  fetchNotificationsOrThrow,
+  fetchNotifications,
   fetchUnreadCount,
   markAllRead,
   type NotificationItem,
@@ -42,7 +42,7 @@ vi.mock("next/link", () => ({
 // these tests exercise the same count path production does.
 vi.mock("../lib/notifications", () => ({
   fetchUnreadCount: vi.fn(),
-  fetchNotificationsOrThrow: vi.fn(),
+  fetchNotifications: vi.fn(),
   markAllRead: vi.fn(),
 }));
 
@@ -116,7 +116,7 @@ async function openDropdown(): Promise<HTMLElement> {
 beforeEach(() => {
   mockGetToken.mockReset().mockResolvedValue("test-token");
   vi.mocked(fetchUnreadCount).mockReset().mockResolvedValue(2);
-  vi.mocked(fetchNotificationsOrThrow)
+  vi.mocked(fetchNotifications)
     .mockReset()
     .mockResolvedValue(page([COMMENT_UNREAD, FOLLOW_READ]));
   vi.mocked(markAllRead).mockReset().mockResolvedValue(undefined);
@@ -169,7 +169,7 @@ describe("NotificationBell", () => {
   it("loads the list lazily: nothing is fetched until the dropdown opens", async () => {
     await renderBell();
 
-    expect(fetchNotificationsOrThrow).not.toHaveBeenCalled();
+    expect(fetchNotifications).not.toHaveBeenCalled();
     expect(markAllRead).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
@@ -180,7 +180,7 @@ describe("NotificationBell", () => {
 
     const region = await openDropdown();
 
-    expect(fetchNotificationsOrThrow).toHaveBeenCalledTimes(1);
+    expect(fetchNotifications).toHaveBeenCalledTimes(1);
     expect(markAllRead).toHaveBeenCalledTimes(1);
     expect(markAllRead).toHaveBeenCalledWith("test-token");
     await waitFor(() =>
@@ -199,7 +199,7 @@ describe("NotificationBell", () => {
     expect(within(follow!).queryByText("New")).toBeNull();
 
     fireEvent.keyDown(document, { key: "Escape" });
-    vi.mocked(fetchNotificationsOrThrow).mockResolvedValue(
+    vi.mocked(fetchNotifications).mockResolvedValue(
       page([{ ...COMMENT_UNREAD, readAt: "2026-09-02T00:00:00.000Z" }]),
     );
     const reopened = await openDropdown();
@@ -211,7 +211,7 @@ describe("NotificationBell", () => {
   });
 
   it("renders who did what, linking each item at its target", async () => {
-    vi.mocked(fetchNotificationsOrThrow).mockResolvedValue(
+    vi.mocked(fetchNotifications).mockResolvedValue(
       page([COMMENT_UNREAD, FOLLOW_READ, FOLLOW_NO_PROFILE]),
     );
     await renderBell();
@@ -230,7 +230,7 @@ describe("NotificationBell", () => {
   });
 
   it("shows an empty state when there are no notifications", async () => {
-    vi.mocked(fetchNotificationsOrThrow).mockResolvedValue(page([]));
+    vi.mocked(fetchNotifications).mockResolvedValue(page([]));
     await renderBell();
     const region = await openDropdown();
 
@@ -284,12 +284,12 @@ describe("NotificationBell", () => {
       "Could not load notifications.",
     );
     expect(within(region).queryByText("Loading...")).toBeNull();
-    expect(fetchNotificationsOrThrow).not.toHaveBeenCalled();
+    expect(fetchNotifications).not.toHaveBeenCalled();
     expect(markAllRead).not.toHaveBeenCalled();
   });
 
   it("does not mark all read when the list fails to load, and keeps the badge", async () => {
-    vi.mocked(fetchNotificationsOrThrow).mockRejectedValue(new Error("offline"));
+    vi.mocked(fetchNotifications).mockRejectedValue(new Error("offline"));
     await renderBell();
     await screen.findByTestId("notification-badge");
 
@@ -311,17 +311,17 @@ describe("NotificationBell", () => {
     const firstResponse = new Promise<NotificationPage>((resolve) => {
       resolveFirst = resolve;
     });
-    vi.mocked(fetchNotificationsOrThrow).mockReturnValueOnce(firstResponse);
+    vi.mocked(fetchNotifications).mockReturnValueOnce(firstResponse);
 
     // Open #1: the request is sent but never resolves yet.
     fireEvent.click(bellButton());
     await waitFor(() =>
-      expect(fetchNotificationsOrThrow).toHaveBeenCalledTimes(1),
+      expect(fetchNotifications).toHaveBeenCalledTimes(1),
     );
 
     // Close before it settles, then reopen: this is the request that should win.
     fireEvent.keyDown(document, { key: "Escape" });
-    vi.mocked(fetchNotificationsOrThrow).mockResolvedValueOnce(
+    vi.mocked(fetchNotifications).mockResolvedValueOnce(
       page([FOLLOW_READ]),
     );
     fireEvent.click(bellButton());
