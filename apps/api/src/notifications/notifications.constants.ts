@@ -5,6 +5,14 @@ import type { JobsOptions } from "bullmq";
 /** Env var: Redis connection URL used by the notification email queue. */
 export const REDIS_URL_ENV = "REDIS_URL";
 
+/**
+ * Env var: the web app's public origin (e.g. `https://coda.app`). The email
+ * worker builds every deep link (`/u/{username}`, `/reviews/{id}`) off it, so
+ * it refuses to start without one rather than mailing broken links. The same
+ * variable already drives CORS and Clerk's `authorizedParties`.
+ */
+export const APP_URL_ENV = "APP_URL";
+
 /** BullMQ queue holding one immediate email job per notification. */
 export const NOTIFICATION_EMAIL_QUEUE = "notification-email";
 

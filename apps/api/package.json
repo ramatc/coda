@@ -15,6 +15,7 @@
     "seed:catalog": "pnpm build && node dist/catalog-import/seed.script.js",
     "worker:catalog": "pnpm build && node dist/catalog-import/catalog-worker.js",
     "worker:reco": "pnpm build && node dist/recommendations/reco-worker.js",
+    "worker:notifications": "pnpm build && node dist/notifications/notification-email.worker.js",
     "reindex:search": "pnpm build && node dist/search/search-reindex.script.js"
   },
   "dependencies": {
