@@ -3,6 +3,12 @@ import type { ReactNode } from "react";
 import { Inter_Tight, Source_Serif_4 } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { clerkAppearance } from "../lib/clerk-appearance";
+import {
+  SIGN_IN_FALLBACK_REDIRECT_URL,
+  SIGN_IN_URL,
+  SIGN_UP_FALLBACK_REDIRECT_URL,
+  SIGN_UP_URL,
+} from "../lib/auth-routes";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -35,7 +41,8 @@ const sourceSerif = Source_Serif_4({
  * (e.g. `<SignInButton>`, the "Sign up" link inside `<SignIn />`) at this
  * app's own `/sign-in` and `/sign-up` routes instead of Clerk's hosted
  * Account Portal. The server-side `auth.protect()` redirect does NOT read
- * these props — `middleware.ts` sets the same URLs for it. These are the
+ * these props — `middleware.ts` sets the same URLs for it, both read from
+ * `lib/auth-routes.ts`. These are the
  * in-app pages the landing links
  * (`hero.tsx`, `public-header.tsx`, `final-cta.tsx`) already point to.
  * `signInFallbackRedirectUrl`/`signUpFallbackRedirectUrl` are Clerk's actual
@@ -43,8 +50,8 @@ const sourceSerif = Source_Serif_4({
  * `redirect_url` query param) applies": `/home` after sign-in (the
  * onboarding gate there redirects unonboarded users to `/onboarding` itself),
  * and `/onboarding` directly after sign-up, since a brand-new account has
- * never completed it. These are set in code, not env vars, so they're
- * reviewable here alongside the routes they target.
+ * never completed it. These are set in code (`lib/auth-routes.ts`), not env
+ * vars, so they're reviewable alongside the routes they target.
  *
  * Dark-first is the app's identity, applied here at the root rather than
  * scoped to a subset of routes: `bg-background`/`text-text-primary` cover
@@ -57,10 +64,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <ClerkProvider
       appearance={clerkAppearance}
-      signInUrl="/sign-in"
-      signUpUrl="/sign-up"
-      signInFallbackRedirectUrl="/home"
-      signUpFallbackRedirectUrl="/onboarding"
+      signInUrl={SIGN_IN_URL}
+      signUpUrl={SIGN_UP_URL}
+      signInFallbackRedirectUrl={SIGN_IN_FALLBACK_REDIRECT_URL}
+      signUpFallbackRedirectUrl={SIGN_UP_FALLBACK_REDIRECT_URL}
     >
       <html
         lang="en"

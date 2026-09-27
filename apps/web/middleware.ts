@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { protectedRoutePatterns } from "./middleware.config";
+import { SIGN_IN_URL, SIGN_UP_URL } from "./lib/auth-routes";
 
 /**
  * Clerk middleware. Protected routes are defined by `protectedRoutePatterns`
@@ -12,7 +13,7 @@ import { protectedRoutePatterns } from "./middleware.config";
  * `auth.protect()` resolves its redirect on the server from these options (or
  * the `NEXT_PUBLIC_CLERK_SIGN_IN_URL` env var) and never sees the provider's
  * client-side props. Without them it falls back to Clerk's hosted Account
- * Portal.
+ * Portal. Both read the same URLs from `lib/auth-routes.ts`.
  */
 const isProtectedRoute = createRouteMatcher([...protectedRoutePatterns]);
 
@@ -22,7 +23,7 @@ export default clerkMiddleware(
       await auth.protect();
     }
   },
-  { signInUrl: "/sign-in", signUpUrl: "/sign-up" },
+  { signInUrl: SIGN_IN_URL, signUpUrl: SIGN_UP_URL },
 );
 
 // NOTE: Next statically parses `config.matcher`, so it MUST be an inline
