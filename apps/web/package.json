@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.5.14",
+    "@clerk/ui": "^1.36.0",
     "@coda/types": "workspace:*",
     "@coda/ui": "workspace:*",
     "@dnd-kit/core": "^6.3.1",

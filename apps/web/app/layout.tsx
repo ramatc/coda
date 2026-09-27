@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Inter_Tight, Source_Serif_4 } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
+import { clerkAppearance } from "../lib/clerk-appearance";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -55,6 +56,7 @@ const sourceSerif = Source_Serif_4({
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <ClerkProvider
+      appearance={clerkAppearance}
       signInUrl="/sign-in"
       signUpUrl="/sign-up"
       signInFallbackRedirectUrl="/home"

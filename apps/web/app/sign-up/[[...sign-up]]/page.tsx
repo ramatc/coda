@@ -9,9 +9,10 @@ import { SignUp } from "@clerk/nextjs";
  * the app's own dark shell instead of navigating away to a
  * `*.accounts.dev` domain.
  *
- * `<SignUp />` renders unstyled against the root layout's
- * `bg-background text-text-primary`; centering it here (rather than in the
- * layout) keeps that concern local to this route, matching `/sign-in`.
+ * `<SignUp />` is themed app-wide by `clerkAppearance`
+ * (`lib/clerk-appearance.ts`, applied on `<ClerkProvider>`); centering it
+ * here (rather than in the layout) keeps that concern local to this route,
+ * matching `/sign-in`.
  */
 export default function SignUpPage() {
   return (
