@@ -126,6 +126,21 @@ describe("notification email processor", () => {
     expect(email.html).not.toContain("x".repeat(141));
   });
 
+  it("drops a trailing lone high surrogate instead of splitting an excerpt mid-emoji", async () => {
+    // U+1F600 (😀) encodes as a UTF-16 surrogate pair; placed right after 139
+    // plain characters, a naive `.slice(0, 140)` lands exactly between the
+    // pair and keeps only the lone high surrogate.
+    const emoji = "\u{1F600}";
+    const body = "x".repeat(139) + emoji + " more text that never rides along";
+    const worker = harness(commentRow(body));
+
+    await worker.process({ notificationId: NOTIFICATION_ID });
+
+    const email = worker.send.mock.calls[0][0] as { html: string };
+    expect(email.html).toContain("x".repeat(139));
+    expect(email.html).not.toContain("\uD83D");
+  });
+
   it("falls back to the app root when the actor has no profile", async () => {
     const worker = harness(followRow(null));
 

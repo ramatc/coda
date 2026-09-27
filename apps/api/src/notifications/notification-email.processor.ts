@@ -38,6 +38,21 @@ export interface NotificationEmailProcessorDependencies {
   logger: Pick<Logger, "debug" | "warn">;
 }
 
+/**
+ * Slices `value` to at most `maxLength` UTF-16 code units, but never leaves a
+ * lone high surrogate (`0xD800`–`0xDBFF`) trailing the result. `String.slice`
+ * cuts by code unit and can land exactly between a surrogate pair — e.g. an
+ * emoji straddling the boundary — which would hand the caller one half of a
+ * character. Dropping that trailing high surrogate keeps the excerpt valid
+ * UTF-16 at the cost of it sometimes being one code unit short of `maxLength`.
+ */
+function sliceExcerpt(value: string, maxLength: number): string {
+  const sliced = value.slice(0, maxLength);
+  const lastCharCode = sliced.charCodeAt(sliced.length - 1);
+  const isTrailingHighSurrogate = lastCharCode >= 0xd800 && lastCharCode <= 0xdbff;
+  return isTrailingHighSurrogate ? sliced.slice(0, -1) : sliced;
+}
+
 /** Escapes an untrusted text fragment before interpolation into email HTML. */
 export function escapeHtml(value: string): string {
   return value
@@ -138,7 +153,9 @@ function composeEmail(notification: EmailNotificationRow, appUrl: string): Resen
 
   const comment = notification.reviewComment;
   const href = comment ? `${appUrl}/reviews/${comment.reviewId}` : appUrl;
-  const excerpt = escapeHtml(comment?.body.slice(0, COMMENT_EXCERPT_LENGTH) ?? "");
+  const excerpt = escapeHtml(
+    comment ? sliceExcerpt(comment.body, COMMENT_EXCERPT_LENGTH) : "",
+  );
   return {
     to: notification.recipient.email,
     subject: `${name} commented on your review`,

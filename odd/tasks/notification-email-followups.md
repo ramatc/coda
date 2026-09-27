@@ -19,8 +19,9 @@ Close the four non-blocking follow-ups recorded in PR #66 (notification email qu
 
 ## Tasks
 - [x] T1 `ResendSendError` exposes the Resend error `name` (parsed best-effort from the JSON body); the processor treats `409 invalid_idempotent_request` as `UnrecoverableError` and keeps other 409s retryable.
-  - RED: `expected undefined to be 'invalid_idempotent_request'` (resend.service.spec) and `expected ResendSendError ... to be an instance of UnrecoverableError` (notification-email.processor.spec). GREEN: 36/36 passing in both specs. Commit: pending (see below).
-- [ ] T2 The comment excerpt never ends in a lone high surrogate.
+  - RED: `expected undefined to be 'invalid_idempotent_request'` (resend.service.spec) and `expected ResendSendError ... to be an instance of UnrecoverableError` (notification-email.processor.spec). GREEN: 36/36 passing in both specs. Commit: cac20266c6fb7875294a86b3b271f7d559752b89.
+- [x] T2 The comment excerpt never ends in a lone high surrogate.
+  - RED: `expected '<p>...xxxx...�</blockquote>...' not to contain '�'` (lone high surrogate rendered raw). GREEN: 19/19 passing in notification-email.processor.spec.ts.
 - [ ] T3 Narrow the processor `logger` dependency to `debug` only.
 - [ ] T4 Add a `never` exhaustiveness guard to `composeEmail`.
 
