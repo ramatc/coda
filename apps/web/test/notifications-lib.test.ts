@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchNotifications,
+  fetchNotificationsOrThrow,
   fetchUnreadCount,
   markAllRead,
   type NotificationPage,
@@ -135,6 +136,28 @@ describe("fetchNotifications", () => {
       nextCursor: null,
       unreadCount: 0,
     });
+  });
+});
+
+describe("fetchNotificationsOrThrow", () => {
+  it("returns the page from GET /notifications with the bearer token", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(PAGE));
+
+    expect(await fetchNotificationsOrThrow("test-token")).toEqual(PAGE);
+  });
+
+  it("throws on a non-OK response instead of degrading to an empty page", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(PAGE, 401));
+
+    await expect(fetchNotificationsOrThrow("test-token")).rejects.toThrow(
+      "Could not load notifications.",
+    );
+  });
+
+  it("propagates a network failure instead of swallowing it", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+
+    await expect(fetchNotificationsOrThrow(null)).rejects.toThrow("offline");
   });
 });
 

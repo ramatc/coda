@@ -80,6 +80,20 @@ export async function fetchUnreadCount(
   }
 }
 
+/** Shared `GET /notifications` request. Throws on a non-OK response or a network failure. */
+async function requestNotifications(
+  token: string | null,
+): Promise<NotificationPage> {
+  const response = await fetch(`${getApiBaseUrl()}/notifications`, {
+    headers: authHeaders(token),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Could not load notifications.");
+  }
+  return (await response.json()) as NotificationPage;
+}
+
 /**
  * The first page of the caller's notifications from `GET /notifications`,
  * fetched only when the dropdown opens — never on a poll tick. Fails safe to an
@@ -89,17 +103,23 @@ export async function fetchNotifications(
   token: string | null,
 ): Promise<NotificationPage> {
   try {
-    const response = await fetch(`${getApiBaseUrl()}/notifications`, {
-      headers: authHeaders(token),
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      return EMPTY_PAGE;
-    }
-    return (await response.json()) as NotificationPage;
+    return await requestNotifications(token);
   } catch {
     return EMPTY_PAGE;
   }
+}
+
+/**
+ * Same request as {@link fetchNotifications}, but THROWS instead of degrading
+ * to an empty page. The dropdown uses this variant so it can tell a real
+ * failure apart from a genuinely empty inbox — a distinction it needs to (a)
+ * surface an error instead of hanging on "Loading..." forever, and (b) skip
+ * `markAllRead` when the list never actually loaded.
+ */
+export async function fetchNotificationsOrThrow(
+  token: string | null,
+): Promise<NotificationPage> {
+  return requestNotifications(token);
 }
 
 /**
