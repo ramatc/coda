@@ -41,7 +41,7 @@ import {
  *
  * Topology (design "seed → page jobs → per-album"):
  *  - Page worker: fetches one Spotify page, fans out one deterministic
- *    `album:{spotifyId}` job per album (queue-level dedup), advances the Redis
+ *    `album-{spotifyId}` job per album (queue-level dedup), advances the Redis
  *    checkpoint, then enqueues the next page. Killing the process leaves the
  *    checkpoint at the last completed page, so a restart resumes there.
  *  - Album worker: performs the idempotent Artist+Album upsert, then enqueues a

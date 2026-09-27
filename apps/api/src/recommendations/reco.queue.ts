@@ -53,7 +53,7 @@ export class RecoQueue implements OnModuleDestroy {
   /**
    * Enqueues an IMMEDIATE generation for a user (the onboarding-completion
    * trigger — the cold-start user must get recommendations promptly after
-   * finishing onboarding). The deterministic `reco-gen:{userId}` job id coalesces
+   * finishing onboarding). The deterministic `reco-gen-{userId}` job id coalesces
    * with any pending debounced job for the same user.
    */
   async enqueueGeneration(userId: string): Promise<void> {
@@ -74,7 +74,7 @@ export class RecoQueue implements OnModuleDestroy {
 
   /**
    * Shared enqueue path for both entry points above — they only differ in
-   * whether the job is delayed. The deterministic `reco-gen:{userId}` job id
+   * whether the job is delayed. The deterministic `reco-gen-{userId}` job id
    * dedupes re-enqueues, but BullMQ's `Queue.add()` silently no-ops if a job
    * with this id already exists in Redis in ANY state — including `failed`.
    * Once a user's generation job exhausts its retries and lands in the failed

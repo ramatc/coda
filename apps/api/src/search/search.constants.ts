@@ -69,13 +69,13 @@ export const SEARCH_SYNC_QUEUE = "search-sync";
 export const SEARCH_SYNC_JOB_NAME = "search-sync-album";
 
 /**
- * Deterministic per-album search-sync job id (`search-album:{spotifyId}`). Keys
+ * Deterministic per-album search-sync job id (`search-album-{spotifyId}`). Keys
  * the sync to the album's stable Spotify id so re-enqueuing the same album (a
  * resume, or an overlapping page) is a queue-level no-op — the same
  * natural-dedup guarantee the Spotify album/enrich jobs rely on.
  */
 export function searchAlbumSyncJobId(spotifyId: string): string {
-  return `search-album:${spotifyId}`;
+  return `search-album-${spotifyId}`;
 }
 
 /**
