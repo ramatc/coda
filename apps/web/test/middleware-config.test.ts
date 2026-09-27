@@ -59,6 +59,28 @@ describe("middleware config", () => {
     expect(guarding("/reviews")).toEqual([]);
   });
 
+  it("leaves the in-app Clerk auth routes PUBLIC", () => {
+    /**
+     * Every pattern here is a literal prefix followed by `(.*)` (see the
+     * patterns above), so a real match is "the path starts with the prefix
+     * before `(.*)`" — not merely "some pattern string starts with the same
+     * characters" (which `guarding` above checks for `/lists` vs `/reviews`).
+     * `/sign-in` and `/sign-up` must never redirect through `auth.protect()`,
+     * or a signed-out visitor could never reach the pages that sign them in.
+     */
+    const isProtected = (path: string) =>
+      protectedRoutePatterns.some((pattern) =>
+        path.startsWith(pattern.replace("(.*)", "")),
+      );
+
+    expect(isProtected("/sign-in")).toBe(false);
+    expect(isProtected("/sign-up")).toBe(false);
+    // Clerk appends its own sub-paths (multi-factor, verification, …) under
+    // the catch-all route; those must stay public too.
+    expect(isProtected("/sign-in/factor-one")).toBe(false);
+    expect(isProtected("/sign-up/verify-email-address")).toBe(false);
+  });
+
   it("exposes a Next matcher that covers API routes", () => {
     expect(Array.isArray(config.matcher)).toBe(true);
     expect(config.matcher).toContain("/(api|trpc)(.*)");

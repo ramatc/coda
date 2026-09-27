@@ -18,11 +18,13 @@ interface ReviewSignInPromptProps {
  * ## Why this is the app's FIRST Clerk UI component
  *
  * `/reviews/[id]` is the app's only anonymously-readable page, so it is also the
- * first place that ever needed to offer a signed-out visitor a way in. There is
- * no `/sign-in` route in this codebase and no sign-in affordance anywhere else —
- * protected routes simply bounce through `auth.protect()`, which never has to
- * render an invitation. `SignInButton` is Clerk's own answer and needs no new
- * route; adding one would have been a larger, out-of-slice decision.
+ * first place that ever needed to offer a signed-out visitor a way in — every
+ * other route simply bounces through `auth.protect()` on the in-app
+ * `/sign-in` route (see `app/sign-in/[[...sign-in]]/page.tsx`), which never
+ * has to render an invitation. `SignInButton` is used here instead of a plain
+ * link to `/sign-in` so this prompt can carry `forceRedirectUrl` itself,
+ * rather than relying on Clerk's generic `redirect_url` query-param
+ * convention.
  *
  * `forceRedirectUrl` is the load-bearing prop: it returns the visitor to the
  * review that prompted them, instead of Clerk's default destination. Redirect
