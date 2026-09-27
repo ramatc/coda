@@ -1,3 +1,4 @@
+import type { Appearance } from "@clerk/ui";
 import { dark } from "@clerk/ui/themes";
 
 /**
@@ -26,4 +27,4 @@ export const clerkAppearance = {
     colorInputForeground: "var(--color-text-primary)",
     colorBorder: "var(--color-border-subtle)",
   },
-};
+} satisfies Appearance;
