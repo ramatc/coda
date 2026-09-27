@@ -2,7 +2,11 @@ import { NotificationType } from "@coda/db";
 import type { Logger } from "@nestjs/common";
 import { UnrecoverableError } from "bullmq";
 import type { PrismaService } from "../prisma/prisma.service.js";
-import { COMMENT_EXCERPT_LENGTH } from "./notifications.constants.js";
+import {
+  COMMENT_EXCERPT_LENGTH,
+  RETRYABLE_RESEND_4XX_STATUSES,
+  notificationEmailIdempotencyKey,
+} from "./notifications.constants.js";
 import type { NotificationEmailJobData } from "./notification-email.queue.js";
 import {
   ResendSendError,
@@ -69,7 +73,9 @@ export function createNotificationEmailProcessor({
 
     const email = composeEmail(notification, baseUrl);
     try {
-      const result = await resend.send(email);
+      const result = await resend.send(email, {
+        idempotencyKey: notificationEmailIdempotencyKey(notificationId),
+      });
       if (result.status === "skipped") {
         logger.debug(
           `Notification email ${notificationId} skipped because Resend is disabled.`,
@@ -80,7 +86,7 @@ export function createNotificationEmailProcessor({
         err instanceof ResendSendError &&
         err.status >= 400 &&
         err.status < 500 &&
-        err.status !== 429
+        !RETRYABLE_RESEND_4XX_STATUSES.has(err.status)
       ) {
         throw new UnrecoverableError(err.message);
       }

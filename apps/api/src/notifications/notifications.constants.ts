@@ -20,6 +20,26 @@ export function notificationEmailJobId(notificationId: string): string {
   return `notification-email-${notificationId}`;
 }
 
+/**
+ * Resend `Idempotency-Key` for one notification's email. Derived from the
+ * notification id alone, so every BullMQ attempt for the same notification
+ * reuses it and a retry after a lost response cannot deliver a second email.
+ * Well under Resend's 256-character limit (19-char prefix + a 36-char UUID).
+ */
+export function notificationEmailIdempotencyKey(notificationId: string): string {
+  return `notification-email-${notificationId}`;
+}
+
+/**
+ * Resend 4xx statuses that are transient rather than permanent: 408 (request
+ * timeout), 409 (an earlier attempt with the same idempotency key is still in
+ * flight — `concurrent_idempotent_requests`) and 429 (rate limited). Every
+ * other 4xx is a permanent rejection and fails the job without retrying.
+ */
+export const RETRYABLE_RESEND_4XX_STATUSES: ReadonlySet<number> = new Set([
+  408, 409, 429,
+]);
+
 /** Retry and bounded-retention policy for immediate notification emails. */
 export const NOTIFICATION_EMAIL_JOB_OPTIONS: JobsOptions = {
   attempts: 3,

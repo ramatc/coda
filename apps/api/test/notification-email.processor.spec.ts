@@ -88,11 +88,29 @@ describe("notification email processor", () => {
 
     await worker.process({ notificationId: NOTIFICATION_ID });
 
-    expect(worker.send).toHaveBeenCalledExactlyOnceWith({
-      to: "recipient@example.com",
-      subject: "Ana Torres followed you on Coda",
-      html: expect.stringContaining('href="https://coda.test/u/ana"'),
-    });
+    expect(worker.send).toHaveBeenCalledExactlyOnceWith(
+      {
+        to: "recipient@example.com",
+        subject: "Ana Torres followed you on Coda",
+        html: expect.stringContaining('href="https://coda.test/u/ana"'),
+      },
+      { idempotencyKey: `notification-email-${NOTIFICATION_ID}` },
+    );
+  });
+
+  it("derives the Resend idempotency key from the notification id, so every retry reuses it", async () => {
+    const worker = harness(commentRow());
+    const otherId = "33333333-3333-4333-8333-333333333333";
+
+    await worker.process({ notificationId: NOTIFICATION_ID });
+    await worker.process({ notificationId: NOTIFICATION_ID });
+    await worker.process({ notificationId: otherId });
+
+    expect(worker.send.mock.calls.map((call) => call[1])).toEqual([
+      { idempotencyKey: `notification-email-${NOTIFICATION_ID}` },
+      { idempotencyKey: `notification-email-${NOTIFICATION_ID}` },
+      { idempotencyKey: `notification-email-${otherId}` },
+    ]);
   });
 
   it("sends a COMMENT email linking to the review with a bounded excerpt", async () => {
@@ -138,7 +156,20 @@ describe("notification email processor", () => {
     );
   });
 
-  it.each([429, 503])("leaves Resend status %i retryable", async (status) => {
+  it("keeps a non-retryable 4xx such as 400 unrecoverable", async () => {
+    const worker = harness();
+    worker.send.mockRejectedValueOnce(new ResendSendError(400, "validation_error"));
+
+    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBeInstanceOf(
+      UnrecoverableError,
+    );
+  });
+
+  // 408 is a request timeout and 409 is what Resend answers while an earlier
+  // attempt with the same idempotency key is still in flight
+  // (`concurrent_idempotent_requests`) — both are transient, so the queue's
+  // backoff must apply instead of failing the job permanently.
+  it.each([408, 409, 429, 503])("leaves Resend status %i retryable", async (status) => {
     const worker = harness();
     const error = new ResendSendError(status, "temporary failure");
     worker.send.mockRejectedValueOnce(error);
