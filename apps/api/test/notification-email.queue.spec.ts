@@ -170,4 +170,15 @@ describe("NotificationEmailQueue", () => {
     expect(bullQueue?.close).toHaveBeenCalledOnce();
     expect(quit).toHaveBeenCalledOnce();
   });
+
+  it("still quits the Redis connection when closing the queue rejects, then surfaces the close error", async () => {
+    const queue = new NotificationEmailQueue(config());
+    await queue.enqueue("0d7c5a8e-5f0b-4a57-9d8e-3c2b1a0f9e71");
+    const closeError = new Error("queue close failed");
+    registry.get(NOTIFICATION_EMAIL_QUEUE)?.close.mockRejectedValueOnce(closeError);
+
+    await expect(queue.onModuleDestroy()).rejects.toBe(closeError);
+
+    expect(quit).toHaveBeenCalledOnce();
+  });
 });

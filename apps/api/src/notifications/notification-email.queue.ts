@@ -48,10 +48,18 @@ export class NotificationEmailQueue implements OnModuleDestroy {
     );
   }
 
+  /**
+   * Releases whatever was lazily created. The Redis connection is quit in a
+   * `finally` so a rejected `queue.close()` cannot leak the socket; the close
+   * error still propagates so shutdown failures stay visible.
+   */
   async onModuleDestroy(): Promise<void> {
-    await this.queue?.close();
-    if (this.connection) {
-      await this.connection.quit();
+    try {
+      await this.queue?.close();
+    } finally {
+      if (this.connection) {
+        await this.connection.quit();
+      }
     }
   }
 
