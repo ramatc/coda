@@ -95,16 +95,32 @@ export function createNotificationEmailProcessor({
   };
 }
 
+/**
+ * The actor's name as single-line plain text, for the subject. `displayName`
+ * is only trimmed and length-bounded at write time, so control characters
+ * (CR/LF, tabs, bells) are collapsed to spaces here; a name that is nothing
+ * but control characters falls back to "Someone". Not HTML-escaped — the
+ * subject is plain text, and the body escapes this value separately.
+ */
+function actorName(profile: EmailNotificationRow["actor"]["profile"]): string {
+  const name = (profile?.displayName ?? "")
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return name || "Someone";
+}
+
 function composeEmail(notification: EmailNotificationRow, appUrl: string): ResendEmail {
   const profile = notification.actor.profile;
-  const displayName = escapeHtml(profile?.displayName ?? "Someone");
+  const name = actorName(profile);
+  const displayName = escapeHtml(name);
 
   if (notification.type === NotificationType.FOLLOW) {
     const username = profile ? escapeHtml(profile.username) : "";
     const href = profile ? `${appUrl}/u/${username}` : appUrl;
     return {
       to: notification.recipient.email,
-      subject: `${profile?.displayName ?? "Someone"} followed you on Coda`,
+      subject: `${name} followed you on Coda`,
       html:
         `<p><strong>${displayName}</strong>` +
         `${profile ? ` (@${username})` : ""} followed you on Coda.</p>` +
@@ -117,7 +133,7 @@ function composeEmail(notification: EmailNotificationRow, appUrl: string): Resen
   const excerpt = escapeHtml(comment?.body.slice(0, COMMENT_EXCERPT_LENGTH) ?? "");
   return {
     to: notification.recipient.email,
-    subject: `${profile?.displayName ?? "Someone"} commented on your review`,
+    subject: `${name} commented on your review`,
     html:
       `<p><strong>${displayName}</strong> commented on your review:</p>` +
       `<blockquote>${excerpt}</blockquote>` +

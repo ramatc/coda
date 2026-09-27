@@ -205,4 +205,42 @@ describe("notification email processor", () => {
     );
     expect(commentHtml).not.toContain("<script>");
   });
+
+  /**
+   * The subject is plain text (a JSON field Resend encodes into the header),
+   * so it is NOT HTML-escaped — `&` must stay `&`. But `displayName` is only
+   * trimmed and length-bounded at write time, so control characters (CR/LF,
+   * tabs, bells) are stripped here: a subject is a single line, and an actor
+   * must not be able to smuggle line breaks into another user's inbox.
+   */
+  it("strips control characters from the subject without HTML-escaping it", async () => {
+    const hostile = "Ana & Co\r\nBcc: evil@example.com\t<Boss>\u0007";
+
+    const follow = harness(followRow({ username: "ana", displayName: hostile }));
+    await follow.process({ notificationId: NOTIFICATION_ID });
+    const followSubject = (follow.send.mock.calls[0][0] as { subject: string }).subject;
+    expect(followSubject).toBe(
+      "Ana & Co Bcc: evil@example.com <Boss> followed you on Coda",
+    );
+
+    const comment = harness({
+      ...commentRow(),
+      actor: { profile: { username: "ana", displayName: hostile } },
+    });
+    await comment.process({ notificationId: NOTIFICATION_ID });
+    const commentSubject = (comment.send.mock.calls[0][0] as { subject: string }).subject;
+    expect(commentSubject).toBe(
+      "Ana & Co Bcc: evil@example.com <Boss> commented on your review",
+    );
+  });
+
+  it("falls back to 'Someone' when the display name is only control characters", async () => {
+    const follow = harness(
+      followRow({ username: "ana", displayName: "\u0007\u0008" }),
+    );
+    await follow.process({ notificationId: NOTIFICATION_ID });
+
+    const subject = (follow.send.mock.calls[0][0] as { subject: string }).subject;
+    expect(subject).toBe("Someone followed you on Coda");
+  });
 });
