@@ -1098,12 +1098,12 @@ Cada reto otorga XP visible en el perfil; XP acumulado no es ranking público (e
 
 ### Fase 2 — Social y listas (2 meses)
 
-- Sistema de follows.
-- Feed de actividad de seguidos.
-- Listas (crear, editar, rankear).
-- Reseñas con likes y comentarios.
-- Notificaciones in-app (Resend para email transaccional).
-- SEO y páginas públicas indexables.
+- ✅ Sistema de follows.
+- ✅ Feed de actividad de seguidos.
+- ✅ Listas (crear, editar, rankear), más likes en listas y backlog "quiero escuchar".
+- ✅ Reseñas con likes y comentarios.
+- 🚧 Notificaciones in-app (Resend para email transaccional): la API de lectura y la generación de notificaciones en follows y comentarios ya están hechas. Faltan el worker de email (en revisión) y la UI (campana y dropdown).
+- SEO y páginas públicas indexables. Por ahora solo está hecha la landing pública.
 
 **Salida:** beta abierta.
 
