@@ -21,21 +21,31 @@ describe("clerkAppearance", () => {
     expect(clerkAppearance.theme).toBe(dark);
   });
 
-  /**
-   * Asserts the invariant instead of mirroring the config: every color reads
-   * a design token through `var(--…)`, and that token actually exists in the
-   * shared preset — a renamed or misspelled token would otherwise fail
-   * silently in the browser.
-   */
-  it("reads every color from a token declared in the shared preset", () => {
-    // Same pairing as the landing's `bg-coda text-white` CTAs, not a token.
-    const { colorPrimaryForeground, ...tokenBacked } =
-      clerkAppearance.variables;
-    expect(colorPrimaryForeground).toBe("white");
+  it("maps Clerk's variables onto the shared design tokens", () => {
+    expect(clerkAppearance.variables).toEqual({
+      colorPrimary: "var(--color-coda)",
+      // Matches the landing's `bg-coda text-white` buttons.
+      colorPrimaryForeground: "white",
+      colorBackground: "var(--color-surface-1)",
+      colorForeground: "var(--color-text-primary)",
+      colorMutedForeground: "var(--color-text-secondary)",
+      colorInput: "var(--color-surface-2)",
+      colorInputForeground: "var(--color-text-primary)",
+      colorBorder: "var(--color-border-subtle)",
+    });
+  });
 
-    for (const [key, value] of Object.entries(tokenBacked)) {
-      const token = /^var\((--[\w-]+)\)$/.exec(value)?.[1];
-      expect(token, `${key} must be a var(--token)`).toBeDefined();
+  /**
+   * The mapping above can't catch a token that was renamed or removed in the
+   * preset: `var(--missing)` is valid CSS and fails silently in the browser.
+   */
+  it("only references tokens declared in the shared preset", () => {
+    const tokens = Object.values(clerkAppearance.variables).flatMap(
+      (value) => /^var\((--[\w-]+)\)$/.exec(value)?.[1] ?? [],
+    );
+
+    expect(tokens.length).toBeGreaterThan(0);
+    for (const token of tokens) {
       expect(presetCss, `${token} missing from preset.css`).toMatch(
         new RegExp(`^\\s*${token}:`, "m"),
       );

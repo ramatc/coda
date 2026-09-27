@@ -42,16 +42,12 @@ const sourceSerif = Source_Serif_4({
  * app's own `/sign-in` and `/sign-up` routes instead of Clerk's hosted
  * Account Portal. The server-side `auth.protect()` redirect does NOT read
  * these props — `middleware.ts` sets the same URLs for it, both read from
- * `lib/auth-routes.ts`. These are the
- * in-app pages the landing links
+ * `lib/auth-routes.ts`. These are the in-app pages the landing links
  * (`hero.tsx`, `public-header.tsx`, `final-cta.tsx`) already point to.
  * `signInFallbackRedirectUrl`/`signUpFallbackRedirectUrl` are Clerk's actual
- * v7 prop names for "where to land when nothing more specific (like a
- * `redirect_url` query param) applies": `/home` after sign-in (the
- * onboarding gate there redirects unonboarded users to `/onboarding` itself),
- * and `/onboarding` directly after sign-up, since a brand-new account has
- * never completed it. These are set in code (`lib/auth-routes.ts`), not env
- * vars, so they're reviewable alongside the routes they target.
+ * v7 prop names for the post-auth landing page; the chosen targets and why
+ * are documented next to the constants in `lib/auth-routes.ts`, set in code
+ * rather than env vars so they're reviewable alongside the routes they target.
  *
  * Dark-first is the app's identity, applied here at the root rather than
  * scoped to a subset of routes: `bg-background`/`text-text-primary` cover
