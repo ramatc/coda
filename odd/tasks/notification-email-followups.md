@@ -22,7 +22,8 @@ Close the four non-blocking follow-ups recorded in PR #66 (notification email qu
   - RED: `expected undefined to be 'invalid_idempotent_request'` (resend.service.spec) and `expected ResendSendError ... to be an instance of UnrecoverableError` (notification-email.processor.spec). GREEN: 36/36 passing in both specs. Commit: cac20266c6fb7875294a86b3b271f7d559752b89.
 - [x] T2 The comment excerpt never ends in a lone high surrogate.
   - RED: `expected '<p>...xxxx...�</blockquote>...' not to contain '�'` (lone high surrogate rendered raw). GREEN: 19/19 passing in notification-email.processor.spec.ts.
-- [ ] T3 Narrow the processor `logger` dependency to `debug` only.
+- [x] T3 Narrow the processor `logger` dependency to `debug` only.
+  - Type-only change; no RED possible (honestly noted per instructions). Proof: `pnpm run -s typecheck` clean (apps/api), including `notification-email.worker.ts`, which passes a real `Logger` and still satisfies `Pick<Logger, "debug">`. `notification-email.processor.spec.ts`: 19/19 passing.
 - [ ] T4 Add a `never` exhaustiveness guard to `composeEmail`.
 
 ## Route

@@ -44,7 +44,7 @@ function commentRow(body = "A wonderful review."): ProcessorRow {
 function harness(row: ProcessorRow | null = followRow()) {
   const findUnique = vi.fn().mockResolvedValue(row);
   const send = vi.fn().mockResolvedValue({ status: "sent", id: "email-1" });
-  const logger = { debug: vi.fn(), warn: vi.fn() };
+  const logger = { debug: vi.fn() };
   const dependencies = {
     prisma: { client: { notification: { findUnique } } },
     resend: { send },

@@ -35,7 +35,7 @@ export interface NotificationEmailProcessorDependencies {
   prisma: PrismaService;
   resend: ResendService;
   appUrl: string;
-  logger: Pick<Logger, "debug" | "warn">;
+  logger: Pick<Logger, "debug">;
 }
 
 /**
