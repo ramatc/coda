@@ -56,22 +56,27 @@ function authHeaders(token: string | null): Record<string, string> {
 /**
  * The caller's unread total from `GET /notifications/unread-count` — the ONLY
  * request the bell's 30s poll makes (design Decision 12). A network failure or
- * non-OK response fails safe to `0` rather than throwing: the poll hook keeps
- * its own last known count on failure, and a badge must never break the page.
+ * non-OK response fails safe to `fallback` (default `0`) rather than throwing,
+ * so a badge can never break the page. The poll hook passes its last known
+ * count as the fallback, which is what makes a failed tick a silent no-op
+ * instead of a badge that flickers to zero whenever the API blips.
  */
-export async function fetchUnreadCount(token: string | null): Promise<number> {
+export async function fetchUnreadCount(
+  token: string | null,
+  fallback = 0,
+): Promise<number> {
   try {
     const response = await fetch(
       `${getApiBaseUrl()}/notifications/unread-count`,
       { headers: authHeaders(token), cache: "no-store" },
     );
     if (!response.ok) {
-      return 0;
+      return fallback;
     }
     const body = (await response.json()) as { unreadCount: number };
     return body.unreadCount;
   } catch {
-    return 0;
+    return fallback;
   }
 }
 

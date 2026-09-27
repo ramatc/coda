@@ -79,6 +79,26 @@ describe("fetchUnreadCount", () => {
 
     expect(await fetchUnreadCount(null)).toBe(0);
   });
+
+  it("degrades to the caller's fallback instead of 0 when one is given", async () => {
+    // The poll hook passes its last known count, so a failed tick changes nothing.
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ unreadCount: 9 }, 502))
+      .mockRejectedValueOnce(new Error("offline"));
+
+    expect(await fetchUnreadCount("test-token", 4)).toBe(4);
+    expect(await fetchUnreadCount("test-token", 6)).toBe(6);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores the fallback on a successful response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ unreadCount: 0 }),
+    );
+
+    expect(await fetchUnreadCount("test-token", 4)).toBe(0);
+  });
 });
 
 describe("fetchNotifications", () => {
