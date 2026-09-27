@@ -151,17 +151,27 @@ function composeEmail(notification: EmailNotificationRow, appUrl: string): Resen
     };
   }
 
-  const comment = notification.reviewComment;
-  const href = comment ? `${appUrl}/reviews/${comment.reviewId}` : appUrl;
-  const excerpt = escapeHtml(
-    comment ? sliceExcerpt(comment.body, COMMENT_EXCERPT_LENGTH) : "",
-  );
-  return {
-    to: notification.recipient.email,
-    subject: `${name} commented on your review`,
-    html:
-      `<p><strong>${displayName}</strong> commented on your review:</p>` +
-      `<blockquote>${excerpt}</blockquote>` +
-      `<p><a href="${href}">View review</a></p>`,
-  };
+  if (notification.type === NotificationType.COMMENT) {
+    const comment = notification.reviewComment;
+    const href = comment ? `${appUrl}/reviews/${comment.reviewId}` : appUrl;
+    const excerpt = escapeHtml(
+      comment ? sliceExcerpt(comment.body, COMMENT_EXCERPT_LENGTH) : "",
+    );
+    return {
+      to: notification.recipient.email,
+      subject: `${name} commented on your review`,
+      html:
+        `<p><strong>${displayName}</strong> commented on your review:</p>` +
+        `<blockquote>${excerpt}</blockquote>` +
+        `<p><a href="${href}">View review</a></p>`,
+    };
+  }
+
+  // Exhaustiveness guard: a new `NotificationType` member with no branch
+  // above fails typecheck here (`notification.type` would no longer be
+  // assignable to `never`) instead of silently falling through to whichever
+  // branch happened to be last, which is what the previous implicit
+  // COMMENT-fallthrough did.
+  const unreachable: never = notification.type;
+  throw new Error(`Unhandled notification type: ${unreachable as string}`);
 }

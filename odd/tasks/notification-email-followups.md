@@ -24,7 +24,8 @@ Close the four non-blocking follow-ups recorded in PR #66 (notification email qu
   - RED: `expected '<p>...xxxx...�</blockquote>...' not to contain '�'` (lone high surrogate rendered raw). GREEN: 19/19 passing in notification-email.processor.spec.ts.
 - [x] T3 Narrow the processor `logger` dependency to `debug` only.
   - Type-only change; no RED possible (honestly noted per instructions). Proof: `pnpm run -s typecheck` clean (apps/api), including `notification-email.worker.ts`, which passes a real `Logger` and still satisfies `Pick<Logger, "debug">`. `notification-email.processor.spec.ts`: 19/19 passing.
-- [ ] T4 Add a `never` exhaustiveness guard to `composeEmail`.
+- [x] T4 Add a `never` exhaustiveness guard to `composeEmail`.
+  - RED: `promise resolved "undefined" instead of rejecting` (unknown type silently fell through to the COMMENT branch). GREEN: 20/20 passing in notification-email.processor.spec.ts; `pnpm run -s typecheck` clean.
 
 ## Route
 Delegated direct: one writer (the writer trigger fires because two or more non-trivial source files and their specs change).

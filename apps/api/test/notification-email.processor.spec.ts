@@ -278,6 +278,18 @@ describe("notification email processor", () => {
     );
   });
 
+  it("throws for a notification type with no composeEmail branch", async () => {
+    // `NotificationType` only has FOLLOW and COMMENT today, so this casts an
+    // impossible value to exercise the exhaustiveness guard directly rather
+    // than waiting for a third enum member to prove it.
+    const row = { ...followRow(), type: "UNKNOWN" as NotificationType };
+    const worker = harness(row);
+
+    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toThrow(
+      /unhandled notification type/i,
+    );
+  });
+
   it("falls back to 'Someone' when the display name is only control characters", async () => {
     const follow = harness(
       followRow({ username: "ana", displayName: "\u0007\u0008" }),
