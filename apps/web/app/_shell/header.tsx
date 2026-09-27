@@ -2,6 +2,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Search } from "lucide-react";
 import { DesktopNav } from "./desktop-nav";
+import { NotificationBell } from "./notification-bell";
 
 interface HeaderProps {
   /** `/u/{username}` for a resolved viewer, degrading to `/home` (see AppShell). */
@@ -26,6 +27,11 @@ interface HeaderProps {
  * standalone "log an entry" flow yet (logging happens on an album's own
  * detail page, via `AlbumActions`), and search is the real first step to get
  * there. Revisit once a dedicated quick-log flow exists.
+ *
+ * The {@link NotificationBell} island sits between "+ LOG" and the avatar. It
+ * needs no signed-in guard of its own: this header only renders inside
+ * `AppShell`, which only wraps authenticated routes, so signed-out visitors
+ * never mount it and never start its poll.
  */
 export function Header({ youHref, youInitial }: HeaderProps) {
   return (
@@ -74,6 +80,7 @@ export function Header({ youHref, youInitial }: HeaderProps) {
           >
             + LOG
           </Link>
+          <NotificationBell />
           <Link href={youHref} aria-label="Your profile">
             <span
               className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-2 text-sm font-semibold text-text-primary"
