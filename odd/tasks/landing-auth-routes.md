@@ -11,7 +11,7 @@ User decision (2026-09-27): own branded routes instead of Clerk `<SignInButton>`
 
 ## Scope / constraints
 - Add `app/sign-in/[[...sign-in]]/page.tsx` (`<SignIn />`) and `app/sign-up/[[...sign-up]]/page.tsx` (`<SignUp />`).
-- Configure `<ClerkProvider>` in `app/layout.tsx` with `signInUrl`/`signUpUrl` in code (no `.env` edits) so `auth.protect()` redirects to the in-app routes too.
+- Configure `signInUrl`/`signUpUrl` in code (no `.env` edits): on `<ClerkProvider>` in `app/layout.tsx` for client components, and on `clerkMiddleware` in `middleware.ts` so the server-side `auth.protect()` redirects to the in-app routes too.
 - Post sign-in fallback → `/home` (onboarding gate handles unonboarded users); post sign-up fallback → `/onboarding`.
 - Auth routes must stay public (not in `protectedRoutePatterns`).
 - Landing links keep pointing at `/sign-in` / `/sign-up`.
@@ -38,4 +38,5 @@ Mode: enabled (Strict TDD, global session config). Runner: `pnpm --filter web te
 Strategy: ask-on-risk. Forecast: well under 400 authored lines → single PR.
 
 ## Progress
+- T1 committed as `dc5ccc4` on `fix/landing-auth-routes`. Native review: risk high (auth signal), consent granted, 4 lenses, approved and acknowledged (lineage `review-58067b672632e4cf`, authority burned). Non-blocking follow-ups: auth URL literals duplicated between `middleware.ts` and `layout.tsx`; `layout.tsx` ClerkProvider props untested; `middleware-config.test.ts` reimplements route matching.
 - Engram mirror `odd/landing-auth-routes/tasks`: PENDING (Engram MCP disconnected this session).
