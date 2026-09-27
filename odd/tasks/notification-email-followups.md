@@ -1,0 +1,40 @@
+# Notification email follow-ups
+
+## Objective
+Close the four non-blocking follow-ups recorded in PR #66 (notification email queue and worker).
+
+## Problem
+- A Resend `409 invalid_idempotent_request` (key reused with a different payload) is permanent, but the processor retries every 409 until attempts run out.
+- The comment excerpt `.slice(0, COMMENT_EXCERPT_LENGTH)` can split a UTF-16 surrogate pair.
+- `NotificationEmailProcessorDependencies.logger` declares `warn`, which the processor never calls.
+- `composeEmail` has no exhaustiveness guard over `NotificationType`.
+
+## Scope
+`apps/api/src/notifications/{resend.service,notification-email.processor,notifications.constants}.ts` and their specs. Nothing else.
+
+## Constraints
+- Strict TDD: RED, then GREEN, then REFACTOR (runner: `pnpm vitest run` in `apps/api`).
+- Resend error codes (source: https://resend.com/docs/dashboard/emails/idempotency-keys): `409 invalid_idempotent_request` is permanent; `409 concurrent_idempotent_requests` is retryable. The error body is JSON `{ statusCode, name, message }`.
+- One Conventional Commit per task on `fix/api-notification-email-followups`.
+
+## Tasks
+- [x] T1 `ResendSendError` exposes the Resend error `name` (parsed best-effort from the JSON body); the processor treats `409 invalid_idempotent_request` as `UnrecoverableError` and keeps other 409s retryable.
+  - RED: `expected undefined to be 'invalid_idempotent_request'` (resend.service.spec) and `expected ResendSendError ... to be an instance of UnrecoverableError` (notification-email.processor.spec). GREEN: 36/36 passing in both specs. Commit: cac20266c6fb7875294a86b3b271f7d559752b89.
+- [x] T2 The comment excerpt never ends in a lone high surrogate.
+  - RED: `expected '<p>...xxxx...�</blockquote>...' not to contain '�'` (lone high surrogate rendered raw). GREEN: 19/19 passing in notification-email.processor.spec.ts.
+- [x] T3 Narrow the processor `logger` dependency to `debug` only.
+  - Type-only change; no RED possible (honestly noted per instructions). Proof: `pnpm run -s typecheck` clean (apps/api), including `notification-email.worker.ts`, which passes a real `Logger` and still satisfies `Pick<Logger, "debug">`. `notification-email.processor.spec.ts`: 19/19 passing.
+- [x] T4 Add a `never` exhaustiveness guard to `composeEmail`.
+  - RED: `promise resolved "undefined" instead of rejecting` (unknown type silently fell through to the COMMENT branch). GREEN: 20/20 passing in notification-email.processor.spec.ts; `pnpm run -s typecheck` clean.
+
+## Route
+Delegated direct: one writer (the writer trigger fires because two or more non-trivial source files and their specs change).
+
+## Acceptance / checks
+`apps/api`: `pnpm vitest run`, `pnpm run -s typecheck`, `pnpm run -s lint` all clean.
+
+## Progress
+All four tasks are done: cac2026 (T1), c0cd47c (T2), f75cd3c (T3), f1231f4 (T4). Writer verification: vitest 681/681, typecheck clean, lint clean. Parent spot check: the processor and resend specs pass (38/38).
+Review: RDD is on (default). The assessment (main, committed-only, untracked `.codegraph/` and `openspec/` excluded) is medium, 272 changed lines, so `review_due=false` (`under_budget`) and no native review is due.
+Next: push and open a PR (the user decides).
+Branch created off main 4b07cd5. TDD: strict, source is the user's CLAUDE.md, runner is vitest.

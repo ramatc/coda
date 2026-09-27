@@ -44,7 +44,7 @@ function commentRow(body = "A wonderful review."): ProcessorRow {
 function harness(row: ProcessorRow | null = followRow()) {
   const findUnique = vi.fn().mockResolvedValue(row);
   const send = vi.fn().mockResolvedValue({ status: "sent", id: "email-1" });
-  const logger = { debug: vi.fn(), warn: vi.fn() };
+  const logger = { debug: vi.fn() };
   const dependencies = {
     prisma: { client: { notification: { findUnique } } },
     resend: { send },
@@ -126,6 +126,21 @@ describe("notification email processor", () => {
     expect(email.html).not.toContain("x".repeat(141));
   });
 
+  it("drops a trailing lone high surrogate instead of splitting an excerpt mid-emoji", async () => {
+    // U+1F600 (😀) encodes as a UTF-16 surrogate pair; placed right after 139
+    // plain characters, a naive `.slice(0, 140)` lands exactly between the
+    // pair and keeps only the lone high surrogate.
+    const emoji = "\u{1F600}";
+    const body = "x".repeat(139) + emoji + " more text that never rides along";
+    const worker = harness(commentRow(body));
+
+    await worker.process({ notificationId: NOTIFICATION_ID });
+
+    const email = worker.send.mock.calls[0][0] as { html: string };
+    expect(email.html).toContain("x".repeat(139));
+    expect(email.html).not.toContain("\uD83D");
+  });
+
   it("falls back to the app root when the actor has no profile", async () => {
     const worker = harness(followRow(null));
 
@@ -172,6 +187,35 @@ describe("notification email processor", () => {
   it.each([408, 409, 429, 503])("leaves Resend status %i retryable", async (status) => {
     const worker = harness();
     const error = new ResendSendError(status, "temporary failure");
+    worker.send.mockRejectedValueOnce(error);
+
+    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBe(error);
+  });
+
+  it("turns a 409 invalid_idempotent_request into an UnrecoverableError", async () => {
+    // The key was reused with a DIFFERENT payload than the original request —
+    // permanent, per https://resend.com/docs/dashboard/emails/idempotency-keys.
+    const worker = harness();
+    const error = new ResendSendError(
+      409,
+      "Idempotency key already used with a different payload",
+      "invalid_idempotent_request",
+    );
+    worker.send.mockRejectedValueOnce(error);
+
+    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBeInstanceOf(
+      UnrecoverableError,
+    );
+  });
+
+  it("leaves a 409 concurrent_idempotent_requests retryable", async () => {
+    // An earlier attempt with the SAME key is still in flight — transient.
+    const worker = harness();
+    const error = new ResendSendError(
+      409,
+      "An earlier request with this idempotency key is still in flight",
+      "concurrent_idempotent_requests",
+    );
     worker.send.mockRejectedValueOnce(error);
 
     await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBe(error);
@@ -231,6 +275,18 @@ describe("notification email processor", () => {
     const commentSubject = (comment.send.mock.calls[0][0] as { subject: string }).subject;
     expect(commentSubject).toBe(
       "Ana & Co Bcc: evil@example.com <Boss> commented on your review",
+    );
+  });
+
+  it("throws for a notification type with no composeEmail branch", async () => {
+    // `NotificationType` only has FOLLOW and COMMENT today, so this casts an
+    // impossible value to exercise the exhaustiveness guard directly rather
+    // than waiting for a third enum member to prove it.
+    const row = { ...followRow(), type: "UNKNOWN" as NotificationType };
+    const worker = harness(row);
+
+    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toThrow(
+      /unhandled notification type/i,
     );
   });
 

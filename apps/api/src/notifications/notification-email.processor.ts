@@ -4,6 +4,7 @@ import { UnrecoverableError } from "bullmq";
 import type { PrismaService } from "../prisma/prisma.service.js";
 import {
   COMMENT_EXCERPT_LENGTH,
+  RESEND_INVALID_IDEMPOTENT_REQUEST_CODE,
   RETRYABLE_RESEND_4XX_STATUSES,
   notificationEmailIdempotencyKey,
 } from "./notifications.constants.js";
@@ -34,7 +35,22 @@ export interface NotificationEmailProcessorDependencies {
   prisma: PrismaService;
   resend: ResendService;
   appUrl: string;
-  logger: Pick<Logger, "debug" | "warn">;
+  logger: Pick<Logger, "debug">;
+}
+
+/**
+ * Slices `value` to at most `maxLength` UTF-16 code units, but never leaves a
+ * lone high surrogate (`0xD800`–`0xDBFF`) trailing the result. `String.slice`
+ * cuts by code unit and can land exactly between a surrogate pair — e.g. an
+ * emoji straddling the boundary — which would hand the caller one half of a
+ * character. Dropping that trailing high surrogate keeps the excerpt valid
+ * UTF-16 at the cost of it sometimes being one code unit short of `maxLength`.
+ */
+function sliceExcerpt(value: string, maxLength: number): string {
+  const sliced = value.slice(0, maxLength);
+  const lastCharCode = sliced.charCodeAt(sliced.length - 1);
+  const isTrailingHighSurrogate = lastCharCode >= 0xd800 && lastCharCode <= 0xdbff;
+  return isTrailingHighSurrogate ? sliced.slice(0, -1) : sliced;
 }
 
 /** Escapes an untrusted text fragment before interpolation into email HTML. */
@@ -82,13 +98,20 @@ export function createNotificationEmailProcessor({
         );
       }
     } catch (err) {
-      if (
-        err instanceof ResendSendError &&
-        err.status >= 400 &&
-        err.status < 500 &&
-        !RETRYABLE_RESEND_4XX_STATUSES.has(err.status)
-      ) {
-        throw new UnrecoverableError(err.message);
+      if (err instanceof ResendSendError) {
+        // Checked before the retryable-status set: a 409 is normally
+        // transient (`concurrent_idempotent_requests`), but this exact code
+        // means the idempotency key was reused with a DIFFERENT payload,
+        // which is permanent — retrying only ever reproduces it.
+        const isPermanentIdempotencyConflict =
+          err.status === 409 && err.code === RESEND_INVALID_IDEMPOTENT_REQUEST_CODE;
+        const isPermanent4xx =
+          err.status >= 400 &&
+          err.status < 500 &&
+          !RETRYABLE_RESEND_4XX_STATUSES.has(err.status);
+        if (isPermanentIdempotencyConflict || isPermanent4xx) {
+          throw new UnrecoverableError(err.message);
+        }
       }
       throw err;
     }
@@ -128,15 +151,27 @@ function composeEmail(notification: EmailNotificationRow, appUrl: string): Resen
     };
   }
 
-  const comment = notification.reviewComment;
-  const href = comment ? `${appUrl}/reviews/${comment.reviewId}` : appUrl;
-  const excerpt = escapeHtml(comment?.body.slice(0, COMMENT_EXCERPT_LENGTH) ?? "");
-  return {
-    to: notification.recipient.email,
-    subject: `${name} commented on your review`,
-    html:
-      `<p><strong>${displayName}</strong> commented on your review:</p>` +
-      `<blockquote>${excerpt}</blockquote>` +
-      `<p><a href="${href}">View review</a></p>`,
-  };
+  if (notification.type === NotificationType.COMMENT) {
+    const comment = notification.reviewComment;
+    const href = comment ? `${appUrl}/reviews/${comment.reviewId}` : appUrl;
+    const excerpt = escapeHtml(
+      comment ? sliceExcerpt(comment.body, COMMENT_EXCERPT_LENGTH) : "",
+    );
+    return {
+      to: notification.recipient.email,
+      subject: `${name} commented on your review`,
+      html:
+        `<p><strong>${displayName}</strong> commented on your review:</p>` +
+        `<blockquote>${excerpt}</blockquote>` +
+        `<p><a href="${href}">View review</a></p>`,
+    };
+  }
+
+  // Exhaustiveness guard: a new `NotificationType` member with no branch
+  // above fails typecheck here (`notification.type` would no longer be
+  // assignable to `never`) instead of silently falling through to whichever
+  // branch happened to be last, which is what the previous implicit
+  // COMMENT-fallthrough did.
+  const unreachable: never = notification.type;
+  throw new Error(`Unhandled notification type: ${unreachable as string}`);
 }

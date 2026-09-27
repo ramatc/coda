@@ -32,7 +32,9 @@ export interface ResendSendOptions {
    * what keeps a BullMQ retry after a lost response from duplicating an email.
    * Reusing it while the first request is still in flight yields a `409`
    * (`concurrent_idempotent_requests`), which the caller must treat as
-   * retryable.
+   * retryable. Reusing it with a DIFFERENT payload yields a `409` too, but
+   * with `name: "invalid_idempotent_request"` — that one is permanent, since
+   * retrying reproduces the exact same conflict every time.
    */
   idempotencyKey?: string;
 }
@@ -48,15 +50,49 @@ export type ResendSendResult =
  * other than 408/409/429 into BullMQ's `UnrecoverableError` — retrying a
  * permanent 422 three times burns quota for a guaranteed failure — and
  * rethrows 408/409/429/5xx/network as ordinary errors so the queue's backoff
- * applies (design Decision 10, widened for idempotency-key conflicts).
+ * applies (design Decision 10, widened for idempotency-key conflicts). A 409
+ * whose {@link code} is `invalid_idempotent_request` is unrecoverable too,
+ * despite the status being in the generally-retryable set: that code means
+ * the idempotency key was reused with a different payload, which is
+ * permanent, not transient like `concurrent_idempotent_requests`.
  */
 export class ResendSendError extends Error {
   readonly status: number;
+  /**
+   * The Resend error `name` (e.g. `invalid_idempotent_request`), parsed
+   * best-effort from the JSON error body's `name` field. `undefined` when the
+   * body is not JSON or carries no `name`.
+   */
+  readonly code?: string;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, code?: string) {
     super(`Resend send failed: ${status} ${detail}`);
     this.name = "ResendSendError";
     this.status = status;
+    this.code = code;
+  }
+}
+
+/**
+ * Best-effort parse of a Resend JSON error body's `name` field (e.g.
+ * `{ "statusCode": 409, "name": "invalid_idempotent_request", "message": "..." }`).
+ * Returns `undefined` for a non-JSON body or a missing/non-string `name` —
+ * this is diagnostic metadata, never worth failing the send over.
+ */
+function parseResendErrorCode(detail: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "name" in parsed &&
+      typeof (parsed as { name: unknown }).name === "string"
+    ) {
+      return (parsed as { name: string }).name;
+    }
+    return undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -156,7 +192,7 @@ export class ResendService {
         }
         return "";
       });
-      throw new ResendSendError(response.status, detail);
+      throw new ResendSendError(response.status, detail, parseResendErrorCode(detail));
     }
 
     const body = (await response.json().catch((err: unknown) => {
