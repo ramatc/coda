@@ -10,15 +10,20 @@ import {
   within,
 } from "@testing-library/react";
 import {
-  fetchNotifications,
+  fetchNotificationsOrThrow,
   fetchUnreadCount,
   markAllRead,
   type NotificationItem,
   type NotificationPage,
 } from "../lib/notifications";
 
+// Hoisted so the mock factory below (itself hoisted by Vitest) can close over
+// it, and so tests can control what a given `getToken()` call resolves/rejects
+// with instead of getting a fresh, unreachable `vi.fn()` on every render.
+const mockGetToken = vi.hoisted(() => vi.fn());
+
 vi.mock("@clerk/nextjs", () => ({
-  useAuth: () => ({ getToken: vi.fn().mockResolvedValue("test-token") }),
+  useAuth: () => ({ getToken: mockGetToken }),
 }));
 
 vi.mock("next/link", () => ({
@@ -37,7 +42,7 @@ vi.mock("next/link", () => ({
 // these tests exercise the same count path production does.
 vi.mock("../lib/notifications", () => ({
   fetchUnreadCount: vi.fn(),
-  fetchNotifications: vi.fn(),
+  fetchNotificationsOrThrow: vi.fn(),
   markAllRead: vi.fn(),
 }));
 
@@ -109,8 +114,9 @@ async function openDropdown(): Promise<HTMLElement> {
 }
 
 beforeEach(() => {
+  mockGetToken.mockReset().mockResolvedValue("test-token");
   vi.mocked(fetchUnreadCount).mockReset().mockResolvedValue(2);
-  vi.mocked(fetchNotifications)
+  vi.mocked(fetchNotificationsOrThrow)
     .mockReset()
     .mockResolvedValue(page([COMMENT_UNREAD, FOLLOW_READ]));
   vi.mocked(markAllRead).mockReset().mockResolvedValue(undefined);
@@ -163,7 +169,7 @@ describe("NotificationBell", () => {
   it("loads the list lazily: nothing is fetched until the dropdown opens", async () => {
     await renderBell();
 
-    expect(fetchNotifications).not.toHaveBeenCalled();
+    expect(fetchNotificationsOrThrow).not.toHaveBeenCalled();
     expect(markAllRead).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
@@ -174,7 +180,7 @@ describe("NotificationBell", () => {
 
     const region = await openDropdown();
 
-    expect(fetchNotifications).toHaveBeenCalledTimes(1);
+    expect(fetchNotificationsOrThrow).toHaveBeenCalledTimes(1);
     expect(markAllRead).toHaveBeenCalledTimes(1);
     expect(markAllRead).toHaveBeenCalledWith("test-token");
     await waitFor(() =>
@@ -193,7 +199,7 @@ describe("NotificationBell", () => {
     expect(within(follow!).queryByText("New")).toBeNull();
 
     fireEvent.keyDown(document, { key: "Escape" });
-    vi.mocked(fetchNotifications).mockResolvedValue(
+    vi.mocked(fetchNotificationsOrThrow).mockResolvedValue(
       page([{ ...COMMENT_UNREAD, readAt: "2026-09-02T00:00:00.000Z" }]),
     );
     const reopened = await openDropdown();
@@ -205,7 +211,7 @@ describe("NotificationBell", () => {
   });
 
   it("renders who did what, linking each item at its target", async () => {
-    vi.mocked(fetchNotifications).mockResolvedValue(
+    vi.mocked(fetchNotificationsOrThrow).mockResolvedValue(
       page([COMMENT_UNREAD, FOLLOW_READ, FOLLOW_NO_PROFILE]),
     );
     await renderBell();
@@ -224,7 +230,7 @@ describe("NotificationBell", () => {
   });
 
   it("shows an empty state when there are no notifications", async () => {
-    vi.mocked(fetchNotifications).mockResolvedValue(page([]));
+    vi.mocked(fetchNotificationsOrThrow).mockResolvedValue(page([]));
     await renderBell();
     const region = await openDropdown();
 
@@ -262,5 +268,74 @@ describe("NotificationBell", () => {
       "Could not mark notifications as read.",
     );
     expect(screen.getByTestId("notification-badge").textContent).toBe("1");
+  });
+
+  it("surfaces an error instead of hanging on Loading forever when getToken rejects", async () => {
+    await renderBell();
+    await screen.findByTestId("notification-badge");
+    // Only the dropdown's own getToken() call rejects — the poll's mount-time
+    // call above already resolved and must stay unaffected.
+    mockGetToken.mockRejectedValueOnce(new Error("token unavailable"));
+
+    fireEvent.click(bellButton());
+    const region = await screen.findByRole("region", { name: "Notifications" });
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Could not load notifications.",
+    );
+    expect(within(region).queryByText("Loading...")).toBeNull();
+    expect(fetchNotificationsOrThrow).not.toHaveBeenCalled();
+    expect(markAllRead).not.toHaveBeenCalled();
+  });
+
+  it("does not mark all read when the list fails to load, and keeps the badge", async () => {
+    vi.mocked(fetchNotificationsOrThrow).mockRejectedValue(new Error("offline"));
+    await renderBell();
+    await screen.findByTestId("notification-badge");
+
+    fireEvent.click(bellButton());
+    const region = await screen.findByRole("region", { name: "Notifications" });
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Could not load notifications.",
+    );
+    expect(within(region).queryByText("Loading...")).toBeNull();
+    expect(markAllRead).not.toHaveBeenCalled();
+    expect(screen.getByTestId("notification-badge").textContent).toBe("2");
+  });
+
+  it("ignores a stale response from an open superseded by a close + reopen", async () => {
+    await renderBell();
+
+    let resolveFirst!: (value: NotificationPage) => void;
+    const firstResponse = new Promise<NotificationPage>((resolve) => {
+      resolveFirst = resolve;
+    });
+    vi.mocked(fetchNotificationsOrThrow).mockReturnValueOnce(firstResponse);
+
+    // Open #1: the request is sent but never resolves yet.
+    fireEvent.click(bellButton());
+    await waitFor(() =>
+      expect(fetchNotificationsOrThrow).toHaveBeenCalledTimes(1),
+    );
+
+    // Close before it settles, then reopen: this is the request that should win.
+    fireEvent.keyDown(document, { key: "Escape" });
+    vi.mocked(fetchNotificationsOrThrow).mockResolvedValueOnce(
+      page([FOLLOW_READ]),
+    );
+    fireEvent.click(bellButton());
+    const region = await screen.findByRole("region", { name: "Notifications" });
+    await waitFor(() => expect(markAllRead).toHaveBeenCalledTimes(1));
+    expect(within(region).getAllByRole("listitem")).toHaveLength(1);
+
+    // The stale first request finally resolves — it must not overwrite the
+    // second (current) open's items, highlighted set, or unread count.
+    resolveFirst(page([COMMENT_UNREAD, FOLLOW_READ]));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(within(region).getAllByRole("listitem")).toHaveLength(1);
+    expect(markAllRead).toHaveBeenCalledTimes(1);
   });
 });

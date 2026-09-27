@@ -6,7 +6,7 @@ import { Bell } from "lucide-react";
 import { useAuth } from "@clerk/nextjs";
 import { cn } from "@coda/ui";
 import {
-  fetchNotifications,
+  fetchNotificationsOrThrow,
   markAllRead,
   type NotificationItem,
 } from "../../lib/notifications";
@@ -61,8 +61,15 @@ function badgeLabel(count: number): string {
  *   closes (design Decision 13) — otherwise every item would visibly
  *   de-highlight the instant it opened.
  * - A failed `read-all` is surfaced inline and the badge keeps the list's own
- *   count, rather than pretending the notifications were cleared.
+ *   count, rather than pretending the notifications were cleared. A failed
+ *   list load (token fetch or the request itself) is surfaced the same way,
+ *   and `markAllRead` never runs unless the list actually loaded.
  * - Escape or a click outside closes it.
+ * - Each open is tagged with a generation number, bumped on every open AND
+ *   close (the same ref-guarded idiom `useNotificationPoll` uses for its
+ *   `inFlight` ref). A close → reopen before the first request settles drops
+ *   that stale response instead of letting it overwrite the reopened
+ *   dropdown's items, highlights, or count.
  *
  * Only mounted inside `Header`, which only renders inside `AppShell` on
  * authenticated routes — so signed-out visitors never start the poll.
@@ -79,7 +86,13 @@ export function NotificationBell() {
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Bumped on every open AND close so a response from a superseded open (one
+  // that already closed, or was replaced by a later open) can be told apart
+  // from the current one and dropped instead of overwriting fresher state.
+  const requestGenerationRef = useRef(0);
+
   function close(): void {
+    requestGenerationRef.current += 1;
     setOpen(false);
     setHighlighted(new Set());
     setError(null);
@@ -109,11 +122,27 @@ export function NotificationBell() {
   }, [open]);
 
   async function openDropdown(): Promise<void> {
+    const generation = ++requestGenerationRef.current;
     setOpen(true);
     setError(null);
 
-    const token = await getToken();
-    const page = await fetchNotifications(token);
+    let token: string | null;
+    let page: Awaited<ReturnType<typeof fetchNotificationsOrThrow>>;
+    try {
+      token = await getToken();
+      page = await fetchNotificationsOrThrow(token);
+    } catch {
+      // A stale generation (superseded by a close or a later open) is
+      // dropped silently — only the current open should ever touch state.
+      if (generation === requestGenerationRef.current) {
+        setError("Could not load notifications.");
+      }
+      return;
+    }
+
+    if (generation !== requestGenerationRef.current) {
+      return;
+    }
     setItems(page.items);
     setHighlighted(
       new Set(
@@ -123,11 +152,17 @@ export function NotificationBell() {
     // The list's own count reconciles the badge in the same round-trip.
     setUnreadCount(page.unreadCount);
 
+    // Only mark notifications read once the list ACTUALLY loaded — never on
+    // a failed/degraded load the user never saw.
     try {
       await markAllRead(token);
-      setUnreadCount(0);
+      if (generation === requestGenerationRef.current) {
+        setUnreadCount(0);
+      }
     } catch {
-      setError("Could not mark notifications as read.");
+      if (generation === requestGenerationRef.current) {
+        setError("Could not mark notifications as read.");
+      }
     }
   }
 
@@ -180,7 +215,11 @@ export function NotificationBell() {
             </p>
           ) : null}
           {items === null ? (
-            <p className="px-4 py-6 text-sm text-text-secondary">Loading...</p>
+            error ? null : (
+              <p className="px-4 py-6 text-sm text-text-secondary">
+                Loading...
+              </p>
+            )
           ) : items.length === 0 ? (
             <p className="px-4 py-6 text-sm text-text-secondary">
               No notifications yet.
