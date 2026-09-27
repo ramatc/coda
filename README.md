@@ -144,10 +144,22 @@ Scripts útiles: `pnpm build` · `pnpm lint` · `pnpm typecheck` · `pnpm test`.
 |---|---|---|
 | **F0** | Setup, diseño y CI/CD | ✅ Hecho |
 | **F1** | MVP: auth, onboarding, catálogo, tracking, perfil, reco v1 | ✅ Hecho |
-| **F2** | Social y listas: follows, feed, reseñas con likes | 🚧 En curso (slice 1/5 — follows + feed — hecho) |
+| **F2** | Social y listas: follows, feed, listas, reseñas con likes y comentarios, notificaciones, SEO | 🚧 En curso (slices 1-3 hechas, slice 4 en curso) |
 | **F3** | Reco v2: servicio Python, embeddings, explicabilidad | 🔜 |
 | **F4** | Gamificación: rachas, insignias, "Tu año en Coda" | 🔜 |
 | **F5** | Mobile nativo (Expo) | 🔜 |
+
+### Fase 2 — detalle por slice
+
+| Slice | Alcance | Estado |
+|---|---|---|
+| 1 | Follows y feed de actividad de seguidos | ✅ Hecho |
+| 2 | Listas (crear, editar, reordenar) y "quiero escuchar" | ✅ Hecho |
+| 3 | Reseñas con likes y comentarios, likes en listas | ✅ Hecho |
+| 4 | Notificaciones in-app y por email (Resend) | 🚧 En curso (backend casi listo; falta la UI) |
+| 5 | SEO y páginas públicas indexables | 🔜 |
+
+Además, la landing pública (hero, secciones con datos reales, sign-in y sign-up in-app) ya está rediseñada.
 
 Detalle de alcance por fase en [`coda_especificacion_tecnica.md`](./docs/coda_especificacion_tecnica.md).
 
