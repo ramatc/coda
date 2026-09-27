@@ -23,6 +23,20 @@ export interface ResendEmail {
   html: string;
 }
 
+/** Transport options for one send — metadata about the request, not the message. */
+export interface ResendSendOptions {
+  /**
+   * Sent as Resend's `Idempotency-Key` header (max 256 chars, remembered for
+   * 24h). Reusing the key with the same payload after a successful send makes
+   * Resend return the ORIGINAL email id instead of delivering again, which is
+   * what keeps a BullMQ retry after a lost response from duplicating an email.
+   * Reusing it while the first request is still in flight yields a `409`
+   * (`concurrent_idempotent_requests`), which the caller must treat as
+   * retryable.
+   */
+  idempotencyKey?: string;
+}
+
 /** Outcome of a send: delivered to Resend, or skipped because it is disabled. */
 export type ResendSendResult =
   | { status: "sent"; id: string }
@@ -30,11 +44,11 @@ export type ResendSendResult =
 
 /**
  * A non-OK response from Resend, carrying the HTTP status so the caller can
- * classify it without parsing a message. The email worker (Phase 12) turns a
- * 4xx other than 429 into BullMQ's `UnrecoverableError` — retrying a permanent
- * 422 three times burns quota for a guaranteed failure — and rethrows
- * 429/5xx/network as ordinary errors so the queue's backoff applies
- * (design Decision 10).
+ * classify it without parsing a message. The email processor turns a 4xx
+ * other than 408/409/429 into BullMQ's `UnrecoverableError` — retrying a
+ * permanent 422 three times burns quota for a guaranteed failure — and
+ * rethrows 408/409/429/5xx/network as ordinary errors so the queue's backoff
+ * applies (design Decision 10, widened for idempotency-key conflicts).
  */
 export class ResendSendError extends Error {
   readonly status: number;
@@ -96,9 +110,13 @@ export class ResendService {
    * Sends one email. Resolves with `{ status: "skipped" }` when the client is
    * disabled (never a throw, never a `fetch`), and throws
    * {@link ResendSendError} on any non-OK response so the caller can decide
-   * whether it is worth retrying.
+   * whether it is worth retrying. `options.idempotencyKey`, when present, is
+   * forwarded as the `Idempotency-Key` header.
    */
-  async send(email: ResendEmail): Promise<ResendSendResult> {
+  async send(
+    email: ResendEmail,
+    options: ResendSendOptions = {},
+  ): Promise<ResendSendResult> {
     if (!this.enabled) {
       this.logger.debug(
         `Skipping notification email to ${email.to} (Resend disabled).`,
@@ -111,6 +129,9 @@ export class ResendService {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
+        ...(options.idempotencyKey
+          ? { "Idempotency-Key": options.idempotencyKey }
+          : {}),
       },
       body: JSON.stringify({
         from: this.from,

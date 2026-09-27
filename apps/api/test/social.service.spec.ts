@@ -305,7 +305,9 @@ describe("SocialService", () => {
     // The REAL notifier, over the same fake Prisma — see the hook block below.
     service = new SocialService(
       fake.prisma,
-      new NotificationsService(fake.prisma),
+      new NotificationsService(fake.prisma, {
+        enqueue: vi.fn().mockResolvedValue(undefined),
+      } as never),
     );
     warnSpy = vi
       .spyOn(Logger.prototype, "warn")

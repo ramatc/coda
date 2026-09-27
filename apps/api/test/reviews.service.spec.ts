@@ -428,7 +428,9 @@ describe("ReviewsService.getReview", () => {
     fake = createFakePrisma();
     service = new ReviewsService(
       fake.prisma,
-      new NotificationsService(fake.prisma),
+      new NotificationsService(fake.prisma, {
+        enqueue: vi.fn().mockResolvedValue(undefined),
+      } as never),
     );
     fake.usersByClerk.set(AUTHOR_CLERK, AUTHOR_ID);
     fake.usersByClerk.set(VIEWER_CLERK, VIEWER_ID);
@@ -590,7 +592,9 @@ describe("ReviewsService write path", () => {
     // The REAL notifier, over the same fake Prisma — see the hook block below.
     service = new ReviewsService(
       fake.prisma,
-      new NotificationsService(fake.prisma),
+      new NotificationsService(fake.prisma, {
+        enqueue: vi.fn().mockResolvedValue(undefined),
+      } as never),
     );
     warnSpy = vi
       .spyOn(Logger.prototype, "warn")

@@ -136,6 +136,23 @@ pnpm dev                      # web + api en watch mode
 
 Scripts útiles: `pnpm build` · `pnpm lint` · `pnpm typecheck` · `pnpm test`.
 
+### Emails de notificaciones (opcional)
+
+Las notificaciones in-app funcionan sin configuración adicional. El envío de emails lo realiza un worker aparte que consume la cola `notification-email` en Redis:
+
+```bash
+pnpm --filter @coda/api worker:notifications
+```
+
+| Variable | Uso |
+|---|---|
+| `RESEND_API_KEY` | Clave de la API de Resend. Si falta, el envío queda desactivado: cada job se completa sin enviar nada y se registra una advertencia al iniciar. |
+| `RESEND_FROM_EMAIL` | Remitente de los emails (`notificaciones@dominio` o `Coda <notificaciones@dominio>`). Si falta, el envío también queda desactivado, porque Resend rechaza envíos sin remitente. |
+| `APP_URL` | Origen público de la web (por ejemplo `https://coda.app`), usado para construir los enlaces de cada email. Es obligatoria para el worker: sin ella, el proceso termina con código 1. |
+| `REDIS_URL` | Redis de la cola (el mismo que usan los demás workers). |
+
+Sin el worker en ejecución, los jobs quedan pendientes en Redis y se procesan cuando el worker se inicia.
+
 ---
 
 ## 🗺️ Roadmap

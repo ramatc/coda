@@ -1,4 +1,60 @@
+import type { JobsOptions } from "bullmq";
+
 /** Notifications domain constants (Fase 2 slice 4 — in-app notifications). */
+
+/** Env var: Redis connection URL used by the notification email queue. */
+export const REDIS_URL_ENV = "REDIS_URL";
+
+/**
+ * Env var: the web app's public origin (e.g. `https://coda.app`). The email
+ * worker builds every deep link (`/u/{username}`, `/reviews/{id}`) off it, so
+ * it refuses to start without one rather than mailing broken links. The same
+ * variable already drives CORS and Clerk's `authorizedParties`.
+ */
+export const APP_URL_ENV = "APP_URL";
+
+/** BullMQ queue holding one immediate email job per notification. */
+export const NOTIFICATION_EMAIL_QUEUE = "notification-email";
+
+/** BullMQ job name for sending one notification email. */
+export const NOTIFICATION_EMAIL_JOB_NAME = "send-notification-email";
+
+/**
+ * Deterministic per-notification job id used to deduplicate enqueue retries.
+ * BullMQ custom ids cannot use the former single-colon form, so the separator
+ * is deliberately a hyphen.
+ */
+export function notificationEmailJobId(notificationId: string): string {
+  return `notification-email-${notificationId}`;
+}
+
+/**
+ * Resend `Idempotency-Key` for one notification's email. Derived from the
+ * notification id alone, so every BullMQ attempt for the same notification
+ * reuses it and a retry after a lost response cannot deliver a second email.
+ * Well under Resend's 256-character limit (19-char prefix + a 36-char UUID).
+ */
+export function notificationEmailIdempotencyKey(notificationId: string): string {
+  return `notification-email-${notificationId}`;
+}
+
+/**
+ * Resend 4xx statuses that are transient rather than permanent: 408 (request
+ * timeout), 409 (an earlier attempt with the same idempotency key is still in
+ * flight — `concurrent_idempotent_requests`) and 429 (rate limited). Every
+ * other 4xx is a permanent rejection and fails the job without retrying.
+ */
+export const RETRYABLE_RESEND_4XX_STATUSES: ReadonlySet<number> = new Set([
+  408, 409, 429,
+]);
+
+/** Retry and bounded-retention policy for immediate notification emails. */
+export const NOTIFICATION_EMAIL_JOB_OPTIONS: JobsOptions = {
+  attempts: 3,
+  backoff: { type: "exponential", delay: 5000 },
+  removeOnComplete: { count: 1000 },
+  removeOnFail: { count: 5000 },
+};
 
 /** Default page size for `GET /notifications` when no `limit` is supplied. */
 export const DEFAULT_NOTIFICATION_LIMIT = 20;

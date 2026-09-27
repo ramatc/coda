@@ -7,6 +7,7 @@ import {
 } from "../src/catalog-import/catalog-import.constants.js";
 import { searchAlbumSyncJobId } from "../src/search/search.constants.js";
 import { recoGenerationJobId } from "../src/recommendations/recommendations.constants.js";
+import { notificationEmailJobId } from "../src/notifications/notifications.constants.js";
 
 /**
  * BullMQ rejects a custom `jobId` containing `:` (unless it splits into exactly
@@ -38,6 +39,7 @@ describe("deterministic BullMQ job ids", () => {
     ["enrichJobId", enrichJobId(SPOTIFY_ID)],
     ["searchAlbumSyncJobId", searchAlbumSyncJobId(SPOTIFY_ID)],
     ["recoGenerationJobId", recoGenerationJobId(USER_ID)],
+    ["notificationEmailJobId", notificationEmailJobId(USER_ID)],
   ])("%s is accepted by BullMQ", (_name, jobId) => {
     expect(() => validateJobId(jobId)).not.toThrow();
   });

@@ -198,6 +198,31 @@ describe("ResendService", () => {
     expect(result).toEqual({ status: "sent", id: "email-1" });
   });
 
+  it("sends the caller's idempotency key as Resend's `Idempotency-Key` header, never in the body", async () => {
+    // A lost response after Resend accepted the email makes BullMQ retry the
+    // job; the stable key is what lets Resend return the original email id
+    // instead of delivering a duplicate.
+    stubFetch(calls);
+    const service = new ResendService(enabledConfig());
+
+    await service.send(email, { idempotencyKey: "notification-email-abc" });
+
+    expect(calls[0]!.headers["Idempotency-Key"]).toBe("notification-email-abc");
+    expect(calls[0]!.body).not.toHaveProperty("idempotencyKey");
+  });
+
+  it("omits the `Idempotency-Key` header when the caller supplies no key", async () => {
+    stubFetch(calls);
+    const service = new ResendService(enabledConfig());
+
+    await service.send(email);
+
+    expect(Object.keys(calls[0]!.headers)).toEqual([
+      "Authorization",
+      "Content-Type",
+    ]);
+  });
+
   it("wires an AbortSignal to the fetch that is actually tied to RESEND_SEND_TIMEOUT_MS, not just any signal", async () => {
     // `AbortSignal.timeout()`'s abort fires from Node's internal timer
     // machinery, which `vi.useFakeTimers()` cannot intercept — so instead of
