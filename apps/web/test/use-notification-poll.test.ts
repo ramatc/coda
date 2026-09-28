@@ -183,4 +183,36 @@ describe("useNotificationPoll", () => {
     await advance(POLL_INTERVAL_MS);
     expect(fetchCount).toHaveBeenLastCalledWith("test-token", 0);
   });
+
+  it("drops a poll that resolves after a local override superseded it", async () => {
+    const { result } = await mount();
+    let release: (count: number) => void = () => undefined;
+    fetchCount.mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    await advance(POLL_INTERVAL_MS); // starts the still-pending poll
+
+    // read-all (or similar) overrides the count locally WHILE that poll hangs.
+    act(() => {
+      result.current.setUnreadCount(0);
+    });
+    expect(result.current.unreadCount).toBe(0);
+
+    // The stale poll now resolves with the pre-override count: it must not
+    // resurrect the badge back to 5.
+    await act(async () => {
+      release(5);
+      await Promise.resolve();
+    });
+    expect(result.current.unreadCount).toBe(0);
+
+    // A later poll (started after the override) still applies normally.
+    fetchCount.mockResolvedValueOnce(7);
+    await advance(POLL_INTERVAL_MS);
+    expect(result.current.unreadCount).toBe(7);
+  });
 });

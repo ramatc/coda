@@ -17,7 +17,10 @@ export interface NotificationPoll {
   /**
    * Overrides the count locally — e.g. `0` right after `read-all`, or the
    * `unreadCount` that rode along with the list. Later polls use it as their
-   * failure fallback, so an override is never undone by a failed tick.
+   * failure fallback, so an override is never undone by a failed tick. It
+   * also bumps an internal version, so a poll already in flight when the
+   * override lands is dropped on arrival instead of resurrecting the stale
+   * pre-override count (see {@link useNotificationPoll}).
    */
   setUnreadCount: (count: number) => void;
 }
@@ -33,6 +36,12 @@ export interface NotificationPoll {
  * - An `inFlight` ref skips a tick while a request is pending, so a hung
  *   request under repeated hide/show cycles cannot stack overlapping fetches
  *   (same synchronous-ref rationale as `useAsyncAction`'s `running` ref).
+ * - `setUnreadCount` (a local override — read-all, or the count riding along
+ *   with the list) bumps an `overrideVersion` ref. A poll started before that
+ *   bump can still resolve after it, carrying the stale pre-override count;
+ *   `poll()` captures the version before awaiting and only applies its result
+ *   if the version is still current, so the override is never clobbered by a
+ *   request that was already in flight when it landed.
  * - Failure is SILENT: the last known count is kept and no error UI renders.
  * - Unmount removes BOTH the interval and the listener.
  *
@@ -47,6 +56,9 @@ export function useNotificationPoll(): NotificationPoll {
   // not be re-created (and re-poll) every time the count changes.
   const lastKnown = useRef(0);
   const inFlight = useRef(false);
+  // Bumped by every local override (`setUnreadCount`) so a poll already in
+  // flight when the override lands can tell its own result is stale.
+  const overrideVersion = useRef(0);
   // Read through a ref so the effect below mounts exactly once even if a
   // provider ever hands out a new `getToken` identity per render.
   const getTokenRef = useRef(getToken);
@@ -55,6 +67,7 @@ export function useNotificationPoll(): NotificationPoll {
   }, [getToken]);
 
   const setUnreadCount = useCallback((count: number) => {
+    overrideVersion.current += 1;
     lastKnown.current = count;
     setCount(count);
   }, []);
@@ -68,10 +81,14 @@ export function useNotificationPoll(): NotificationPoll {
         return;
       }
       inFlight.current = true;
+      const versionAtStart = overrideVersion.current;
       try {
         const token = await getTokenRef.current();
         const next = await fetchUnreadCount(token, lastKnown.current);
-        if (!unmounted) {
+        // Drop the result if unmounted, or if a local override landed while
+        // this request was in flight — applying it now would overwrite the
+        // override with a stale count.
+        if (!unmounted && versionAtStart === overrideVersion.current) {
           lastKnown.current = next;
           setCount(next);
         }
