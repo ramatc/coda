@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ConfigService } from "@nestjs/config";
 import { Queue, type JobType } from "bullmq";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBullProducerConnection } from "../src/catalog-import/catalog-redis.js";
 import {
   NotificationEmailQueue,
@@ -32,6 +32,12 @@ import { INTEGRATION_ENABLED, INTEGRATION_ENV } from "./integration.js";
  * row, so even a `worker:notifications` process running against the same
  * Redis would find nothing and complete without calling Resend. The job is
  * removed in `afterAll` either way.
+ *
+ * The producer, reader connection and reader queue are constructed in
+ * `beforeAll`, not at describe-factory scope: Vitest always executes describe
+ * factories during collection, and a skipped suite never runs its `afterAll`,
+ * so anything with real side effects (ioredis connections) must be deferred
+ * until the suite is actually known to run.
  */
 /** Every state a just-enqueued job can be in, even with a worker attached. */
 const JOB_STATES: JobType[] = ["waiting", "delayed", "active", "completed", "failed"];
@@ -43,29 +49,35 @@ describe.skipIf(!INTEGRATION_ENABLED)(
     const config = {
       get: (key: string) => (key === REDIS_URL_ENV ? redisUrl : undefined),
     } as unknown as ConfigService;
-
-    const producer = new NotificationEmailQueue(config);
-    const readerConnection = createBullProducerConnection(redisUrl);
-    const reader = new Queue<NotificationEmailJobData>(NOTIFICATION_EMAIL_QUEUE, {
-      connection: readerConnection,
-    });
     const notificationId = randomUUID();
     const jobId = notificationEmailJobId(notificationId);
+
+    let producer: NotificationEmailQueue;
+    let readerConnection: ReturnType<typeof createBullProducerConnection>;
+    let reader: Queue<NotificationEmailJobData>;
+
+    beforeAll(() => {
+      producer = new NotificationEmailQueue(config);
+      readerConnection = createBullProducerConnection(redisUrl);
+      reader = new Queue<NotificationEmailJobData>(NOTIFICATION_EMAIL_QUEUE, {
+        connection: readerConnection,
+      });
+    });
 
     // Removes by PAYLOAD, not by the expected id, so a regression that breaks
     // the id contract still leaves no stray job behind in the shared Redis.
     afterAll(async () => {
       try {
-        const jobs = await reader.getJobs(JOB_STATES);
+        const jobs = (await reader?.getJobs(JOB_STATES)) ?? [];
         await Promise.all(
           jobs
             .filter((job) => job.data.notificationId === notificationId)
             .map((job) => job.remove()),
         );
       } finally {
-        await reader.close();
-        await readerConnection.quit();
-        await producer.onModuleDestroy();
+        await reader?.close();
+        await readerConnection?.quit();
+        await producer?.onModuleDestroy();
       }
     });
 
