@@ -7,7 +7,8 @@
  * migrated database or Redis is reachable. The flag is explicit on purpose:
  * CI exports `DATABASE_URL`/`REDIS_URL` but runs tests BEFORE
  * `prisma migrate deploy`, so the mere presence of a connection string is not
- * a signal that the schema exists.
+ * a signal that the schema exists. A dedicated CI step sets the flag after the
+ * migrations are applied.
  *
  * Integration spec files are named `*.postgres.spec.ts` / `*.redis.spec.ts`.
  */

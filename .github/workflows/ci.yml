@@ -94,3 +94,13 @@ jobs:
 
       - name: Apply migrations to the service database
         run: pnpm --filter @coda/db exec prisma migrate deploy
+
+      # The turbo test step above runs before the schema exists, so the
+      # real-infrastructure specs skip themselves there. Run them here, against
+      # the now-migrated database and the Redis service container. Vitest
+      # filters are path substrings, so new `*.postgres.spec.ts` /
+      # `*.redis.spec.ts` files are picked up without editing this step.
+      - name: Integration tests against Postgres and Redis
+        env:
+          CODA_INTEGRATION: "1"
+        run: pnpm --filter @coda/api exec vitest run .postgres.spec .redis.spec
