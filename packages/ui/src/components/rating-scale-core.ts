@@ -51,8 +51,7 @@ export interface RatingScaleInteractiveProps extends RatingScaleBaseProps {
 }
 
 export type RatingScaleProps =
-  | RatingScaleReadOnlyProps
-  | RatingScaleInteractiveProps;
+  RatingScaleReadOnlyProps | RatingScaleInteractiveProps;
 
 export const SEGMENT_COUNT = 10;
 const MIN_VALUE = 1;
@@ -111,7 +110,10 @@ export function normalize(value: number): number {
  * segments 0–8 are 100% and segment 9 is 10%. `null` (not yet rated) is
  * always fully empty.
  */
-export function segmentFillPercent(value: number | null, index: number): number {
+export function segmentFillPercent(
+  value: number | null,
+  index: number,
+): number {
   if (value === null) {
     return 0;
   }
@@ -131,7 +133,6 @@ export function segmentFillPercent(value: number | null, index: number): number 
 /** Dev-only warning for the runtime fallback when `interactive` is used without a real `onChange` (TS enforces this at compile time; this only guards a JS/untyped caller). */
 export function warnMissingOnChange() {
   if (process.env.NODE_ENV !== "production") {
-    // eslint-disable-next-line no-console
     console.warn(
       "RatingScale: `interactive` is true but no `onChange` was provided.",
     );
