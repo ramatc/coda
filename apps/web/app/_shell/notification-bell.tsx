@@ -60,6 +60,9 @@ function badgeLabel(count: number): string {
  *   ids that were unread at that moment stay highlighted until the dropdown
  *   closes (design Decision 13) — otherwise every item would visibly
  *   de-highlight the instant it opened.
+ * - Each open resets the items to `null` before fetching, so a reopen shows
+ *   "Loading..." rather than flashing the previous open's list until the
+ *   fresh one lands.
  * - A failed `read-all` is surfaced inline and the badge keeps the list's own
  *   count, rather than pretending the notifications were cleared. A failed
  *   list load (token fetch or the request itself) is surfaced the same way,
@@ -138,6 +141,9 @@ export function NotificationBell() {
     const generation = ++requestGenerationRef.current;
     setOpen(true);
     setError(null);
+    // Reset the list too: without this, a reopen shows the PREVIOUS open's
+    // items until the fresh fetch lands, instead of "Loading...".
+    setItems(null);
 
     let token: string | null;
     let page: Awaited<ReturnType<typeof fetchNotifications>>;

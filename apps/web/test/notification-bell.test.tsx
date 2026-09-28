@@ -340,6 +340,42 @@ describe("NotificationBell", () => {
     expect(markAllRead).toHaveBeenCalledTimes(1);
   });
 
+  it("shows Loading again on reopen instead of flashing the previous open's items", async () => {
+    await renderBell();
+    const first = await openDropdown();
+    expect(within(first).getByText("Ada commented on your review")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    let resolveSecond!: (value: NotificationPage) => void;
+    vi.mocked(fetchNotifications).mockReturnValueOnce(
+      new Promise<NotificationPage>((resolve) => {
+        resolveSecond = resolve;
+      }),
+    );
+
+    fireEvent.click(bellButton());
+    const second = await screen.findByRole("region", { name: "Notifications" });
+
+    // The stale list from the first open must not flash while the fresh one
+    // is still in flight.
+    expect(within(second).getByText("Loading...")).toBeTruthy();
+    expect(
+      within(second).queryByText("Ada commented on your review"),
+    ).toBeNull();
+
+    await act(async () => {
+      resolveSecond(page([FOLLOW_READ]));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(within(second).getByText("Grace followed you")).toBeTruthy();
+    expect(
+      within(second).queryByText("Ada commented on your review"),
+    ).toBeNull();
+  });
+
   it("invalidates an in-flight open when the bell unmounts", async () => {
     const { unmount } = render(
       <div>
