@@ -48,6 +48,7 @@ No es un reproductor de audio, ni un agregador de reseñas profesionales, ni una
 | 🤖 | Recomendaciones explicables (content-based + colaborativo) |
 | 👤 | Perfiles con favoritos, historial y estadísticas |
 | 🌐 | Feed social: seguís gente y ves su actividad |
+| 🔔 | Notificaciones in-app y por email de nuevos seguidores y comentarios |
 | 📱 | Web (Next.js) + mobile nativo (Expo) a futuro |
 
 ---
@@ -161,7 +162,7 @@ Sin el worker en ejecución, los jobs quedan pendientes en Redis y se procesan c
 |---|---|---|
 | **F0** | Setup, diseño y CI/CD | ✅ Hecho |
 | **F1** | MVP: auth, onboarding, catálogo, tracking, perfil, reco v1 | ✅ Hecho |
-| **F2** | Social y listas: follows, feed, listas, reseñas con likes y comentarios, notificaciones, SEO | 🚧 En curso (slices 1-3 hechas, slice 4 en curso) |
+| **F2** | Social y listas: follows, feed, listas, reseñas con likes y comentarios, notificaciones, SEO | 🚧 En curso (slices 1-4 hechas, falta la slice 5) |
 | **F3** | Reco v2: servicio Python, embeddings, explicabilidad | 🔜 |
 | **F4** | Gamificación: rachas, insignias, "Tu año en Coda" | 🔜 |
 | **F5** | Mobile nativo (Expo) | 🔜 |
@@ -173,7 +174,7 @@ Sin el worker en ejecución, los jobs quedan pendientes en Redis y se procesan c
 | 1 | Follows y feed de actividad de seguidos | ✅ Hecho |
 | 2 | Listas (crear, editar, reordenar) y "quiero escuchar" | ✅ Hecho |
 | 3 | Reseñas con likes y comentarios, likes en listas | ✅ Hecho |
-| 4 | Notificaciones in-app y por email (Resend) | 🚧 En curso (backend casi listo; falta la UI) |
+| 4 | Notificaciones in-app y por email (Resend) | ✅ Hecho |
 | 5 | SEO y páginas públicas indexables | 🔜 |
 
 Además, la landing pública (hero, secciones con datos reales, sign-in y sign-up in-app) ya está rediseñada.
