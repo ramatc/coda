@@ -46,6 +46,10 @@ const {
 const { NotificationEmailQueue } = await import(
   "../src/notifications/notification-email.queue.js"
 );
+// Loaded at module scope, not inside the test: a cold import of the real
+// bullmq package can take over a second under parallel turbo load, which
+// counts against the per-test timeout and made the id-validation test flaky.
+const { Job } = await vi.importActual<typeof import("bullmq")>("bullmq");
 
 function config(redisUrl = "redis://queue.test:6379"): ConfigService {
   return {
@@ -97,8 +101,7 @@ describe("NotificationEmailQueue", () => {
     });
   });
 
-  it("uses a BullMQ-compatible deterministic job id", async () => {
-    const { Job } = await vi.importActual<typeof import("bullmq")>("bullmq");
+  it("uses a BullMQ-compatible deterministic job id", () => {
     class ValidatingJob extends Job<{ notificationId: string }> {
       validate(): void {
         this.validateOptions({ data: JSON.stringify(this.data) } as never);
