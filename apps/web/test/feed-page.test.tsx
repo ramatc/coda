@@ -16,6 +16,12 @@ vi.mock("@clerk/nextjs/server", () => ({
   auth: () => Promise.resolve({ getToken: () => Promise.resolve(token) }),
 }));
 
+// The shell's header mounts the notification bell, a client island that reads
+// its token through `useAuth` — same stub `home-dashboard.test.tsx` uses.
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ getToken: vi.fn().mockResolvedValue("test-token") }),
+}));
+
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => redirect(url),
   usePathname: () => "/feed",
@@ -78,6 +84,9 @@ function mockFetch(items: unknown[] = [FEED_ITEM]) {
           jsonResponse({ userId: "user-1", username: "mati" }),
         );
       }
+      if (url.endsWith("/notifications/unread-count")) {
+        return Promise.resolve(jsonResponse({ unreadCount: 0 }));
+      }
       if (url.includes("/feed")) {
         return Promise.resolve(jsonResponse({ items, nextCursor: null }));
       }
@@ -109,6 +118,9 @@ describe("FeedPage", () => {
 
     expect(screen.getByText("CODA")).not.toBeNull();
     expect(screen.getByRole("navigation", { name: "Primary" })).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Notifications/ }),
+    ).not.toBeNull();
     expect(screen.getByText(/Alfredo 2/)).not.toBeNull();
   });
 
