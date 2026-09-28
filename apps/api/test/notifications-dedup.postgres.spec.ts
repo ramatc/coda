@@ -29,7 +29,8 @@ import { INTEGRATION_ENABLED, INTEGRATION_ENV } from "./integration.js";
  * partial unique index under concurrent inserts on separate connections.
  *
  * Every row it creates hangs off two throwaway users, deleted in `afterAll`
- * (notifications cascade with them), so the database is left as found.
+ * (notifications cascade with them), so the database is left as found. Users
+ * orphaned by a killed run are swept by the next run's `beforeAll`.
  */
 
 /**
@@ -47,6 +48,16 @@ const DEDUP_INDEX_DEFINITION =
 /** Concurrent calls fired per race. More than two widens the collision window. */
 const RACE_WIDTH = 5;
 
+/** Every throwaway user this spec creates carries this `clerkUserId` prefix. */
+const INTEGRATION_USER_PREFIX = "integration-";
+
+/**
+ * A run killed before `afterAll` leaves its users behind. The next run sweeps
+ * prefixed users older than this, which no live run can still be using, so two
+ * runs sharing a database never delete each other's users mid-flight.
+ */
+const STALE_USER_GRACE_MS = 60 * 60 * 1000;
+
 describe.skipIf(!INTEGRATION_ENABLED)(
   `notifications dedup index (real Postgres; set ${INTEGRATION_ENV}=1 to run)`,
   () => {
@@ -63,12 +74,21 @@ describe.skipIf(!INTEGRATION_ENABLED)(
     async function createUser(label: string): Promise<string> {
       const user = await prisma.user.create({
         data: {
-          clerkUserId: `integration-${runTag}-${label}`,
-          email: `integration-${runTag}-${label}@example.test`,
+          clerkUserId: `${INTEGRATION_USER_PREFIX}${runTag}-${label}`,
+          email: `${INTEGRATION_USER_PREFIX}${runTag}-${label}@example.test`,
         },
       });
       userIds.push(user.id);
       return user.id;
+    }
+
+    async function sweepStaleIntegrationUsers(now: Date): Promise<void> {
+      await prisma.user.deleteMany({
+        where: {
+          clerkUserId: { startsWith: INTEGRATION_USER_PREFIX },
+          createdAt: { lt: new Date(now.getTime() - STALE_USER_GRACE_MS) },
+        },
+      });
     }
 
     async function followRows(actorUserId: string, recipientUserId: string) {
@@ -78,8 +98,9 @@ describe.skipIf(!INTEGRATION_ENABLED)(
       });
     }
 
-    beforeAll(() => {
+    beforeAll(async () => {
       enqueue.mockResolvedValue(undefined);
+      await sweepStaleIntegrationUsers(new Date());
     });
 
     afterAll(async () => {
@@ -158,6 +179,39 @@ describe.skipIf(!INTEGRATION_ENABLED)(
 
       expect(await followRows(actorA, recipient)).toHaveLength(1);
       expect(await followRows(actorB, recipient)).toHaveLength(1);
+    });
+
+    it("sweeps throwaway users older than the grace period, never fresh or foreign ones", async () => {
+      const longAgo = new Date(Date.now() - 2 * STALE_USER_GRACE_MS);
+      const stale = await prisma.user.create({
+        data: {
+          clerkUserId: `${INTEGRATION_USER_PREFIX}${runTag}-stale`,
+          email: `${INTEGRATION_USER_PREFIX}${runTag}-stale@example.test`,
+          createdAt: longAgo,
+        },
+      });
+      userIds.push(stale.id);
+      const foreign = await prisma.user.create({
+        data: {
+          clerkUserId: `guard-${runTag}-old-real-user`,
+          email: `guard-${runTag}-old-real-user@example.test`,
+          createdAt: longAgo,
+        },
+      });
+      userIds.push(foreign.id);
+      const fresh = await createUser("sweep-fresh");
+
+      await sweepStaleIntegrationUsers(new Date());
+
+      expect(
+        await prisma.user.findUnique({ where: { id: stale.id } }),
+      ).toBeNull();
+      expect(
+        await prisma.user.findUnique({ where: { id: foreign.id } }),
+      ).not.toBeNull();
+      expect(
+        await prisma.user.findUnique({ where: { id: fresh } }),
+      ).not.toBeNull();
     });
   },
 );
