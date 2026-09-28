@@ -65,11 +65,14 @@ function badgeLabel(count: number): string {
  *   list load (token fetch or the request itself) is surfaced the same way,
  *   and `markAllRead` never runs unless the list actually loaded.
  * - Escape or a click outside closes it.
- * - Each open is tagged with a generation number, bumped on every open AND
- *   close (the same ref-guarded idiom `useNotificationPoll` uses for its
- *   `inFlight` ref). A close → reopen before the first request settles drops
- *   that stale response instead of letting it overwrite the reopened
- *   dropdown's items, highlights, or count.
+ * - Each open is tagged with a generation number, bumped on every open,
+ *   close, AND unmount (the same ref-guarded idiom `useNotificationPoll`
+ *   uses for its `inFlight` ref). A close → reopen before the first request
+ *   settles drops that stale response instead of letting it overwrite the
+ *   reopened dropdown's items, highlights, or count. Unmounting mid-open
+ *   drops it the same way, so a response arriving after the bell is gone
+ *   never calls `markAllRead` for a dropdown nobody can see or sets state on
+ *   an unmounted tree.
  *
  * Only mounted inside `Header`, which only renders inside `AppShell` on
  * authenticated routes — so signed-out visitors never start the poll.
@@ -90,6 +93,16 @@ export function NotificationBell() {
   // that already closed, or was replaced by a later open) can be told apart
   // from the current one and dropped instead of overwriting fresher state.
   const requestGenerationRef = useRef(0);
+
+  // Unmount invalidates any open still in flight the same way a close does —
+  // otherwise a request that resolves after the component is gone would fire
+  // `markAllRead` for a dropdown nobody can see and set state on an unmounted
+  // tree.
+  useEffect(() => {
+    return () => {
+      requestGenerationRef.current += 1;
+    };
+  }, []);
 
   function close(): void {
     requestGenerationRef.current += 1;

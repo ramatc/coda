@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -337,5 +338,44 @@ describe("NotificationBell", () => {
 
     expect(within(region).getAllByRole("listitem")).toHaveLength(1);
     expect(markAllRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates an in-flight open when the bell unmounts", async () => {
+    const { unmount } = render(
+      <div>
+        <NotificationBell />
+      </div>,
+    );
+    await waitFor(() => expect(fetchUnreadCount).toHaveBeenCalled());
+
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {
+      /* assert-only: fail the test via the spy, not via noisy stderr */
+    });
+
+    let resolveList!: (value: NotificationPage) => void;
+    vi.mocked(fetchNotifications).mockReturnValueOnce(
+      new Promise<NotificationPage>((resolve) => {
+        resolveList = resolve;
+      }),
+    );
+
+    fireEvent.click(bellButton());
+    await waitFor(() =>
+      expect(fetchNotifications).toHaveBeenCalledTimes(1),
+    );
+
+    unmount();
+
+    // The list resolves only after the component is gone: applying it would
+    // both mark-all-read a closed dropdown and set state on an unmounted tree.
+    await act(async () => {
+      resolveList(page([COMMENT_UNREAD]));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(markAllRead).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
