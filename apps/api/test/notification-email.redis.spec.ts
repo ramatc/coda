@@ -39,8 +39,22 @@ import { INTEGRATION_ENABLED, INTEGRATION_ENV } from "./integration.js";
  * so anything with real side effects (ioredis connections) must be deferred
  * until the suite is actually known to run.
  */
-/** Every state a just-enqueued job can be in, even with a worker attached. */
-const JOB_STATES: JobType[] = ["waiting", "delayed", "active", "completed", "failed"];
+/**
+ * Every state a just-enqueued job can be in, even with a worker attached. The
+ * last three are unreachable for this producer today (no priority, no flows,
+ * nobody pauses the queue) but a job parked there would otherwise escape
+ * cleanup and the dedup count.
+ */
+const JOB_STATES: JobType[] = [
+  "waiting",
+  "delayed",
+  "active",
+  "completed",
+  "failed",
+  "prioritized",
+  "paused",
+  "waiting-children",
+];
 
 describe.skipIf(!INTEGRATION_ENABLED)(
   `NotificationEmailQueue (real Redis; set ${INTEGRATION_ENV}=1 to run)`,
