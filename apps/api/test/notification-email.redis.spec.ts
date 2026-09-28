@@ -116,7 +116,9 @@ describe.skipIf(!INTEGRATION_ENABLED)(
       await producer.enqueue(notificationId);
 
       const job = await reader.getJob(jobId);
-      const sameIdJobs = (await reader.getJobs(JOB_STATES)).filter((candidate) => candidate.id === jobId);
+      const sameIdJobs = (await reader.getJobs(JOB_STATES)).filter(
+        (candidate) => candidate.id === jobId,
+      );
 
       expect(sameIdJobs).toHaveLength(1);
       expect(job?.data).toEqual({ notificationId });
