@@ -26,7 +26,11 @@ class FakeQueue {
     registry.set(name, this);
   }
 
-  async add(name: string, data: unknown, opts: AddedJob["opts"]): Promise<void> {
+  async add(
+    name: string,
+    data: unknown,
+    opts: AddedJob["opts"],
+  ): Promise<void> {
     this.added.push({ name, data, opts });
   }
 }
@@ -43,9 +47,8 @@ const {
   REDIS_URL_ENV,
   notificationEmailJobId,
 } = await import("../src/notifications/notifications.constants.js");
-const { NotificationEmailQueue } = await import(
-  "../src/notifications/notification-email.queue.js"
-);
+const { NotificationEmailQueue } =
+  await import("../src/notifications/notification-email.queue.js");
 // Loaded at module scope, not inside the test: a cold import of the real
 // bullmq package can take over a second under parallel turbo load, which
 // counts against the per-test timeout and made the id-validation test flaky.
@@ -107,9 +110,12 @@ describe("NotificationEmailQueue", () => {
         this.validateOptions({ data: JSON.stringify(this.data) } as never);
       }
     }
-    const keys = new Proxy<Record<string, string>>({}, {
-      get: (_target, property) => String(property),
-    });
+    const keys = new Proxy<Record<string, string>>(
+      {},
+      {
+        get: (_target, property) => String(property),
+      },
+    );
     const bullQueueBoundary = {
       toKey: (key: string) => `bull:notification-email:${key}`,
       qualifiedName: "bull:notification-email",
@@ -139,7 +145,9 @@ describe("NotificationEmailQueue", () => {
     );
 
     expect(() => job.validate()).not.toThrow();
-    expect(() => incompatibleJob.validate()).toThrow("Custom Id cannot contain :");
+    expect(() => incompatibleJob.validate()).toThrow(
+      "Custom Id cannot contain :",
+    );
     expect(jobId).toBe(`notification-email-${notificationId}`);
   });
 
@@ -178,7 +186,9 @@ describe("NotificationEmailQueue", () => {
     const queue = new NotificationEmailQueue(config());
     await queue.enqueue("0d7c5a8e-5f0b-4a57-9d8e-3c2b1a0f9e71");
     const closeError = new Error("queue close failed");
-    registry.get(NOTIFICATION_EMAIL_QUEUE)?.close.mockRejectedValueOnce(closeError);
+    registry
+      .get(NOTIFICATION_EMAIL_QUEUE)
+      ?.close.mockRejectedValueOnce(closeError);
 
     await expect(queue.onModuleDestroy()).rejects.toBe(closeError);
 
