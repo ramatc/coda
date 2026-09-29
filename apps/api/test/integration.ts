@@ -20,16 +20,14 @@ export const INTEGRATION_ENABLED = process.env[INTEGRATION_ENV] === "1";
 const THROWAWAY_NAME_SEGMENT = /(^|[_-])(test|scratch)([_-]|$)/i;
 
 /**
- * Whether it is safe for a spec to DELETE rows it did not create itself. Only
- * CI (an ephemeral service container) and databases named as disposable
- * copies (`coda_test`, `coda_scratch`) qualify; the everyday development
- * database never does, and an unparseable URL is refused.
+ * Whether it is safe for a spec to DELETE rows it did not create itself.
+ * Decided by the database name alone: it qualifies when any segment of the
+ * name, split on `_` or `-`, is exactly `test` or `scratch` (`coda_test`,
+ * `coda_scratch`, `scratch-db`). The everyday `coda` database never does, and
+ * an unparseable URL is refused. The `CI` flag is deliberately ignored: shells
+ * and tools export it too, and CI names its database `coda_test` instead.
  */
-export function isThrowawayDatabase(
-  databaseUrl: string | undefined,
-  env: Record<string, string | undefined>,
-): boolean {
-  if (env.CI === "true") return true;
+export function isThrowawayDatabase(databaseUrl: string | undefined): boolean {
   if (!databaseUrl) return false;
   try {
     const name = decodeURIComponent(new URL(databaseUrl).pathname.slice(1));

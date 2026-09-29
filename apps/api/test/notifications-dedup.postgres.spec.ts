@@ -34,9 +34,9 @@ import {
  *
  * Every row it creates hangs off two throwaway users, deleted in `afterAll`
  * (notifications cascade with them), so the database is left as found. On a
- * disposable database (CI, `*_test`, `*_scratch`), users orphaned by a killed
- * run are swept by the next run's `beforeAll`; on the development database
- * nothing is ever swept.
+ * disposable database (a `test` or `scratch` name segment, e.g. CI's
+ * `coda_test`), users orphaned by a killed run are swept by the next run's
+ * `beforeAll`; on the development database nothing is ever swept.
  */
 
 /**
@@ -62,7 +62,7 @@ const INTEGRATION_USER_PREFIX = "integration-";
  * must still be cleaned up if a run dies. It gets its own prefix, swept
  * separately.
  */
-const GUARD_USER_PREFIX = "guard-integration-";
+const CONTROL_USER_PREFIX = "control-integration-";
 
 /**
  * A run killed before `afterAll` leaves its users behind. The next run sweeps
@@ -72,14 +72,17 @@ const GUARD_USER_PREFIX = "guard-integration-";
 const STALE_USER_GRACE_MS = 60 * 60 * 1000;
 
 /**
- * Sweeping deletes rows this run did not create, so it only ever happens on a
- * disposable database (CI, or a `*_test` / `*_scratch` copy), never on the
- * everyday development database.
+ * How far the sweep test backdates its users, so they already look stale to
+ * the integration sweep.
  */
-const SWEEP_ALLOWED = isThrowawayDatabase(
-  process.env.DATABASE_URL,
-  process.env,
-);
+const CONTROL_USER_AGE_MS = 2 * STALE_USER_GRACE_MS;
+
+/**
+ * Sweeping deletes rows this run did not create, so it only ever happens on a
+ * database whose name has a `test` or `scratch` segment (CI uses `coda_test`),
+ * never on the everyday `coda` development database.
+ */
+const SWEEP_ALLOWED = isThrowawayDatabase(process.env.DATABASE_URL);
 
 describe.skipIf(!INTEGRATION_ENABLED)(
   `notifications dedup index (real Postgres; set ${INTEGRATION_ENV}=1 to run)`,
@@ -105,13 +108,36 @@ describe.skipIf(!INTEGRATION_ENABLED)(
       return user.id;
     }
 
-    async function sweepStaleUsers(prefix: string, now: Date): Promise<void> {
+    async function sweepUsersCreatedBefore(
+      prefix: string,
+      cutoff: Date,
+    ): Promise<void> {
       await prisma.user.deleteMany({
         where: {
           clerkUserId: { startsWith: prefix },
-          createdAt: { lt: new Date(now.getTime() - STALE_USER_GRACE_MS) },
+          createdAt: { lt: cutoff },
         },
       });
+    }
+
+    async function sweepStaleIntegrationUsers(now: Date): Promise<void> {
+      await sweepUsersCreatedBefore(
+        INTEGRATION_USER_PREFIX,
+        new Date(now.getTime() - STALE_USER_GRACE_MS),
+      );
+    }
+
+    // Control users are born backdated by CONTROL_USER_AGE_MS, so "stale" for
+    // them means older than that PLUS the grace period; anything younger may
+    // belong to a run that is still going.
+    async function sweepStaleControlUsers(
+      now: Date,
+      prefix: string = CONTROL_USER_PREFIX,
+    ): Promise<void> {
+      await sweepUsersCreatedBefore(
+        prefix,
+        new Date(now.getTime() - CONTROL_USER_AGE_MS - STALE_USER_GRACE_MS),
+      );
     }
 
     async function followRows(actorUserId: string, recipientUserId: string) {
@@ -125,8 +151,8 @@ describe.skipIf(!INTEGRATION_ENABLED)(
       enqueue.mockResolvedValue(undefined);
       if (SWEEP_ALLOWED) {
         const now = new Date();
-        await sweepStaleUsers(INTEGRATION_USER_PREFIX, now);
-        await sweepStaleUsers(GUARD_USER_PREFIX, now);
+        await sweepStaleIntegrationUsers(now);
+        await sweepStaleControlUsers(now);
       }
     });
 
@@ -209,46 +235,53 @@ describe.skipIf(!INTEGRATION_ENABLED)(
     });
 
     it.skipIf(!SWEEP_ALLOWED)(
-      "sweeps throwaway users older than the grace period, never fresh or foreign ones",
+      "sweeps stale integration users but never fresh ones or a live run's control user",
       async () => {
-        const longAgo = new Date(Date.now() - 2 * STALE_USER_GRACE_MS);
+        const now = new Date();
+        const backdated = new Date(now.getTime() - CONTROL_USER_AGE_MS);
         const stale = await prisma.user.create({
           data: {
             clerkUserId: `${INTEGRATION_USER_PREFIX}${runTag}-stale`,
             email: `${INTEGRATION_USER_PREFIX}${runTag}-stale@example.test`,
-            createdAt: longAgo,
+            createdAt: backdated,
           },
         });
         userIds.push(stale.id);
-        const foreign = await prisma.user.create({
+        const control = await prisma.user.create({
           data: {
-            clerkUserId: `${GUARD_USER_PREFIX}${runTag}-old-real-user`,
-            email: `${GUARD_USER_PREFIX}${runTag}-old-real-user@example.test`,
-            createdAt: longAgo,
+            clerkUserId: `${CONTROL_USER_PREFIX}${runTag}-old-other-user`,
+            email: `${CONTROL_USER_PREFIX}${runTag}-old-other-user@example.test`,
+            createdAt: backdated,
           },
         });
-        userIds.push(foreign.id);
+        userIds.push(control.id);
         const fresh = await createUser("sweep-fresh");
+        const exists = async (id: string) =>
+          (await prisma.user.findUnique({ where: { id } })) !== null;
 
-        await sweepStaleUsers(INTEGRATION_USER_PREFIX, new Date());
+        await sweepStaleIntegrationUsers(now);
 
-        expect(
-          await prisma.user.findUnique({ where: { id: stale.id } }),
-        ).toBeNull();
-        expect(
-          await prisma.user.findUnique({ where: { id: foreign.id } }),
-        ).not.toBeNull();
-        expect(
-          await prisma.user.findUnique({ where: { id: fresh } }),
-        ).not.toBeNull();
+        expect(await exists(stale.id)).toBe(false);
+        expect(await exists(fresh)).toBe(true);
+        expect(await exists(control.id)).toBe(true);
 
-        // A killed run must not strand the control user either: its own sweep
-        // removes it once stale.
-        await sweepStaleUsers(GUARD_USER_PREFIX, new Date());
+        // The control sweep in `beforeAll` must not take a LIVE run's control
+        // user, even though it is backdated: another run may be mid-test.
+        await sweepStaleControlUsers(now);
 
-        expect(
-          await prisma.user.findUnique({ where: { id: foreign.id } }),
-        ).toBeNull();
+        expect(await exists(control.id)).toBe(true);
+
+        // Once its run has been dead for the grace period, the control user is
+        // swept too. Scoped to this run's tag so no other run is affected.
+        const anHourLater = new Date(
+          now.getTime() + STALE_USER_GRACE_MS + 1000,
+        );
+        await sweepStaleControlUsers(
+          anHourLater,
+          `${CONTROL_USER_PREFIX}${runTag}-`,
+        );
+
+        expect(await exists(control.id)).toBe(false);
       },
     );
   },

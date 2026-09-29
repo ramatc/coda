@@ -16,18 +16,20 @@ jobs:
     runs-on: ubuntu-latest
 
     # Ephemeral service containers (NOT cloud). Credentials and images match
-    # the root docker-compose.yml (coda/coda/coda, postgres:17-alpine, redis:7-alpine).
+    # the root docker-compose.yml (coda/coda, postgres:17-alpine, redis:7-alpine).
+    # The database is named `coda_test` rather than `coda` so integration specs
+    # recognize it as disposable (see apps/api/test/integration.ts).
     services:
       postgres:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: coda
           POSTGRES_PASSWORD: coda
-          POSTGRES_DB: coda
+          POSTGRES_DB: coda_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U coda"
+          --health-cmd "pg_isready -U coda -d coda_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
@@ -54,8 +56,8 @@ jobs:
 
     env:
       # Point at the service containers on the runner host.
-      DATABASE_URL: postgresql://coda:coda@localhost:5432/coda?schema=public
-      DIRECT_URL: postgresql://coda:coda@localhost:5432/coda?schema=public
+      DATABASE_URL: postgresql://coda:coda@localhost:5432/coda_test?schema=public
+      DIRECT_URL: postgresql://coda:coda@localhost:5432/coda_test?schema=public
       REDIS_URL: redis://localhost:6379
       # Meilisearch service container (PR7). Values match the service `env` above.
       MEILI_HOST: http://localhost:7700
