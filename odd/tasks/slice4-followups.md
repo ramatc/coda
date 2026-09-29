@@ -32,6 +32,8 @@ Out of scope: `.env.example` (reading it is permission-denied for the agent; the
   - INCIDENT: the prefix-less mutation ran against the real local dev DB and wiped every user older than 1h, plus cascaded data. No backup existed. Follow-up: a PreToolUse backup hook (personal, outside the repo) and a rule to run destructive mutation checks only against a throwaway DB.
 - [x] T4 Lint/format: drop the unused directive in `rating-scale-core.ts`; Prettier-format the queue spec (and the Redis spec, also unformatted on main). Route: inline (mechanical). Commits 9491ef9, 3c85df9.
   - Proof: turbo lint+typecheck 14/14 with zero warnings; ui tests 16/16; queue spec 7/7; the ui diff is formatting-only apart from the removed directive.
+- [x] T5 Review advisories R1+R2: sweep only on a disposable DB (`isThrowawayDatabase`: CI or `*_test`/`*_scratch`); control user gets its own sweepable `guard-integration-` prefix. Route: inline. Commit c4a853d.
+  - RED: 5/5 `isThrowawayDatabase` unit tests failed (function missing); GREEN 5/5. On dev DB `coda` the sweep test is skipped and `beforeAll` sweeps nothing. On `coda_scratch` it runs and passes 5/5. Mutations run ONLY on `coda_scratch` (guard prefix overlap, prefix predicate, age predicate) each fail the test.
 
 ## Acceptance / checks
 - `pnpm turbo lint typecheck` clean with zero warnings.
@@ -39,4 +41,4 @@ Out of scope: `.env.example` (reading it is permission-denied for the agent; the
 - `prettier --check` clean on touched files.
 
 ## Progress
-All tasks done. Final checks: api 681 passed / 7 skipped; integration specs 7/7 with CODA_INTEGRATION=1; lint and typecheck clean. Next: push and open a PR (the user decides).
+All tasks done. Final checks: api 686 passed / 7 skipped; integration specs 7/7 with CODA_INTEGRATION=1; lint and typecheck clean. Next: push and open a PR (the user decides).
