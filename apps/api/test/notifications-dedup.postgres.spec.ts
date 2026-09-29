@@ -4,7 +4,11 @@ import { NotificationType } from "@coda/db";
 import type { NotificationEmailQueue } from "../src/notifications/notification-email.queue.js";
 import { NotificationsService } from "../src/notifications/notifications.service.js";
 import { PrismaService } from "../src/prisma/prisma.service.js";
-import { INTEGRATION_ENABLED, INTEGRATION_ENV } from "./integration.js";
+import {
+  INTEGRATION_ENABLED,
+  INTEGRATION_ENV,
+  isThrowawayDatabase,
+} from "./integration.js";
 
 /**
  * Real-Postgres integration spec for the refollow dedup index (design
@@ -29,8 +33,10 @@ import { INTEGRATION_ENABLED, INTEGRATION_ENV } from "./integration.js";
  * partial unique index under concurrent inserts on separate connections.
  *
  * Every row it creates hangs off two throwaway users, deleted in `afterAll`
- * (notifications cascade with them), so the database is left as found. Users
- * orphaned by a killed run are swept by the next run's `beforeAll`.
+ * (notifications cascade with them), so the database is left as found. On a
+ * disposable database (CI, `*_test`, `*_scratch`), users orphaned by a killed
+ * run are swept by the next run's `beforeAll`; on the development database
+ * nothing is ever swept.
  */
 
 /**
@@ -52,11 +58,28 @@ const RACE_WIDTH = 5;
 const INTEGRATION_USER_PREFIX = "integration-";
 
 /**
+ * The sweep test's control user must NOT match `INTEGRATION_USER_PREFIX`, yet
+ * must still be cleaned up if a run dies. It gets its own prefix, swept
+ * separately.
+ */
+const GUARD_USER_PREFIX = "guard-integration-";
+
+/**
  * A run killed before `afterAll` leaves its users behind. The next run sweeps
  * prefixed users older than this, which no live run can still be using, so two
  * runs sharing a database never delete each other's users mid-flight.
  */
 const STALE_USER_GRACE_MS = 60 * 60 * 1000;
+
+/**
+ * Sweeping deletes rows this run did not create, so it only ever happens on a
+ * disposable database (CI, or a `*_test` / `*_scratch` copy), never on the
+ * everyday development database.
+ */
+const SWEEP_ALLOWED = isThrowawayDatabase(
+  process.env.DATABASE_URL,
+  process.env,
+);
 
 describe.skipIf(!INTEGRATION_ENABLED)(
   `notifications dedup index (real Postgres; set ${INTEGRATION_ENV}=1 to run)`,
@@ -82,10 +105,10 @@ describe.skipIf(!INTEGRATION_ENABLED)(
       return user.id;
     }
 
-    async function sweepStaleIntegrationUsers(now: Date): Promise<void> {
+    async function sweepStaleUsers(prefix: string, now: Date): Promise<void> {
       await prisma.user.deleteMany({
         where: {
-          clerkUserId: { startsWith: INTEGRATION_USER_PREFIX },
+          clerkUserId: { startsWith: prefix },
           createdAt: { lt: new Date(now.getTime() - STALE_USER_GRACE_MS) },
         },
       });
@@ -100,7 +123,11 @@ describe.skipIf(!INTEGRATION_ENABLED)(
 
     beforeAll(async () => {
       enqueue.mockResolvedValue(undefined);
-      await sweepStaleIntegrationUsers(new Date());
+      if (SWEEP_ALLOWED) {
+        const now = new Date();
+        await sweepStaleUsers(INTEGRATION_USER_PREFIX, now);
+        await sweepStaleUsers(GUARD_USER_PREFIX, now);
+      }
     });
 
     afterAll(async () => {
@@ -181,37 +208,48 @@ describe.skipIf(!INTEGRATION_ENABLED)(
       expect(await followRows(actorB, recipient)).toHaveLength(1);
     });
 
-    it("sweeps throwaway users older than the grace period, never fresh or foreign ones", async () => {
-      const longAgo = new Date(Date.now() - 2 * STALE_USER_GRACE_MS);
-      const stale = await prisma.user.create({
-        data: {
-          clerkUserId: `${INTEGRATION_USER_PREFIX}${runTag}-stale`,
-          email: `${INTEGRATION_USER_PREFIX}${runTag}-stale@example.test`,
-          createdAt: longAgo,
-        },
-      });
-      userIds.push(stale.id);
-      const foreign = await prisma.user.create({
-        data: {
-          clerkUserId: `guard-${runTag}-old-real-user`,
-          email: `guard-${runTag}-old-real-user@example.test`,
-          createdAt: longAgo,
-        },
-      });
-      userIds.push(foreign.id);
-      const fresh = await createUser("sweep-fresh");
+    it.skipIf(!SWEEP_ALLOWED)(
+      "sweeps throwaway users older than the grace period, never fresh or foreign ones",
+      async () => {
+        const longAgo = new Date(Date.now() - 2 * STALE_USER_GRACE_MS);
+        const stale = await prisma.user.create({
+          data: {
+            clerkUserId: `${INTEGRATION_USER_PREFIX}${runTag}-stale`,
+            email: `${INTEGRATION_USER_PREFIX}${runTag}-stale@example.test`,
+            createdAt: longAgo,
+          },
+        });
+        userIds.push(stale.id);
+        const foreign = await prisma.user.create({
+          data: {
+            clerkUserId: `${GUARD_USER_PREFIX}${runTag}-old-real-user`,
+            email: `${GUARD_USER_PREFIX}${runTag}-old-real-user@example.test`,
+            createdAt: longAgo,
+          },
+        });
+        userIds.push(foreign.id);
+        const fresh = await createUser("sweep-fresh");
 
-      await sweepStaleIntegrationUsers(new Date());
+        await sweepStaleUsers(INTEGRATION_USER_PREFIX, new Date());
 
-      expect(
-        await prisma.user.findUnique({ where: { id: stale.id } }),
-      ).toBeNull();
-      expect(
-        await prisma.user.findUnique({ where: { id: foreign.id } }),
-      ).not.toBeNull();
-      expect(
-        await prisma.user.findUnique({ where: { id: fresh } }),
-      ).not.toBeNull();
-    });
+        expect(
+          await prisma.user.findUnique({ where: { id: stale.id } }),
+        ).toBeNull();
+        expect(
+          await prisma.user.findUnique({ where: { id: foreign.id } }),
+        ).not.toBeNull();
+        expect(
+          await prisma.user.findUnique({ where: { id: fresh } }),
+        ).not.toBeNull();
+
+        // A killed run must not strand the control user either: its own sweep
+        // removes it once stale.
+        await sweepStaleUsers(GUARD_USER_PREFIX, new Date());
+
+        expect(
+          await prisma.user.findUnique({ where: { id: foreign.id } }),
+        ).toBeNull();
+      },
+    );
   },
 );
