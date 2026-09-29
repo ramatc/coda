@@ -34,6 +34,8 @@ Out of scope: `.env.example` (reading it is permission-denied for the agent; the
   - Proof: turbo lint+typecheck 14/14 with zero warnings; ui tests 16/16; queue spec 7/7; the ui diff is formatting-only apart from the removed directive.
 - [x] T5 Review advisories R1+R2: sweep only on a disposable DB (`isThrowawayDatabase`: CI or `*_test`/`*_scratch`); control user gets its own sweepable `guard-integration-` prefix. Route: inline. Commit c4a853d.
   - RED: 5/5 `isThrowawayDatabase` unit tests failed (function missing); GREEN 5/5. On dev DB `coda` the sweep test is skipped and `beforeAll` sweeps nothing. On `coda_scratch` it runs and passes 5/5. Mutations run ONLY on `coda_scratch` (guard prefix overlap, prefix predicate, age predicate) each fail the test.
+- [x] T6 Second review advisories: stop trusting `CI=true` (CI database renamed `coda_test`); fix the cross-run race where one run could sweep another live run's backdated control user; rename foreign/guard to control; exact comments. Route: inline. Commit 870a7b4.
+  - RED: CI-alone test `expected true to be false`; race test failed on the live-control assertion (line 269) with the old threshold. GREEN: 5/5 unit, 5/5 Postgres on `coda_scratch`, sweep test skipped on `coda`. Four mutations (threshold, prefix overlap, prefix predicate, age predicate), run only on `coda_scratch`, each fail the test.
 
 ## Acceptance / checks
 - `pnpm turbo lint typecheck` clean with zero warnings.
