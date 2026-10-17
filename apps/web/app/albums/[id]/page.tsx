@@ -34,9 +34,11 @@ function albumDescription(album: AlbumDetail): string {
 /**
  * Search-engine metadata for the album page: title, description, canonical URL
  * and Open Graph card. Always read ANONYMOUSLY, because it describes the public
- * page and must never carry one viewer's state. An unknown album, or an API
- * failure, falls back to the site defaults; the page itself renders the 404 or
- * the error boundary.
+ * page and must never carry one viewer's state. That costs one extra uncached
+ * API read per render (the page reads again, with the viewer's token): an
+ * accepted trade for metadata that is identical for every visitor. An unknown
+ * album, or an API failure, falls back to the site defaults; the page itself
+ * renders the 404 or the error boundary.
  */
 export async function generateMetadata({
   params,

@@ -17,9 +17,11 @@
  * Deliberately ABSENT, because they are public and indexable: the album detail
  * page (`/albums/[id]`), the list detail page (`/lists/[id]`, where the API
  * answers a private list with 404), and the review detail page
- * (`/reviews/[id]`). Those pages skip the onboarding gate for an anonymous
- * visitor and still run it for a signed-in one (see `lib/onboarding.ts`).
- * `/lists` is matched EXACTLY so it does not cover `/lists/[id]`.
+ * (`/reviews/[id]`). The album and list pages skip the onboarding gate for an
+ * anonymous visitor and still run it for a signed-in one (see
+ * `lib/onboarding.ts`); the review page never runs it. `/lists` is matched
+ * EXACTLY so it does not cover `/lists/[id]`. `app/robots.ts` derives its
+ * disallow list from these patterns.
  */
 export const protectedRoutePatterns = [
   "/dashboard(.*)",

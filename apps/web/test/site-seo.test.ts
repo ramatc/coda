@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import robots from "../app/robots";
+import { protectedRoutePatterns } from "../middleware.config";
 import { getSiteUrl } from "../lib/site-url";
 
 afterEach(() => {
@@ -18,6 +19,18 @@ describe("getSiteUrl", () => {
 
     expect(getSiteUrl()).toBe("http://localhost:3000");
   });
+
+  it("assumes https for a value without a scheme instead of crashing every page", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "coda.example");
+
+    expect(getSiteUrl()).toBe("https://coda.example");
+  });
+
+  it("falls back to the local web port for a value that is not a URL", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "http://exa mple");
+
+    expect(getSiteUrl()).toBe("http://localhost:3000");
+  });
 });
 
 describe("robots", () => {
@@ -30,7 +43,7 @@ describe("robots", () => {
     expect(rule?.disallow).toEqual(
       expect.arrayContaining([
         "/dashboard",
-        "/u/",
+        "/u",
         "/onboarding",
         "/home",
         "/search",
@@ -38,8 +51,23 @@ describe("robots", () => {
         "/feed",
         "/lists$",
         "/lists/new",
+        "/sign-in",
+        "/sign-up",
       ]),
     );
+  });
+
+  it("disallows every route the middleware protects, so a new one is never forgotten", () => {
+    const rules = robots().rules;
+    const rule = Array.isArray(rules) ? rules[0] : rules;
+    const disallow = ([] as string[]).concat(rule?.disallow ?? []);
+
+    for (const pattern of protectedRoutePatterns) {
+      const prefix = pattern.replace("(.*)", "");
+      expect(disallow.some((path) => path.replace(/\$$/, "") === prefix)).toBe(
+        true,
+      );
+    }
   });
 
   it("never disallows the public album and list detail pages", () => {

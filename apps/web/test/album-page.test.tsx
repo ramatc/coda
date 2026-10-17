@@ -258,4 +258,10 @@ describe("generateMetadata (album)", () => {
 
     expect(await metadataFor()).toEqual({});
   });
+
+  it("falls back to no page-specific metadata when the API fails, leaving the error to the page", async () => {
+    mockFetch(500);
+
+    expect(await metadataFor()).toEqual({});
+  });
 });

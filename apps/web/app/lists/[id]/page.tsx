@@ -43,8 +43,9 @@ export async function generateMetadata({
     return { robots: { index: false, follow: false } };
   }
 
+  // `||`, not `??`: a blank description falls back too, never an empty snippet.
   const description =
-    list.description ??
+    list.description?.trim() ||
     `A list of ${albumCountLabel(list.items.length)} on Coda.`;
   const canonical = `/lists/${list.id}`;
   return {

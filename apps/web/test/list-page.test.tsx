@@ -457,4 +457,18 @@ describe("generateMetadata (list)", () => {
       robots: { index: false, follow: false },
     });
   });
+
+  it("falls back to the album count for a blank description", async () => {
+    mockFetch({ list: () => listResponse({ description: "   " }) });
+
+    expect((await metadataFor()).description).toBe(
+      "A list of 1 album on Coda.",
+    );
+  });
+
+  it("falls back to no page-specific metadata when the API fails, leaving the error to the page", async () => {
+    mockFetch({ list: () => statusResponse(500) });
+
+    expect(await metadataFor()).toEqual({});
+  });
 });

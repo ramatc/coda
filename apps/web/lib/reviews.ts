@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from "./api-client";
+import { getApiBaseUrl, optionalAuthHeaders } from "./api-client";
 
 /** The profile shown next to a review or one of its comments. */
 export interface ReviewAuthor {
@@ -158,9 +158,9 @@ export function reviewPath(reviewId: string): string {
 }
 
 /**
- * Headers for a review read. Unlike every other fetch module here, the
- * Authorization header is OMITTED entirely when there is no token instead of
- * sending `lib/lists.ts`'s `Bearer ${token ?? ""}`.
+ * Headers for a review read: the shared {@link optionalAuthHeaders}, which
+ * OMITS the Authorization header entirely when there is no token (the same
+ * helper the public album and list reads use).
  *
  * This is load-bearing for correctness, not hygiene. `GET /reviews/:id` is an
  * optional-auth route: it carries `@Public()` so the fail-closed
@@ -172,7 +172,7 @@ export function reviewPath(reviewId: string): string {
  * viewer block, so every like/comment call-to-action goes dead for them.
  */
 function reviewHeaders(token: string | null): Record<string, string> {
-  return token === null ? {} : { Authorization: `Bearer ${token}` };
+  return optionalAuthHeaders(token);
 }
 
 /**
