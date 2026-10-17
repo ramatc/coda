@@ -8,8 +8,10 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator.js";
+import { OptionalClerkGuard } from "../auth/optional-clerk.guard.js";
 import { Public } from "../auth/public.decorator.js";
 import {
   ListsService,
@@ -94,10 +96,16 @@ export class ListsController {
     return this.lists.createList(clerkUserId, body);
   }
 
-  /** Reads a single list with its ordered items (visibility-scoped). */
+  /**
+   * Reads a single list with its ordered items (visibility-scoped). Anonymous
+   * readable so public list pages can be indexed: `clerkUserId` is `undefined`
+   * for a signed-out caller, who sees public lists only (private → 404).
+   */
+  @Public()
+  @UseGuards(OptionalClerkGuard)
   @Get("lists/:id")
   getList(
-    @CurrentUser("sub") clerkUserId: string,
+    @CurrentUser("sub") clerkUserId: string | undefined,
     @Param("id") id: string,
   ): Promise<ListDetail> {
     return this.lists.getList(clerkUserId, id);

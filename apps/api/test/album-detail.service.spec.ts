@@ -59,8 +59,12 @@ function createFakePrisma() {
   const client = {
     user: {
       async findUnique(args: {
-        where: { clerkUserId: string };
+        where: { clerkUserId: string | undefined };
       }): Promise<{ id: string } | null> {
+        // Real Prisma rejects a unique lookup on `undefined`; mirror that.
+        if (args.where.clerkUserId === undefined) {
+          throw new Error("findUnique needs a defined clerkUserId");
+        }
         const id = users.get(args.where.clerkUserId);
         return id ? { id } : null;
       },
@@ -261,6 +265,25 @@ describe("AlbumDetailService", () => {
     expect(detail.title).toBe("OK Computer");
     expect(detail.viewer.listened).toBe(false);
     expect(detail.viewer.score).toBeNull();
+  });
+
+  it("serves an anonymous caller the album with an empty viewer state", async () => {
+    seedAlbum(fake);
+    fake.users.set(CLERK_ID, USER_ID);
+    fake.ratings.push({ userId: USER_ID, albumId: ALBUM_ID, score: 8 });
+
+    const detail = await service.getAlbumDetail(undefined, ALBUM_ID);
+
+    expect(detail.title).toBe("OK Computer");
+    expect(detail.aggregateRating).toEqual({ average: 8, count: 1 });
+    expect(detail.viewer).toEqual({
+      listened: false,
+      listenId: null,
+      score: null,
+      review: null,
+      resolved: false,
+      wantToListenId: null,
+    });
   });
 
   it("scopes the viewer state to the resolved user, never leaking another user's tracking data", async () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GUARDS_METADATA, HTTP_CODE_METADATA } from "@nestjs/common/constants";
 import { ListsController } from "../src/lists/lists.controller.js";
+import { OptionalClerkGuard } from "../src/auth/optional-clerk.guard.js";
 import type { ListsService } from "../src/lists/lists.service.js";
 import { IS_PUBLIC_KEY } from "../src/auth/auth.types.js";
 
@@ -132,12 +133,22 @@ describe("ListsController", () => {
     ).toBe(undefined);
   });
 
+  it("marks getList @Public() with OptionalClerkGuard so a signed-in viewer is still resolved", () => {
+    const handler = ListsController.prototype.getList;
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler)).toBe(true);
+    expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([
+      OptionalClerkGuard,
+    ]);
+  });
+
   it("keeps every other list route behind the global ClerkGuard", () => {
-    // `popularLists` is the ONLY anonymous-readable route on this controller;
-    // the owner-scoped reads and every mutation stay fail-closed. The length
-    // pin makes a new handler extend this assertion deliberately.
-    const guarded = handlerNames().filter((name) => name !== "popularLists");
-    expect(guarded).toHaveLength(10);
+    // `popularLists` and `getList` are the ONLY anonymous-readable routes on
+    // this controller; the owner-scoped reads and every mutation stay
+    // fail-closed. The length pin makes a new handler extend this deliberately.
+    const guarded = handlerNames().filter(
+      (name) => name !== "popularLists" && name !== "getList",
+    );
+    expect(guarded).toHaveLength(9);
     for (const name of guarded) {
       const handler = ListsController.prototype[
         name as keyof ListsController

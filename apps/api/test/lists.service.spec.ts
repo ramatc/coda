@@ -184,8 +184,12 @@ function createFakePrisma() {
   const client = {
     user: {
       async findUnique(args: {
-        where: { clerkUserId: string };
+        where: { clerkUserId: string | undefined };
       }): Promise<{ id: string } | null> {
+        // Real Prisma rejects a unique lookup on `undefined`; mirror that.
+        if (args.where.clerkUserId === undefined) {
+          throw new Error("findUnique needs a defined clerkUserId");
+        }
         const id = usersByClerk.get(args.where.clerkUserId);
         return id ? { id } : null;
       },
@@ -588,6 +592,23 @@ describe("ListsService", () => {
 
       expect(detail.id).toBe(PUBLIC_LIST_ID);
       expect(detail.userId).toBe(OWNER_ID);
+    });
+
+    it("lets an ANONYMOUS caller read a PUBLIC list, never as a liker", async () => {
+      seedList({ id: PUBLIC_LIST_ID, isPublic: true });
+
+      const detail = await service.getList(undefined, PUBLIC_LIST_ID);
+
+      expect(detail.id).toBe(PUBLIC_LIST_ID);
+      expect(detail.viewerHasLiked).toBe(false);
+    });
+
+    it("returns 404 when an ANONYMOUS caller reads a PRIVATE list", async () => {
+      seedList({ id: PRIVATE_LIST_ID, isPublic: false });
+
+      await expect(
+        service.getList(undefined, PRIVATE_LIST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it("returns 404 (not 403) when a non-owner reads a PRIVATE list", async () => {

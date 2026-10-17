@@ -198,12 +198,17 @@ export class ListsService {
   /**
    * Returns a single list with its ordered items. Visibility follows the READ
    * rule: the owner always sees their own list; a public list is visible to
-   * anyone; a private list is 404 for a non-owner (hides existence). An unsynced
-   * caller can still read public lists (resolves to a `null` caller id).
+   * anyone; a private list is 404 for a non-owner (hides existence). An
+   * anonymous (`undefined`) or unsynced caller can still read public lists
+   * (both resolve to a `null` caller id).
    */
-  async getList(clerkUserId: string, listId: unknown): Promise<ListDetail> {
+  async getList(
+    clerkUserId: string | undefined,
+    listId: unknown,
+  ): Promise<ListDetail> {
     const id = this.validateListId(listId);
-    const callerId = await this.resolveUserId(clerkUserId);
+    // Anonymous short-circuit: no Prisma call may see an `undefined` caller.
+    const callerId = clerkUserId ? await this.resolveUserId(clerkUserId) : null;
     await this.loadListForViewer(callerId, id);
 
     const list = await this.prisma.client.list.findUnique({
