@@ -1,6 +1,11 @@
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { ALBUM_NOT_FOUND, fetchAlbumDetail } from "../../../lib/albums";
+import {
+  ALBUM_NOT_FOUND,
+  fetchAlbumDetail,
+  type AlbumDetail,
+} from "../../../lib/albums";
 import {
   fetchOnboardingStatus,
   resolveOnboardingRedirect,
@@ -13,6 +18,55 @@ import { SignInPrompt } from "../../_shell/sign-in-prompt";
 
 interface AlbumPageProps {
   params: Promise<{ id: string }>;
+}
+
+/** One-sentence search snippet: album, artist, year, and the shared rating. */
+function albumDescription(album: AlbumDetail): string {
+  const year = album.releaseYear ? ` (${album.releaseYear})` : "";
+  const { average, count } = album.aggregateRating;
+  const rating =
+    average !== null && count > 0
+      ? `Rated ${average.toFixed(1)}/10 across ${count} ${count === 1 ? "rating" : "ratings"} on Coda.`
+      : "Track, rate, and review it on Coda.";
+  return `${album.title} by ${album.primaryArtist.name}${year}. ${rating}`;
+}
+
+/**
+ * Search-engine metadata for the album page: title, description, canonical URL
+ * and Open Graph card. Always read ANONYMOUSLY, because it describes the public
+ * page and must never carry one viewer's state. An unknown album, or an API
+ * failure, falls back to the site defaults; the page itself renders the 404 or
+ * the error boundary.
+ */
+export async function generateMetadata({
+  params,
+}: AlbumPageProps): Promise<Metadata> {
+  const { id } = await params;
+  let album: Awaited<ReturnType<typeof fetchAlbumDetail>>;
+  try {
+    album = await fetchAlbumDetail(null, id);
+  } catch {
+    return {};
+  }
+  if (album === ALBUM_NOT_FOUND) {
+    return {};
+  }
+
+  const title = `${album.title} by ${album.primaryArtist.name}`;
+  const description = albumDescription(album);
+  const canonical = `/albums/${album.id}`;
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      type: "music.album",
+      images: album.coverUrl ? [album.coverUrl] : undefined,
+    },
+  };
 }
 
 /**

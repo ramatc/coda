@@ -1,7 +1,9 @@
+import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import {
   LIST_NOT_FOUND,
+  albumCountLabel,
   fetchList,
   fetchViewerUserId,
   isListOwner,
@@ -18,6 +20,39 @@ import { ListReorder } from "./list-reorder";
 
 interface ListPageProps {
   params: Promise<{ id: string }>;
+}
+
+/**
+ * Search-engine metadata for the list page. Always read ANONYMOUSLY, so a
+ * private list (a 404 to anyone but its owner) can never leak its title into
+ * metadata — even when its owner is the one viewing. Such a list, or an
+ * unknown one, is marked not indexable; an API failure falls back to the site
+ * defaults and leaves the error to the page.
+ */
+export async function generateMetadata({
+  params,
+}: ListPageProps): Promise<Metadata> {
+  const { id } = await params;
+  let list: Awaited<ReturnType<typeof fetchList>>;
+  try {
+    list = await fetchList(null, id);
+  } catch {
+    return {};
+  }
+  if (list === LIST_NOT_FOUND) {
+    return { robots: { index: false, follow: false } };
+  }
+
+  const description =
+    list.description ??
+    `A list of ${albumCountLabel(list.items.length)} on Coda.`;
+  const canonical = `/lists/${list.id}`;
+  return {
+    title: list.title,
+    description,
+    alternates: { canonical },
+    openGraph: { title: list.title, description, url: canonical },
+  };
 }
 
 /**

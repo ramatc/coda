@@ -80,7 +80,8 @@ vi.mock("../lib/onboarding", () => ({
     resolveOnboardingRedirect(...args),
 }));
 
-const { default: ListPage } = await import("../app/lists/[id]/page");
+const { default: ListPage, generateMetadata } =
+  await import("../app/lists/[id]/page");
 
 const LIST_ID = "22222222-2222-4222-8222-222222222222";
 /** The list owner's LOCAL user id — what `GET /profile` returns for the owner. */
@@ -415,6 +416,45 @@ describe("ListPage", () => {
       mockFetch({ list: () => statusResponse(404) });
 
       await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+    });
+  });
+});
+
+describe("generateMetadata (list)", () => {
+  const metadataFor = () =>
+    generateMetadata({ params: Promise.resolve({ id: LIST_ID }) });
+
+  it("titles a public list and uses its description, with a canonical URL", async () => {
+    mockFetch();
+
+    const metadata = await metadataFor();
+
+    expect(metadata.title).toBe("Deep cuts");
+    expect(metadata.description).toBe("Slow burners only.");
+    expect(metadata.alternates?.canonical).toBe(`/lists/${LIST_ID}`);
+  });
+
+  it("describes a list without a description by its album count", async () => {
+    mockFetch({ list: () => listResponse({ description: null }) });
+
+    const metadata = await metadataFor();
+
+    expect(metadata.description).toBe("A list of 1 album on Coda.");
+  });
+
+  it("reads the list anonymously, so a private list never leaks into metadata", async () => {
+    const fetchMock = mockFetch();
+
+    await metadataFor();
+
+    expect(authFor(fetchMock, `/lists/${LIST_ID}`)).toBeUndefined();
+  });
+
+  it("marks a private or unknown list as not indexable", async () => {
+    mockFetch({ list: () => statusResponse(404) });
+
+    expect(await metadataFor()).toEqual({
+      robots: { index: false, follow: false },
     });
   });
 });

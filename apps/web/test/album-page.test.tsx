@@ -64,7 +64,8 @@ vi.mock("../app/albums/[id]/album-actions", () => ({
   AlbumActions: () => <div data-testid="album-actions" />,
 }));
 
-const { default: AlbumPage } = await import("../app/albums/[id]/page");
+const { default: AlbumPage, generateMetadata } =
+  await import("../app/albums/[id]/page");
 
 const ALBUM_ID = "33333333-3333-4333-8333-333333333333";
 
@@ -205,5 +206,56 @@ describe("AlbumPage", () => {
 
       await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
     });
+  });
+});
+
+describe("generateMetadata (album)", () => {
+  const metadataFor = () =>
+    generateMetadata({ params: Promise.resolve({ id: ALBUM_ID }) });
+
+  it("titles the page with the album and artist, and sets a canonical URL", async () => {
+    mockFetch();
+
+    const metadata = await metadataFor();
+
+    expect(metadata.title).toBe("OK Computer by Radiohead");
+    expect(metadata.description).toBe(
+      "OK Computer by Radiohead (1997). Rated 9.0/10 across 1 rating on Coda.",
+    );
+    expect(metadata.alternates?.canonical).toBe(`/albums/${ALBUM_ID}`);
+  });
+
+  it("describes an unrated album without inventing a score", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...ALBUM,
+          releaseYear: null,
+          aggregateRating: { average: null, count: 0 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const metadata = await metadataFor();
+
+    expect(metadata.description).toBe(
+      "OK Computer by Radiohead. Track, rate, and review it on Coda.",
+    );
+  });
+
+  it("reads the album anonymously, even for a signed-in viewer", async () => {
+    const fetchMock = mockFetch();
+
+    await metadataFor();
+
+    // Metadata describes the PUBLIC page, so it never carries viewer state.
+    expect(albumAuth(fetchMock)).toBeUndefined();
+  });
+
+  it("falls back to no page-specific metadata for an unknown album", async () => {
+    mockFetch(404);
+
+    expect(await metadataFor()).toEqual({});
   });
 });

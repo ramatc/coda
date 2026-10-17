@@ -9,10 +9,17 @@ import {
   SIGN_UP_FALLBACK_REDIRECT_URL,
   SIGN_UP_URL,
 } from "../lib/auth-routes";
+import { getSiteUrl } from "../lib/site-url";
 import "./globals.css";
 
+/**
+ * Site-wide metadata. `metadataBase` turns each public page's relative
+ * canonical URL into an absolute one; the title template brands page titles
+ * set by `generateMetadata` (e.g. `OK Computer by Radiohead · Coda`).
+ */
 export const metadata: Metadata = {
-  title: "Coda",
+  metadataBase: new URL(getSiteUrl()),
+  title: { default: "Coda", template: "%s · Coda" },
   description: "Track, rate, and review the music you love.",
 };
 
