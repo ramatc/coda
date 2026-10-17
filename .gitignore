@@ -37,3 +37,5 @@ coverage/
 
 # Gentle AI tooling cache (local only)
 .atl/
+.codegraph/
+openspec/
