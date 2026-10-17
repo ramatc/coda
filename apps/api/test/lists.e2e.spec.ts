@@ -90,6 +90,8 @@ const LIST_ROWS = [
 
 const OWNER_CLERK = "user_owner";
 const OWNER_ID = "11111111-1111-4111-8111-111111111111";
+const VISITOR_CLERK = "user_visitor";
+const VISITOR_ID = "22222222-2222-4222-8222-222222222222";
 
 /** Rows behind `GET /lists/:id`: one public and one private list of OWNER. */
 const DETAIL_ROWS = [PUBLIC_LIST_ID, PRIVATE_LIST_ID].map((id) => ({
@@ -116,7 +118,12 @@ function stubPrisma() {
   const client = {
     user: {
       async findUnique(args: { where: { clerkUserId: string } }) {
-        return args.where.clerkUserId === OWNER_CLERK ? { id: OWNER_ID } : null;
+        if (args.where.clerkUserId === OWNER_CLERK) {
+          return { id: OWNER_ID };
+        }
+        return args.where.clerkUserId === VISITOR_CLERK
+          ? { id: VISITOR_ID }
+          : null;
       },
     },
     list: {
@@ -250,6 +257,20 @@ describe("Lists API (e2e)", () => {
       id: PRIVATE_LIST_ID,
       viewerHasLiked: true,
     });
+    expect(mockedVerifyToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides a PRIVATE list from a signed-in NON-owner (404)", async () => {
+    mockedVerifyToken.mockResolvedValue({
+      sub: VISITOR_CLERK,
+      sid: "sess_2",
+    } as Awaited<ReturnType<typeof verifyToken>>);
+
+    const res = await request(app.getHttpServer())
+      .get(`/lists/${PRIVATE_LIST_ID}`)
+      .set("Authorization", "Bearer valid.jwt.token");
+
+    expect(res.status).toBe(404);
     expect(mockedVerifyToken).toHaveBeenCalledTimes(1);
   });
 
