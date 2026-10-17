@@ -269,6 +269,10 @@ describe("Lists API (e2e)", () => {
     ["POST", `/lists/${PUBLIC_LIST_ID}/like`],
     ["POST", "/lists"],
     ["GET", "/users/curator/lists"],
+    ["DELETE", `/lists/${PUBLIC_LIST_ID}/like`],
+    ["POST", `/lists/${PUBLIC_LIST_ID}/items`],
+    ["PATCH", `/lists/${PUBLIC_LIST_ID}/items/reorder`],
+    ["DELETE", `/lists/${PUBLIC_LIST_ID}/items/item-1`],
   ] as const)(
     "keeps %s %s behind the global ClerkGuard (anonymous → 401)",
     async (method, path) => {
