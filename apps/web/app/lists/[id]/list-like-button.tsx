@@ -12,6 +12,7 @@ import { ListActionError, likeList, unlikeList } from "../../../lib/lists";
 // function from `lib/reviews.ts`, so the label now has one home for all four.
 import { likeCountLabel } from "../../../lib/reviews";
 import { useAsyncAction } from "../../../lib/use-async-action";
+import { SignInPrompt } from "../../_shell/sign-in-prompt";
 
 interface ListLikeButtonProps {
   /** The list being liked (path param for the API call). */
@@ -20,6 +21,8 @@ interface ListLikeButtonProps {
   initialLikeCount: number;
   /** Whether the viewer had already liked it, as the server resolved it. */
   initialHasLiked: boolean;
+  /** `false` for an anonymous visitor, who gets a sign-in prompt instead. */
+  canInteract: boolean;
 }
 
 /**
@@ -53,22 +56,21 @@ const RECONCILABLE_STATUSES: ReadonlySet<number> = new Set([409, 404]);
  * page. On failure the optimistic flip is rolled back and the API's own message
  * is surfaced inline.
  *
- * Two deliberate DIFFERENCES from the review island, neither of which may be
- * "restored" for symmetry:
+ * When `canInteract` is false (an anonymous visitor on the public list page)
+ * the island renders a sign-in prompt instead of a live control, the same
+ * decision its review twin owns.
  *
- * 1. **No `canInteract` prop and no sign-in branch.** `/lists(.*)` is in
- *    `protectedRoutePatterns`, so a logged-out visitor never reaches the page
- *    that mounts this — unlike `/reviews/[id]`, the app's one anonymously
- *    readable route, whose islands each own an anonymous branch.
- * 2. **No ownership prop.** Self-like is allowed: the API gates likes on READ
- *    visibility (`loadListForViewer`), not on ownership, so an owner may like
- *    their own list. `list-detail.tsx` therefore renders this slot
- *    unconditionally, unlike its owner-only ones.
+ * One deliberate DIFFERENCE from the review island, which may not be
+ * "restored" for symmetry: **no ownership prop.** Self-like is allowed: the API
+ * gates likes on READ visibility (`loadListForViewer`), not on ownership, so an
+ * owner may like their own list. `list-detail.tsx` therefore renders this slot
+ * unconditionally, unlike its owner-only ones.
  */
 export function ListLikeButton({
   listId,
   initialLikeCount,
   initialHasLiked,
+  canInteract,
 }: ListLikeButtonProps) {
   const { getToken } = useAuth();
   const router = useRouter();
@@ -156,6 +158,12 @@ export function ListLikeButton({
           }
         },
       },
+    );
+  }
+
+  if (!canInteract) {
+    return (
+      <SignInPrompt returnTo={`/lists/${listId}`} label="Sign in to like" />
     );
   }
 

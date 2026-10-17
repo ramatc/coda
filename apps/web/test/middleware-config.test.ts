@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { createRouteMatcher } from "@clerk/nextjs/server";
+import { NextRequest } from "next/server";
 import { config } from "../middleware";
 import { protectedRoutePatterns } from "../middleware.config";
+
+/** Runs a path through the same Clerk matcher `middleware.ts` builds. */
+const matchesProtected = createRouteMatcher([...protectedRoutePatterns]);
+const isProtectedPath = (path: string) =>
+  matchesProtected(new NextRequest(`http://localhost${path}`));
 
 /**
  * Static/structural assertion of the Clerk middleware config. This does NOT
@@ -26,8 +33,10 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/search(.*)");
   });
 
-  it("protects the album detail route (PR9)", () => {
-    expect(protectedRoutePatterns).toContain("/albums(.*)");
+  it("leaves the album detail route PUBLIC so album pages can be indexed", () => {
+    expect(
+      isProtectedPath("/albums/0f6c3c1e-1111-4111-8111-111111111111"),
+    ).toBe(false);
   });
 
   it("protects the personal activity route (PR10)", () => {
@@ -38,8 +47,29 @@ describe("middleware config", () => {
     expect(protectedRoutePatterns).toContain("/feed(.*)");
   });
 
-  it("protects the list routes (Fase 2 slice 2 PR4)", () => {
-    expect(protectedRoutePatterns).toContain("/lists(.*)");
+  it("protects the viewer's own lists and the create-list form", () => {
+    expect(isProtectedPath("/lists")).toBe(true);
+    expect(isProtectedPath("/lists/new")).toBe(true);
+  });
+
+  it("leaves list detail pages PUBLIC (private lists are a 404 from the API)", () => {
+    expect(isProtectedPath("/lists/0f6c3c1e-1111-4111-8111-111111111111")).toBe(
+      false,
+    );
+  });
+
+  it("keeps every other app route protected", () => {
+    for (const path of [
+      "/dashboard",
+      "/u/curator",
+      "/onboarding",
+      "/home",
+      "/search",
+      "/activity",
+      "/feed",
+    ]) {
+      expect(isProtectedPath(path)).toBe(true);
+    }
   });
 
   it("leaves the review detail route PUBLIC (Fase 2 slice 3)", () => {
@@ -49,9 +79,9 @@ describe("middleware config", () => {
 
     // The predicate DOES find a route when one is protected, so the empty
     // result below is a real absence rather than a broken matcher.
-    expect(guarding("/lists")).toEqual(["/lists(.*)"]);
+    expect(guarding("/lists")).toEqual(["/lists", "/lists/new(.*)"]);
 
-    // `/reviews/[id]` is the app's only anonymously-readable page: it renders
+    // `/reviews/[id]` is an anonymously-readable page: it renders
     // for logged-out visitors, and the API's `GET /reviews/:id` answers them 200
     // instead of 401. Adding `/reviews(.*)` here would send every one of them to
     // sign-in before the page ever ran — a silent regression the page itself

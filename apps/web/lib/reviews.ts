@@ -162,8 +162,8 @@ export function reviewPath(reviewId: string): string {
  * Authorization header is OMITTED entirely when there is no token instead of
  * sending `lib/lists.ts`'s `Bearer ${token ?? ""}`.
  *
- * This is load-bearing for correctness, not hygiene. `GET /reviews/:id` is the
- * app's only optional-auth route: it carries `@Public()` so the fail-closed
+ * This is load-bearing for correctness, not hygiene. `GET /reviews/:id` is an
+ * optional-auth route: it carries `@Public()` so the fail-closed
  * global guard lets an anonymous visitor through, plus `OptionalClerkGuard` so a
  * signed-in visitor is still resolved from their bearer token. A blank bearer
  * happens to be swallowed as anonymous today, but omitting is explicit and stays

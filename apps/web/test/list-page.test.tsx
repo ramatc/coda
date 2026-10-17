@@ -34,12 +34,25 @@ vi.mock("next/navigation", () => ({
 
 // The islands' own Clerk surface. Kept as a framework boundary only: the real
 // island components run, so this file tests COMPOSITION (which island is
-// mounted, with which props) rather than re-testing island internals. No
-// `SignInButton` double is needed here, unlike `review-page.test.tsx`:
-// `/lists(.*)` is a protected route, so no island on this page has an anonymous
-// branch — and its absence is what would fail loudly if one appeared.
+// mounted, with which props) rather than re-testing island internals. The
+// `SignInButton` double carries its `forceRedirectUrl` into the DOM so the
+// anonymous branch can prove where it sends the visitor back to.
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: vi.fn().mockResolvedValue("test-token") }),
+  SignInButton: ({
+    children,
+    forceRedirectUrl,
+  }: {
+    children: ReactNode;
+    forceRedirectUrl?: string;
+  }) => (
+    <span
+      data-testid="clerk-sign-in-button"
+      data-force-redirect-url={forceRedirectUrl}
+    >
+      {children}
+    </span>
+  ),
 }));
 
 // Every prop other than `href` is forwarded rather than dropped, so
@@ -58,10 +71,9 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-// Mocked so the assertions below can PROVE the gate ran, rather than merely
-// observing that nothing redirected. Unlike `/reviews/[id]`, this page MUST run
-// it: `/lists(.*)` is protected, so a half-onboarded viewer belongs at
-// `/onboarding`, not here.
+// Mocked so the assertions below can PROVE the gate ran for a signed-in viewer
+// (a half-onboarded one belongs at `/onboarding`, not here) and was SKIPPED for
+// an anonymous visitor, whom it would otherwise bounce to `/onboarding`.
 vi.mock("../lib/onboarding", () => ({
   fetchOnboardingStatus: () => fetchOnboardingStatus(),
   resolveOnboardingRedirect: (...args: unknown[]) =>
@@ -337,5 +349,72 @@ describe("ListPage", () => {
     // The notice is for the DEGRADED case only — a genuine visitor is not shown
     // an error about a page that is rendering exactly as intended for them.
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  describe("for an anonymous visitor", () => {
+    beforeEach(() => {
+      token = null;
+    });
+
+    it("renders a public list without the onboarding gate", async () => {
+      mockFetch();
+
+      await renderPage();
+
+      expect(screen.getByRole("heading", { name: "Deep cuts" })).not.toBeNull();
+      expect(fetchOnboardingStatus).not.toHaveBeenCalled();
+      expect(redirect).not.toHaveBeenCalled();
+    });
+
+    it("reads the list with no Authorization header and never asks for a profile", async () => {
+      const fetchMock = mockFetch();
+
+      await renderPage();
+
+      expect(authFor(fetchMock, `/lists/${LIST_ID}`)).toBeUndefined();
+      expect(
+        fetchMock.mock.calls.some((args) =>
+          String(args[0]).endsWith("/profile"),
+        ),
+      ).toBe(false);
+    });
+
+    it("offers a sign-in prompt that returns to this list instead of the like control", async () => {
+      mockFetch();
+
+      await renderPage();
+
+      expect(
+        screen.queryByRole("button", { name: /like this list/i }),
+      ).toBeNull();
+      const prompt = screen.getByTestId("clerk-sign-in-button");
+      expect(prompt.getAttribute("data-force-redirect-url")).toBe(
+        `/lists/${LIST_ID}`,
+      );
+      expect(
+        screen.getByRole("button", { name: "Sign in to like" }),
+      ).not.toBeNull();
+    });
+
+    it("shows no owner controls and no ownership-unverified notice", async () => {
+      mockFetch();
+
+      await renderPage();
+
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(
+        screen.queryByRole("region", { name: "List settings" }),
+      ).toBeNull();
+      // Read-only items, linking each album to its (public) page.
+      expect(
+        screen.getByRole("link", { name: "Kid A" }).getAttribute("href"),
+      ).toBe("/albums/album-1");
+    });
+
+    it("renders the 404 page for a private list", async () => {
+      mockFetch({ list: () => statusResponse(404) });
+
+      await expect(renderPage()).rejects.toThrow("NEXT_NOT_FOUND");
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from "./api-client";
+import { getApiBaseUrl, optionalAuthHeaders } from "./api-client";
 
 /** A single track on the album tracklist (mirrors the API's `AlbumDetailTrack`). */
 export interface AlbumDetailTrack {
@@ -67,9 +67,11 @@ export const MAX_RATING = 10;
 export const ALBUM_NOT_FOUND = Symbol("album-not-found");
 
 /**
- * Fetches an album's detail server-side with the viewer's Clerk token. Returns
- * {@link ALBUM_NOT_FOUND} for a 404 so the page can render `notFound()`, and
- * throws for any other non-OK response (the caller surfaces an error boundary).
+ * Fetches an album's detail server-side with the viewer's Clerk token, or with
+ * no Authorization header for an anonymous visitor (`token === null`; the route
+ * is anonymous-readable). Returns {@link ALBUM_NOT_FOUND} for a 404 so the page
+ * can render `notFound()`, and throws for any other non-OK response (the caller
+ * surfaces an error boundary).
  */
 export async function fetchAlbumDetail(
   token: string | null,
@@ -77,10 +79,7 @@ export async function fetchAlbumDetail(
 ): Promise<AlbumDetail | typeof ALBUM_NOT_FOUND> {
   const response = await fetch(
     `${getApiBaseUrl()}/albums/${encodeURIComponent(id)}`,
-    {
-      headers: { Authorization: `Bearer ${token ?? ""}` },
-      cache: "no-store",
-    },
+    { headers: optionalAuthHeaders(token), cache: "no-store" },
   );
   if (response.status === 404) {
     return ALBUM_NOT_FOUND;
