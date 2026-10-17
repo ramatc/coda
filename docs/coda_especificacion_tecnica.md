@@ -1102,7 +1102,7 @@ Cada reto otorga XP visible en el perfil; XP acumulado no es ranking público (e
 - ✅ Feed de actividad de seguidos.
 - ✅ Listas (crear, editar, rankear), más likes en listas y backlog "quiero escuchar".
 - ✅ Reseñas con likes y comentarios.
-- 🚧 Notificaciones in-app (Resend para email transaccional): la API de lectura y la generación de notificaciones en follows y comentarios ya están hechas. Faltan el worker de email (en revisión) y la UI (campana y dropdown).
+- 🚧 Notificaciones in-app (Resend para email transaccional): la generación de notificaciones en follows y comentarios, la API de lectura, el worker de email y la UI (campana con contador de no leídas y dropdown) ya están hechos. Falta la prueba manual de punta a punta.
 - SEO y páginas públicas indexables. Por ahora solo está hecha la landing pública.
 
 **Salida:** beta abierta.
