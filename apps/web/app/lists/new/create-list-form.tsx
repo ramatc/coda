@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { buttonVariants, cn } from "@coda/ui";
+import { buttonVariants, cn, Input, Textarea } from "@coda/ui";
 import { createList } from "../../../lib/lists";
 
 type Status = "idle" | "submitting" | "error";
@@ -66,31 +66,33 @@ export function CreateListForm() {
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-6 py-12">
       <header>
-        <h1 className="text-3xl font-semibold text-brand-600">New list</h1>
+        <h1 className="text-h1 font-semibold text-text-primary">New list</h1>
         <p className="mt-2 text-base opacity-70">
           Give your list a name — you can add albums once it exists.
         </p>
       </header>
 
       {error ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
 
-      <form onSubmit={(event) => void onSubmit(event)} className="flex flex-col gap-6">
+      <form
+        onSubmit={(event) => void onSubmit(event)}
+        className="flex flex-col gap-6"
+      >
         <div className="flex flex-col gap-2">
           <label htmlFor="list-title" className="text-sm opacity-70">
             Title
           </label>
-          <input
+          <Input
             id="list-title"
             type="text"
             value={title}
             disabled={submitting}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Best of 2026"
-            className="rounded-card border border-brand-200 px-3 py-2"
           />
         </div>
 
@@ -98,14 +100,13 @@ export function CreateListForm() {
           <label htmlFor="list-description" className="text-sm opacity-70">
             Description
           </label>
-          <textarea
+          <Textarea
             id="list-description"
             value={description}
             disabled={submitting}
             onChange={(event) => setDescription(event.target.value)}
             placeholder="What ties these albums together?"
             rows={4}
-            className="rounded-card border border-brand-200 px-3 py-2 text-sm"
           />
         </div>
 

@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { buttonVariants, cn } from "@coda/ui";
+import { buttonVariants, cn, Textarea } from "@coda/ui";
 import {
   ReviewActionError,
   deleteComment,
@@ -237,13 +237,13 @@ export function ReviewCommentItem({
             onClick={() => void onDelete()}
             disabled={busy}
             aria-label="Delete comment"
-            className="text-xs text-red-600 underline"
+            className="text-xs text-danger underline"
           >
             {busy ? "Deleting…" : "Delete"}
           </button>
         </div>
         {error ? (
-          <p className="text-sm text-red-600" role="alert">
+          <p className="text-sm text-danger" role="alert">
             {error}
           </p>
         ) : null}
@@ -257,7 +257,7 @@ export function ReviewCommentItem({
       className="flex flex-col gap-2"
     >
       {error ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -265,13 +265,12 @@ export function ReviewCommentItem({
       <label htmlFor={`edit-comment-${comment.id}`} className="sr-only">
         Edit comment
       </label>
-      <textarea
+      <Textarea
         id={`edit-comment-${comment.id}`}
         value={draft}
         disabled={busy}
         onChange={(event) => setDraft(event.target.value)}
         rows={3}
-        className="rounded-card border border-brand-200 px-3 py-2 text-sm"
       />
 
       <div className="flex items-center gap-3">
@@ -279,7 +278,7 @@ export function ReviewCommentItem({
           data-testid="edit-comment-remaining"
           className={cn(
             "text-xs opacity-60",
-            remaining < 0 && "text-red-600 opacity-100",
+            remaining < 0 && "text-danger opacity-100",
           )}
         >
           {remaining} characters left

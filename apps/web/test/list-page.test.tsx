@@ -59,6 +59,12 @@ vi.mock("@clerk/nextjs", () => ({
 // `data-testid` and friends survive into the DOM — without that, a
 // `getByTestId` on a link silently fails and a `not.toContain(testid)`
 // assertion passes for the wrong reason.
+// The shell has its own tests; this double lets the file assert WHETHER the
+// page mounts it without exercising its own auth and profile reads.
+vi.mock("../app/_shell/app-shell", () => ({
+  AppShell: ({ children }: { children: ReactNode }) =>
+    Promise.resolve(<div data-testid="app-shell">{children}</div>),
+}));
 vi.mock("next/link", () => ({
   default: ({
     href,
@@ -209,6 +215,7 @@ describe("ListPage", () => {
 
     expect(screen.getByRole("heading", { name: "Deep cuts" })).not.toBeNull();
     expect(screen.getByText("Slow burners only.")).not.toBeNull();
+    expect(screen.getByTestId("app-shell")).not.toBeNull();
   });
 
   it("sends the viewer's token to BOTH reads, not just the list", async () => {
@@ -365,6 +372,7 @@ describe("ListPage", () => {
       expect(screen.getByRole("heading", { name: "Deep cuts" })).not.toBeNull();
       expect(fetchOnboardingStatus).not.toHaveBeenCalled();
       expect(redirect).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("app-shell")).toBeNull();
     });
 
     it("reads the list with no Authorization header and never asks for a profile", async () => {

@@ -6,6 +6,7 @@ import {
 } from "../../lib/onboarding";
 import { fetchViewerOwnLists } from "../../lib/lists";
 import { ListsSection } from "../u/[username]/lists-section";
+import { AppShell } from "../_shell/app-shell";
 
 /**
  * The viewer's own lists at `/lists` (server component), protected by the
@@ -29,9 +30,11 @@ export default async function ListsPage() {
 
   const lists = await fetchViewerOwnLists(token);
 
-  return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-6 py-12">
-      <ListsSection lists={lists} isOwnProfile />
-    </main>
-  );
+  return await AppShell({
+    children: (
+      <main className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-12">
+        <ListsSection lists={lists} isOwnProfile />
+      </main>
+    ),
+  });
 }
