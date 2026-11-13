@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { buttonVariants, cn } from "@coda/ui";
 
 const FINAL_CTA_HEADING_ID = "landing-final-cta-heading";
 
@@ -29,7 +30,7 @@ export function FinalCta() {
         <div className="flex flex-wrap items-center gap-4">
           <Link
             href="/sign-up"
-            className="rounded-card bg-coda px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-coda-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coda focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className={cn(buttonVariants({ variant: "primary" }), "px-5")}
           >
             Create your free account
           </Link>

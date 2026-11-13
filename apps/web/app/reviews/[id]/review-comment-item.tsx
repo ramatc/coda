@@ -300,7 +300,7 @@ export function ReviewCommentItem({
           type="button"
           onClick={cancel}
           disabled={busy}
-          className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+          className={cn(buttonVariants({ variant: "secondary" }), "w-fit")}
         >
           Cancel
         </button>

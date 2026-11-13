@@ -92,9 +92,34 @@ export const SIZE_CONFIG: Record<
 
 export const VARIANT_FILL_CLASS: Record<RatingScaleVariant, string> = {
   personal: "bg-coda",
-  other: "bg-text-secondary",
-  aggregate: "bg-coda-muted",
+  other: "bg-text-primary",
+  aggregate: "bg-text-tertiary",
 };
+
+export const VARIANT_VALUE_CLASS: Record<RatingScaleVariant, string> = {
+  personal: "text-coda",
+  other: "text-text-primary",
+  aggregate: "text-text-secondary",
+};
+
+/**
+ * Individual ratings (`personal`, `other`) are whole numbers: shown as `9`,
+ * filled segment by segment with no fractional fill. Only `aggregate`
+ * (community averages) keeps one decimal (`8.4`) and a partial segment.
+ */
+export function displayValue(
+  value: number,
+  variant: RatingScaleVariant,
+): number {
+  return variant === "aggregate" ? value : Math.round(value);
+}
+
+export function formatRating(
+  value: number,
+  variant: RatingScaleVariant,
+): string {
+  return variant === "aggregate" ? value.toFixed(1) : String(Math.round(value));
+}
 
 /** Clamps into `[MIN_VALUE, MAX_VALUE]` and rounds to the nearest 0.1. */
 export function normalize(value: number): number {

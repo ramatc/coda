@@ -1,11 +1,14 @@
 /*
- * Coda shared Tailwind 4 preset (CSS-first).
+ * Coda shared Tailwind 4 preset (CSS-first) — the single source of design
+ * foundations (Brand Kit v1.1, "After Hours Archive").
  *
  * Apps import this alongside Tailwind so design tokens stay centralized:
  *   @import "tailwindcss";
  *   @import "@coda/config/tailwind/preset.css";
  *
- * Tailwind 4 reads `@theme` tokens at build time via the PostCSS plugin.
+ * OKLCH is the source of truth. Hex values in comments are the sRGB
+ * conversion of the OKLCH value, never a separate spec. Contrast ratios are
+ * WCAG 2.x, measured against `--color-background` unless noted.
  */
 @theme {
   /*
@@ -18,41 +21,133 @@
   --color-brand-600: oklch(0.55 0.2 300);
   --color-brand-900: oklch(0.3 0.12 300);
 
+  /* Surfaces and borders. */
+  --color-background: oklch(0.125 0.014 300); /* #07060b */
+  --color-surface-1: oklch(0.165 0.018 300); /* #0f0d15 */
+  --color-surface-2: oklch(0.205 0.022 300); /* #191520 */
+  --color-surface-raised: oklch(0.24 0.026 300); /* #211c2a */
+  --color-border-subtle: oklch(0.26 0.022 300); /* #26222d — dividers only */
+  --color-border-strong: oklch(
+    0.35 0.028 300
+  ); /* #3d3747 — control borders, never focus */
+
   /*
-   * "After Hours Archive" — dark-first semantic tokens. Violet (`coda-*`)
-   * carries one specific meaning: the viewer's own relationship with the
-   * music (personal rating, active/saved state, recommendation provenance),
-   * never a generic accent.
-   *
-   * `coda`'s hue/chroma (H293) is tuned to the brand mark's violet, #7C3AED
-   * — but lightness is raised from the mark's own L0.5413 to L0.598 so the
-   * token still clears 4.5:1 text contrast against `--color-background`
-   * (the exact brand hex only hits ~3.5:1, which is fine for the logo
-   * artwork itself but not for `text-coda` UI copy like the "+LOG" label or
-   * the active BottomNav state). Use the literal #7C3AED for the logo/
-   * favicon/app-icon assets themselves, not this token.
+   * Text. Primary is the warm off-white #F4EFE9 expressed in OKLCH (17.7:1).
+   * Secondary 8.6:1. Tertiary was L0.56 (4.33:1, failed AA) and is raised to
+   * L0.60: 5.10:1 on background, 4.53:1 on surface-2.
    */
-  --color-background: oklch(0.125 0.014 300);
-  --color-surface-1: oklch(0.165 0.018 300);
-  --color-surface-2: oklch(0.205 0.022 300);
-  --color-surface-raised: oklch(0.24 0.026 300);
-  --color-border-subtle: oklch(0.26 0.022 300);
-  --color-border-strong: oklch(0.35 0.028 300);
-  --color-text-primary: oklch(0.965 0.008 290);
-  --color-text-secondary: oklch(0.735 0.018 290);
-  --color-text-tertiary: oklch(0.56 0.02 290);
-  --color-coda: oklch(0.598 0.2466 293);
-  --color-coda-hover: oklch(0.648 0.2516 293);
+  --color-text-primary: oklch(0.954 0.01 73); /* #f4efe9 */
+  --color-text-secondary: oklch(0.735 0.018 290); /* #a9a8b4 */
+  --color-text-tertiary: oklch(0.6 0.02 290); /* #807e8c */
+
+  /*
+   * Violet (`coda-*`) carries one meaning: the viewer's own relationship with
+   * the music (personal rating, active/saved state, primary action), never a
+   * generic accent.
+   *
+   * `coda` (H293, tuned to the brand mark #7C3AED) is raised to L0.598 so it
+   * clears 4.5:1 as TEXT on background (#8c4fff, 4.51:1). Off-white text ON
+   * `coda` only reaches 3.93:1, so filled controls use `coda-solid`, which
+   * lands on the brand mark itself (#7c39ed): 5.02:1 with text-primary; its
+   * hover darkens (5.92:1) instead of lightening into an illegible fill.
+   */
+  --color-coda: oklch(
+    0.598 0.2466 293
+  ); /* #8c4fff — text, icons, rating fill */
+  --color-coda-hover: oklch(0.648 0.2516 293); /* text/icon hover */
+  --color-coda-solid: oklch(0.54 0.2466 293); /* #7c39ed — filled controls */
+  --color-coda-solid-hover: oklch(0.5 0.23 293); /* #6f32d6 */
   --color-coda-muted: oklch(0.327 0.1233 293);
   --color-coda-subtle: oklch(0.206 0.0617 293);
 
-  --radius-card: 0.75rem;
-  /* Album artwork specifically wants a tighter radius than cards/buttons. */
-  --radius-artwork: 0.375rem;
+  /*
+   * Functional colors. `*` values are text/icon/border colors (all >= 6:1 on
+   * background); `danger-solid` is the fill for destructive buttons (4.71:1
+   * with text-primary). Replace `red-600` (4.19:1, fails) with `danger`.
+   */
+  --color-danger: oklch(0.68 0.19 25); /* #f75d59, 6.44:1 */
+  --color-danger-solid: oklch(0.55 0.2 25); /* #cc272e */
+  --color-danger-solid-hover: oklch(0.5 0.19 25);
+  --color-success: oklch(0.74 0.16 150); /* #51c672, 9.34:1 */
+  --color-warning: oklch(0.8 0.15 80); /* #f0b135, 10.67:1 */
+  --color-info: oklch(0.72 0.12 240); /* #55aee8, 8.29:1 */
 
-  /* UI/data — next/font in apps/web binds `--font-inter-tight`; the fallback
-     chain inside `var()` keeps this token safe for any consumer that hasn't. */
+  /* Focus ring: light violet, 9.7:1 on background — distinct from borders. */
+  --color-focus: oklch(0.78 0.13 293); /* #bba7ff */
+
+  /* Radii: three canonical values. */
+  --radius-artwork: 6px;
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  /* Deprecated alias of `panel` for legacy screens; use artwork/control/panel. */
+  --radius-card: 12px;
+
+  /* The one shared elevation: dropdowns, modals, floating UI. Never cards. */
+  --shadow-floating:
+    0 12px 32px -8px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(0.26 0.022 300);
+
+  /* UI/data — next/font in apps/web binds `--font-inter-tight`. */
   --font-sans: var(--font-inter-tight, ui-sans-serif, system-ui, sans-serif);
   /* Reviews and human opinion — never UI chrome or data. */
   --font-serif: var(--font-source-serif, Georgia, serif);
+  /*
+   * Archive Label — system monospace, no webfont. Only for eyebrows, archive
+   * metadata, entry codes and editorial timestamps. Never body copy.
+   */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /*
+   * Type scale. Use these instead of arbitrary sizes; the smallest text is
+   * `small`/`archive` at 12px — do not add new 10–11px sizes.
+   */
+  --text-display-xl: 4rem;
+  --text-display-xl--line-height: 1.05;
+  --text-display: 3rem;
+  --text-display--line-height: 1.1;
+  --text-h1: 2rem;
+  --text-h1--line-height: 1.2;
+  --text-h2: 1.5rem;
+  --text-h2--line-height: 1.25;
+  --text-h3: 1.125rem;
+  --text-h3--line-height: 1.35;
+  --text-body-lg: 1.125rem;
+  --text-body-lg--line-height: 1.6;
+  --text-body: 1rem;
+  --text-body--line-height: 1.55;
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.45;
+  --text-archive: 0.75rem;
+  --text-archive--line-height: 1.4;
+}
+
+/* Dark-first: native controls, scrollbars and form widgets render dark. */
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+/* Visible keyboard focus for any control: `focus-ring`. */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+}
+
+/* Archive Label: mono metadata (eyebrows, entry codes, timestamps). */
+@utility text-archive-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-archive);
+  line-height: var(--text-archive--line-height);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Opinion text: review body/preview, list commentary, thoughts. */
+@utility text-review {
+  font-family: var(--font-serif);
+  font-size: var(--text-body-lg);
+  line-height: 1.65;
 }

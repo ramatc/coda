@@ -102,7 +102,7 @@ export function AvatarUpload() {
     <div className="flex flex-col gap-2">
       <label
         className={cn(
-          buttonVariants({ variant: "outline" }),
+          buttonVariants({ variant: "secondary" }),
           "w-fit cursor-pointer",
           status === "uploading" && "pointer-events-none opacity-50",
         )}

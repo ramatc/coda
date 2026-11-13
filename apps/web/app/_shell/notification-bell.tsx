@@ -165,7 +165,9 @@ export function NotificationBell() {
     setItems(page.items);
     setHighlighted(
       new Set(
-        page.items.filter((item) => item.readAt === null).map((item) => item.id),
+        page.items
+          .filter((item) => item.readAt === null)
+          .map((item) => item.id),
       ),
     );
     // The list's own count reconciles the badge in the same round-trip.
@@ -223,13 +225,13 @@ export function NotificationBell() {
         <div
           role="region"
           aria-label="Notifications"
-          className="absolute right-0 top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-card border border-border-subtle bg-surface-1 shadow-lg"
+          className="absolute right-0 top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-card border border-border-subtle bg-surface-1 shadow-floating"
         >
           <p className="border-b border-border-subtle px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
             Notifications
           </p>
           {error ? (
-            <p className="px-4 py-2 text-sm text-red-600" role="alert">
+            <p className="px-4 py-2 text-sm text-danger" role="alert">
               {error}
             </p>
           ) : null}

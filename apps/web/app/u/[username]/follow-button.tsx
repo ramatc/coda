@@ -114,7 +114,7 @@ export function FollowButton({
         disabled={busy}
         aria-label={following ? `Unfollow ${username}` : `Follow ${username}`}
         className={cn(
-          buttonVariants({ variant: following ? "outline" : "default" }),
+          buttonVariants({ variant: following ? "secondary" : "primary" }),
           "w-fit",
         )}
       >

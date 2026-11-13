@@ -4,20 +4,27 @@ import {
   SEGMENT_COUNT,
   SIZE_CONFIG,
   VARIANT_FILL_CLASS,
+  VARIANT_VALUE_CLASS,
+  displayValue,
+  formatRating,
   normalize,
   segmentFillPercent,
+  type RatingScaleInteractiveProps,
   type RatingScaleProps,
+  type RatingScaleReadOnlyProps,
   type RatingScaleSize,
   type RatingScaleVariant,
 } from "./rating-scale-core";
 
 export type {
   RatingScaleProps,
+  RatingScaleReadOnlyProps,
+  RatingScaleInteractiveProps,
   RatingScaleVariant,
   RatingScaleSize,
 } from "./rating-scale-core";
 
-/** The read-only segment row: plain decorative `<span>`s, no hooks — safe in a Server Component. */
+/** Decorative segment row: plain `<span>`s, no hooks — safe in a Server Component. */
 function ReadOnlySegments({
   value,
   size,
@@ -56,88 +63,134 @@ function ReadOnlySegments({
   );
 }
 
+function ValueText({
+  text,
+  size,
+  variant,
+}: {
+  text: string;
+  size: RatingScaleSize;
+  variant: RatingScaleVariant;
+}) {
+  return (
+    <span
+      className={cn(
+        "font-semibold tabular-nums",
+        SIZE_CONFIG[size].valueText,
+        VARIANT_VALUE_CLASS[variant],
+      )}
+      data-testid="rating-scale-value"
+      aria-hidden="true"
+    >
+      {text}
+    </span>
+  );
+}
+
 /**
- * Coda's rating display: a value from 1.0 to 10.0 rendered as ten compact
- * rectangular segments (never stars), the current segment partially filled by
- * the decimal fraction.
+ * Coda's rating display: ten compact segments, never stars.
  *
- * Display-only by default, and safe to render from a plain Server Component
- * (no hooks in this module) — reusable across feed rows, album detail,
- * reviews, profile, and lists:
- * ```
- * <RatingScale value={item.score} variant="other" size="sm" />
- * ```
+ * - `personal` (the viewer's own): violet, whole number — `9`, not `9.0`.
+ * - `other` (someone else's): off-white, whole number.
+ * - `aggregate` (community average): grey, one decimal (`8.4`) with a
+ *   fractional segment fill.
  *
- * Pass `interactive` (with `onChange`) to turn it into the real rating input:
- * each segment becomes a real, independently clickable/focusable button that
- * always reports a whole-number score, with a live hover/focus fill preview.
- * The hover-state hook this needs lives in a separate `"use client"` segment
- * component ({@link InteractiveSegments}) so it never taints this module.
+ * Hook-free, safe in a Server Component:
  * ```
- * <RatingScale value={viewer.score} interactive onChange={setScore} />
+ * <RatingScaleDisplay value={item.score} variant="other" size="sm" />
  * ```
  */
-export function RatingScale(props: RatingScaleProps) {
-  const {
-    value,
-    variant = "other",
-    size = "md",
-    showValue = true,
-    valuePosition = "left",
-    className,
-  } = props;
-  const config = SIZE_CONFIG[size];
-
-  const normalized = value === null ? null : normalize(value);
-
-  const valueText = normalized === null ? "–" : normalized.toFixed(1);
-  // Only carries its own aria-label in interactive mode, where the wrapper
-  // deliberately has none (see below) — in read-only mode the wrapper's own
-  // aria-label already announces "Not rated", so labeling the inner span too
-  // would just double it up.
-  const valueAriaLabel =
-    props.interactive && normalized === null ? "Not rated" : undefined;
-
+export function RatingScaleDisplay({
+  value,
+  variant = "other",
+  size = "md",
+  showValue = true,
+  valuePosition = "left",
+  className,
+}: Omit<RatingScaleReadOnlyProps, "interactive">) {
+  const shown = value === null ? null : displayValue(normalize(value), variant);
+  const text = shown === null ? "–" : formatRating(shown, variant);
+  const label = shown === null ? "Not rated" : `Rating ${text} out of 10`;
   const valueEl = showValue ? (
-    <span
-      className={cn("font-semibold tabular-nums", config.valueText)}
-      data-testid="rating-scale-value"
-      aria-label={valueAriaLabel}
-    >
-      {valueText}
-    </span>
+    <ValueText text={text} size={size} variant={variant} />
   ) : null;
-
-  // In read-only mode the wrapper carries the accessible name (unchanged
-  // from before this component gained an interactive mode). In interactive
-  // mode the buttons carry their own `aria-label`s, so the wrapper drops its
-  // own to avoid a redundant/conflicting accessible name on a now-focusable
-  // group of controls.
-  const wrapperAriaLabel = props.interactive
-    ? undefined
-    : normalized === null
-      ? "Not rated"
-      : `Rating ${normalized.toFixed(1)} out of 10`;
 
   return (
     <span
-      className={cn("inline-flex items-center", config.wrapperGap, className)}
+      role="img"
+      className={cn(
+        "inline-flex items-center",
+        SIZE_CONFIG[size].wrapperGap,
+        className,
+      )}
       data-testid="rating-scale"
-      aria-label={wrapperAriaLabel}
+      aria-label={label}
     >
       {valuePosition === "left" ? valueEl : null}
-      {props.interactive ? (
-        <InteractiveSegments
-          value={normalized}
-          size={size}
-          variant={variant}
-          disabled={props.disabled ?? false}
-          onChange={props.onChange}
-        />
-      ) : (
-        <ReadOnlySegments value={normalized} size={size} variant={variant} />
-      )}
+      <ReadOnlySegments value={shown} size={size} variant={variant} />
       {valuePosition === "right" ? valueEl : null}
     </span>
   );
+}
+
+/**
+ * The rating input. Always whole numbers 1–10 (an incoming decimal is
+ * rounded), keyboard operable, 24×24px per option. See {@link InteractiveSegments}.
+ * ```
+ * <RatingScaleInteractive value={viewer.score} onChange={setScore} />
+ * ```
+ */
+export function RatingScaleInteractive({
+  value,
+  variant = "personal",
+  size = "md",
+  showValue = true,
+  valuePosition = "left",
+  className,
+  onChange,
+  disabled = false,
+}: Omit<RatingScaleInteractiveProps, "interactive">) {
+  const shown = value === null ? null : Math.round(normalize(value));
+  const valueEl = showValue ? (
+    <ValueText
+      text={shown === null ? "–" : String(shown)}
+      size={size}
+      variant={variant}
+    />
+  ) : null;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center",
+        SIZE_CONFIG[size].wrapperGap,
+        className,
+      )}
+      data-testid="rating-scale"
+    >
+      {valuePosition === "left" ? valueEl : null}
+      <InteractiveSegments
+        value={shown}
+        size={size}
+        variant={variant}
+        disabled={disabled}
+        onChange={onChange}
+      />
+      {valuePosition === "right" ? valueEl : null}
+    </span>
+  );
+}
+
+/**
+ * Convenience entry point kept for existing call sites: renders
+ * {@link RatingScaleInteractive} when `interactive` is set, otherwise
+ * {@link RatingScaleDisplay}.
+ */
+export function RatingScale(props: RatingScaleProps) {
+  if (props.interactive) {
+    const { interactive: _interactive, ...rest } = props;
+    return <RatingScaleInteractive {...rest} />;
+  }
+  const { interactive: _interactive, ...rest } = props;
+  return <RatingScaleDisplay {...rest} />;
 }

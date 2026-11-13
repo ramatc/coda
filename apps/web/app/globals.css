@@ -8,6 +8,9 @@
 @import "tailwindcss";
 @import "@coda/config/tailwind/preset.css";
 
+/* Tailwind skips node_modules, so scan the shared UI sources explicitly. */
+@source "../../../packages/ui/src";
+
 /* Hides the native scrollbar on horizontally-scrolling rows (e.g. Home's
    Popular row) while keeping the element scrollable. */
 .scrollbar-hide {

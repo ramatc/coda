@@ -103,8 +103,8 @@ describe("PopularReviewsSection", () => {
     render(<PopularReviewsSection reviews={REVIEWS} />);
 
     const [first, second] = reviewCards();
-    expect(within(first!).getByLabelText("Rating 9.0 out of 10")).toBeTruthy();
-    expect(within(second!).getByLabelText("Rating 7.0 out of 10")).toBeTruthy();
+    expect(within(first!).getByLabelText("Rating 9 out of 10")).toBeTruthy();
+    expect(within(second!).getByLabelText("Rating 7 out of 10")).toBeTruthy();
     expect(within(first!).getAllByTestId("rating-scale")).toHaveLength(1);
   });
 
@@ -148,7 +148,7 @@ describe("PopularReviewsSection", () => {
         .getByRole("img", { name: "Kid A cover" })
         .getAttribute("src"),
     ).toBe("https://cdn.example/kid-a.jpg");
-    expect(within(second!).queryByRole("img")).toBeNull();
+    expect(within(second!).queryByRole("img", { name: /cover/ })).toBeNull();
     expect(
       within(second!).getByTestId("review-cover-placeholder").textContent,
     ).toBe("B");

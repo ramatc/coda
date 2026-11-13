@@ -212,7 +212,7 @@ describe("LandingPage", () => {
     expect(
       within(reviews).getByRole("link", { name: "Kid A" }).getAttribute("href"),
     ).toBe("/reviews/review-1");
-    expect(within(reviews).getByLabelText("Rating 9.0 out of 10")).toBeTruthy();
+    expect(within(reviews).getByLabelText("Rating 9 out of 10")).toBeTruthy();
 
     const lists = section("Popular lists");
     expect(
