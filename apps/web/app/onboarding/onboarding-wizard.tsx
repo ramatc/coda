@@ -11,7 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { ArrowLeft, ArrowRight, Check, Compass, Search, X } from "lucide-react";
-import { cn } from "@coda/ui";
+import { buttonVariants, cn } from "@coda/ui";
 import { getApiBaseUrl } from "../../lib/api-client";
 import {
   HOME_PATH,
@@ -366,12 +366,9 @@ export function OnboardingWizard({
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-background text-text-primary">
-      {/* Restrained, violet-tinted atmospheric backdrop — one authored moment,
-          not per-section decoration. Fully decorative (aria-hidden, inert to
+      {/* Faint archival grid — the one decorative layer (no glow or blur). Fully decorative (aria-hidden, inert to
           pointer events) and never carries content. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-[20%] -left-[10%] h-[55vw] w-[55vw] rounded-full bg-surface-1/50 blur-[130px]" />
-        <div className="absolute top-[35%] -right-[15%] h-[45vw] w-[45vw] rounded-full bg-coda/5 blur-[160px]" />
         <div
           className="absolute inset-0 opacity-[0.035]"
           style={{
@@ -396,13 +393,13 @@ export function OnboardingWizard({
               </p>
             </div>
 
-            <div className="rounded-card border border-border-subtle bg-surface-1/90 p-5 shadow-xl backdrop-blur-md sm:p-8">
+            <div className="rounded-panel border border-border-subtle bg-surface-1 p-5 sm:p-8">
               <ProgressSteps stepIndex={stepIndex} />
 
               {error ? (
                 <p
                   role="alert"
-                  className="mb-6 rounded-card border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+                  className="mb-6 rounded-control border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger"
                 >
                   {error}
                 </p>
@@ -467,9 +464,9 @@ export function OnboardingWizard({
                                 aria-pressed={active}
                                 onClick={() => toggleGenre(genre.slug)}
                                 className={cn(
-                                  "flex w-full flex-col gap-1 rounded-card border px-3.5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coda focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                                  "flex w-full flex-col gap-1 rounded-control border px-3.5 py-3 text-left transition-colors focus-ring",
                                   active
-                                    ? "border-coda bg-coda text-white shadow-[0_4px_16px_-4px] shadow-coda/40"
+                                    ? "border-coda-solid bg-coda-solid text-text-primary"
                                     : "border-border-subtle bg-background hover:border-border-strong hover:bg-surface-2",
                                 )}
                               >
@@ -477,7 +474,7 @@ export function OnboardingWizard({
                                   <span
                                     className={cn(
                                       "text-sm font-bold tracking-tight",
-                                      active ? "text-white" : "text-text-primary",
+                                      "text-text-primary",
                                     )}
                                   >
                                     {genre.name}
@@ -497,7 +494,7 @@ export function OnboardingWizard({
                                 <span
                                   className={cn(
                                     "truncate text-xs",
-                                    active ? "text-white/80" : "text-text-secondary",
+                                    active ? "text-text-primary/80" : "text-text-secondary",
                                   )}
                                 >
                                   {genre.descriptor}
@@ -509,7 +506,7 @@ export function OnboardingWizard({
                       </ul>
                     )}
 
-                    <div className="flex items-center justify-between gap-3 border-t border-border-subtle pt-4 font-mono text-[11px] text-text-tertiary">
+                    <div className="flex items-center justify-between gap-3 border-t border-border-subtle pt-4 font-mono text-archive text-text-tertiary">
                       <span>Your taste shapes every recommendation</span>
                       <span className="hidden sm:inline">
                         Next: pick a few artists you love →
@@ -659,7 +656,7 @@ export function OnboardingWizard({
                               </span>
                             )}
                             {active ? (
-                              <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-coda text-white">
+                              <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-coda-solid text-text-primary">
                                 <Check className="h-3 w-3" aria-hidden="true" />
                               </span>
                             ) : null}
@@ -714,7 +711,7 @@ interface OnboardingTopBarProps {
  * the one global way out (see {@link OnboardingWizard.onSkip}). */
 function OnboardingTopBar({ onSkip }: OnboardingTopBarProps) {
   return (
-    <header className="relative z-20 border-b border-border-subtle/60 bg-background/80 backdrop-blur-md">
+    <header className="relative z-20 border-b border-border-subtle/60 bg-background">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between px-5 sm:px-8 lg:px-12">
         <div className="flex items-center gap-3 sm:gap-4">
           <span className="text-xl font-black uppercase tracking-tight text-text-primary sm:text-2xl">
@@ -750,7 +747,7 @@ function EditorialPanel({ genreCount, spotlightAlbums }: EditorialPanelProps) {
 
   return (
     <aside className="hidden flex-col gap-6 lg:col-span-5 lg:flex">
-      <div className="relative overflow-hidden rounded-card border border-border-subtle bg-surface-1/70 p-6 backdrop-blur-sm lg:p-8">
+      <div className="relative overflow-hidden rounded-panel border border-border-subtle bg-surface-1 p-6 lg:p-8">
         {left || center || right ? (
           <div className="relative my-7 flex items-center justify-center">
             <div
@@ -782,7 +779,7 @@ function EditorialPanel({ genreCount, spotlightAlbums }: EditorialPanelProps) {
           </p>
         </div>
 
-        <div className="mt-6 flex items-center justify-between border-t border-border-subtle/70 pt-4 font-mono text-[11px]">
+        <div className="mt-6 flex items-center justify-between border-t border-border-subtle/70 pt-4 font-mono text-archive">
           <span className="uppercase tracking-wide text-text-secondary">
             Active diary nodes
           </span>
@@ -792,7 +789,7 @@ function EditorialPanel({ genreCount, spotlightAlbums }: EditorialPanelProps) {
         </div>
       </div>
 
-      <div className="flex items-start gap-3 rounded-card border border-border-subtle/60 bg-surface-1/30 p-4 text-xs text-text-secondary">
+      <div className="flex items-start gap-3 rounded-panel border border-border-subtle/60 bg-surface-1/30 p-4 text-xs text-text-secondary">
         <Compass className="mt-0.5 h-4 w-4 shrink-0 text-coda" aria-hidden="true" />
         <div>
           <span className="mb-0.5 block font-semibold text-text-primary">
@@ -818,9 +815,9 @@ function SpotlightCover({ album, size, rotate, caption }: SpotlightCoverProps) {
   return (
     <div
       className={cn(
-        "relative shrink-0 overflow-hidden rounded-artwork border shadow-2xl transition-transform duration-300 hover:rotate-0",
+        "relative shrink-0 overflow-hidden rounded-artwork border transition-transform duration-300 hover:rotate-0",
         size === "lg"
-          ? "z-10 h-36 w-36 border-2 border-coda/60 shadow-[0_12px_40px_rgba(0,0,0,0.8)] hover:scale-105 sm:h-40 sm:w-40"
+          ? "z-10 h-36 w-36 border-2 border-coda/60 hover:scale-105 sm:h-40 sm:w-40"
           : "h-28 w-28 border-border-subtle sm:h-32 sm:w-32",
         rotate,
       )}
@@ -836,8 +833,8 @@ function SpotlightCover({ album, size, rotate, caption }: SpotlightCoverProps) {
         </span>
       )}
       {caption ? (
-        <div className="absolute inset-x-2 bottom-2 truncate rounded border border-border-subtle bg-background/85 px-2 py-1 backdrop-blur-md">
-          <p className="truncate text-[10px] text-text-primary">
+        <div className="absolute inset-x-2 bottom-2 truncate rounded border border-border-subtle bg-background px-2 py-1">
+          <p className="truncate text-archive text-text-primary">
             {album.primaryArtistName.toUpperCase()}
           </p>
         </div>
@@ -850,7 +847,7 @@ function SpotlightCover({ album, size, rotate, caption }: SpotlightCoverProps) {
 function OnboardingFooter() {
   return (
     <footer className="relative z-20 border-t border-border-subtle/40 bg-background/60 py-4">
-      <div className="mx-auto flex max-w-[1440px] flex-col items-center justify-between gap-3 px-5 font-mono text-[11px] text-text-tertiary sm:flex-row sm:px-8 lg:px-12">
+      <div className="mx-auto flex max-w-[1440px] flex-col items-center justify-between gap-3 px-5 font-mono text-archive text-text-tertiary sm:flex-row sm:px-8 lg:px-12">
         <div className="flex items-center gap-2">
           <span className="font-bold text-text-primary">Coda Archive</span>
           <span aria-hidden="true">•</span>
@@ -888,7 +885,7 @@ function ProgressSteps({ stepIndex }: ProgressStepsProps) {
                 className={cn(
                   "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold",
                   state === "upcoming" && "bg-surface-2 text-text-tertiary",
-                  state === "current" && "bg-coda text-white",
+                  state === "current" && "bg-coda-solid text-text-primary",
                   state === "done" && "bg-surface-2 text-text-primary",
                 )}
               >
@@ -949,9 +946,9 @@ interface SelectionRuleProps {
 /** Real rule text (from the API's own capture bounds) + a live counter chip. */
 function SelectionRule({ rule, count }: SelectionRuleProps) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-border-subtle bg-background px-4 py-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-border-subtle bg-background px-4 py-3">
       <p className="text-sm text-text-secondary">
-        <span className="mr-2 font-mono text-[10px] font-semibold uppercase tracking-[0.15em] text-text-tertiary">
+        <span className="mr-2 text-archive-label font-semibold text-text-tertiary">
           Selection rule:
         </span>
         <span className="font-semibold text-text-primary">{rule}</span>
@@ -981,7 +978,7 @@ function SearchField({ value, onChange, placeholder }: SearchFieldProps) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-card border border-border-subtle bg-background py-2.5 pl-9 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coda"
+        className="w-full rounded-control border border-border-subtle bg-background py-2.5 pl-9 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus-ring"
       />
       {value.length > 0 ? (
         <button
@@ -1010,7 +1007,7 @@ function CategoryPill({ label, active, onClick }: CategoryPillProps) {
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "rounded-card px-3 py-1 text-[11px] font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coda focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "rounded-control px-3 py-1 text-archive font-medium whitespace-nowrap transition-colors focus-ring",
         active
           ? "bg-surface-2 text-text-primary"
           : "text-text-secondary hover:bg-surface-2/60 hover:text-text-primary",
@@ -1029,12 +1026,8 @@ interface CtaButtonProps {
 }
 
 /**
- * Primary call to action — muted/disabled until the step's rule is met,
- * coda-violet once enabled. Hand-rolled rather than `@coda/ui`'s `Button`:
- * that component is still on the legacy `brand-*` palette (see
- * `packages/ui/src/components/button.tsx`), which is the wrong violet for
- * this dark surface and assumes a light background, so reusing it would
- * fight the After Hours Archive tokens rather than express them.
+ * Primary call to action — the shared `primary` button (coda-solid fill),
+ * dimmed by its disabled state until the step's rule is met.
  */
 function CtaButton({ children, disabled, onClick, type = "button" }: CtaButtonProps) {
   return (
@@ -1043,10 +1036,8 @@ function CtaButton({ children, disabled, onClick, type = "button" }: CtaButtonPr
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "inline-flex h-11 w-fit items-center justify-center gap-2 rounded-card px-6 text-xs font-bold uppercase tracking-wide transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coda focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:text-sm",
-        disabled
-          ? "cursor-not-allowed bg-surface-2 text-text-tertiary"
-          : "bg-coda text-white shadow-lg shadow-coda/25 hover:brightness-110",
+        buttonVariants({ variant: "primary" }),
+        "h-11 w-fit px-6 text-xs font-bold uppercase tracking-wide sm:text-sm",
       )}
     >
       {children}
@@ -1064,7 +1055,10 @@ function BackButton({ children, onClick }: BackButtonProps) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-11 w-fit items-center justify-center gap-1.5 rounded-card px-4 text-xs font-semibold text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coda focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:text-sm"
+      className={cn(
+        buttonVariants({ variant: "tertiary" }),
+        "h-11 w-fit gap-1.5 px-4 text-xs sm:text-sm",
+      )}
     >
       {children}
     </button>
@@ -1123,7 +1117,7 @@ function PickerGrid<T>({
               disabled={disabled}
               onClick={() => onToggle(item)}
               className={cn(
-                "flex w-full flex-col gap-2 rounded-card border p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coda focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                "flex w-full flex-col gap-2 rounded-control border p-2 text-left transition-colors focus-ring",
                 active
                   ? "border-coda bg-coda-subtle"
                   : "border-border-subtle bg-background hover:border-border-strong hover:bg-surface-2",
@@ -1132,7 +1126,7 @@ function PickerGrid<T>({
             >
               {renderContent(item, active)}
               {disabled ? (
-                <span className="px-0.5 text-[11px] italic text-text-tertiary">
+                <span className="px-0.5 text-archive italic text-text-tertiary">
                   max reached
                 </span>
               ) : null}
