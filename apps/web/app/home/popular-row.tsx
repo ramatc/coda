@@ -35,12 +35,12 @@ export function PopularRow({ albums }: PopularRowProps) {
               <img
                 src={album.coverUrl}
                 alt={`${album.title} cover`}
-                className="aspect-square w-full rounded-card object-cover"
+                className="aspect-square w-full rounded-artwork object-cover"
                 data-testid="popular-cover"
               />
             ) : (
               <div
-                className="flex aspect-square w-full items-center justify-center rounded-card bg-surface-2 text-lg font-semibold text-text-primary"
+                className="flex aspect-square w-full items-center justify-center rounded-artwork bg-surface-2 text-lg font-semibold text-text-primary"
                 data-testid="popular-cover-placeholder"
                 aria-hidden="true"
               >

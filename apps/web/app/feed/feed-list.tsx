@@ -89,7 +89,7 @@ function ReviewCounts({ item }: { item: FeedItem }) {
   return (
     <Link
       href={reviewPath(item.reviewId)}
-      className="flex w-fit items-center gap-2 text-xs text-brand-600 hover:underline"
+      className="flex w-fit items-center gap-2 text-xs text-text-secondary hover:underline"
       data-testid="feed-review-link"
     >
       <span className="font-medium">View review</span>
@@ -124,12 +124,12 @@ export function FeedList({ items }: FeedListProps) {
   }
 
   return (
-    <ul className="flex flex-col divide-y divide-brand-100">
+    <ul className="flex flex-col divide-y divide-border-subtle">
       {items.map((item) => (
         <li key={item.id} className="flex flex-col gap-1 py-3">
           <Link
             href={`/u/${item.actor.username}`}
-            className="flex w-fit items-center gap-1.5 text-xs font-medium text-brand-600 hover:underline"
+            className="flex w-fit items-center gap-1.5 text-xs font-medium text-text-secondary hover:underline"
           >
             {item.actor.avatarUrl ? (
               // Remote avatar rendered with a plain <img>; next/image
@@ -142,7 +142,7 @@ export function FeedList({ items }: FeedListProps) {
               />
             ) : (
               <span
-                className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-100 text-[10px] font-semibold text-brand-700"
+                className="flex h-5 w-5 items-center justify-center rounded-full bg-surface-2 text-[10px] font-semibold text-text-secondary"
                 data-testid="feed-actor-avatar-placeholder"
                 aria-hidden="true"
               >
@@ -162,12 +162,12 @@ export function FeedList({ items }: FeedListProps) {
                 <img
                   src={item.album.coverUrl}
                   alt=""
-                  className="h-14 w-14 rounded-card object-cover"
+                  className="h-14 w-14 rounded-artwork object-cover"
                   data-testid="feed-cover"
                 />
               ) : (
                 <div
-                  className="flex h-14 w-14 items-center justify-center rounded-card bg-brand-100 text-lg font-semibold text-brand-700"
+                  className="flex h-14 w-14 items-center justify-center rounded-artwork bg-surface-2 text-lg font-semibold text-text-secondary"
                   data-testid="feed-cover-placeholder"
                   aria-hidden="true"
                 >
@@ -176,7 +176,7 @@ export function FeedList({ items }: FeedListProps) {
               )}
               <div className="flex flex-col gap-0.5">
                 {item.type === "RATING" && item.score !== null ? (
-                  <span className="flex items-center gap-1.5 text-sm font-medium text-brand-600">
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-text-secondary">
                     <span>Rated</span>
                     <RatingScale
                       value={item.score}
@@ -186,7 +186,7 @@ export function FeedList({ items }: FeedListProps) {
                     />
                   </span>
                 ) : (
-                  <span className="text-sm font-medium text-brand-600">
+                  <span className="text-sm font-medium text-text-secondary">
                     {feedLabel(item)}
                   </span>
                 )}
