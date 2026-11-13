@@ -70,6 +70,12 @@ describe("robots", () => {
     }
   });
 
+  it("points crawlers at the sitemap on the public site URL", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://coda.example");
+
+    expect(robots().sitemap).toBe("https://coda.example/sitemap.xml");
+  });
+
   it("never disallows the public album and list detail pages", () => {
     const rules = robots().rules;
     const rule = Array.isArray(rules) ? rules[0] : rules;

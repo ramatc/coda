@@ -46,3 +46,23 @@ export const MIN_ARTISTS = 1;
 export const MAX_ARTISTS = 20;
 /** Maximum favorite albums a user MAY select (optional). */
 export const MAX_ALBUMS = 4;
+
+/**
+ * One indexable page in the sitemap feed: the entity id (the web app builds
+ * the URL from it) and when it last changed.
+ */
+export const sitemapEntrySchema = z.object({
+  id: z.string().uuid(),
+  updatedAt: z.string().datetime(),
+});
+export type SitemapEntry = z.infer<typeof sitemapEntrySchema>;
+
+/**
+ * Payload of the API's public `GET /sitemap`, consumed by the web app's
+ * `sitemap.xml`: every album and every PUBLIC list, never a private one.
+ */
+export const sitemapEntriesSchema = z.object({
+  albums: z.array(sitemapEntrySchema),
+  lists: z.array(sitemapEntrySchema),
+});
+export type SitemapEntries = z.infer<typeof sitemapEntriesSchema>;
