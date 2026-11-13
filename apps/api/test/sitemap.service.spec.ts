@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { sitemapEntriesSchema } from "@coda/types";
 import { SitemapService } from "../src/sitemap/sitemap.service.js";
 import {
+  SITEMAP_CACHE_TTL_MS,
   SITEMAP_MAX_ALBUMS,
   SITEMAP_MAX_LISTS,
 } from "../src/sitemap/sitemap.constants.js";
@@ -19,10 +20,32 @@ interface SeedList {
   updatedAt: Date;
 }
 
+type Direction = "asc" | "desc";
+type Sortable = string | number | Date;
+
 interface FindManyArgs {
   where?: { isPublic?: boolean };
   select: Record<string, boolean>;
+  orderBy: Record<string, Direction>[];
   take: number;
+}
+
+/** Sorts rows by the `orderBy` the service built, the way Postgres would. */
+function applyOrderBy<T extends object>(
+  rows: T[],
+  orderBy: Record<string, Direction>[],
+): T[] {
+  return [...rows].sort((a, b) => {
+    for (const clause of orderBy) {
+      for (const [field, direction] of Object.entries(clause)) {
+        const left = (a as Record<string, Sortable>)[field] as Sortable;
+        const right = (b as Record<string, Sortable>)[field] as Sortable;
+        if (left < right) return direction === "asc" ? -1 : 1;
+        if (left > right) return direction === "asc" ? 1 : -1;
+      }
+    }
+    return 0;
+  });
 }
 
 function uuid(n: number): string {
@@ -30,12 +53,14 @@ function uuid(n: number): string {
 }
 
 /**
- * A Prisma double that EXECUTES the parts of the query that decide what leaves
- * the database: the `isPublic` filter, the `select` projection and `take`. The
- * `take` each query asked for is recorded so the caps can be asserted.
+ * A Prisma double that EXECUTES the query the service builds: the `isPublic`
+ * filter, `orderBy`, `take` and the `select` projection. The `take` each query
+ * asked for and the number of reads are recorded, and `control.failNext` makes
+ * the next read reject.
  */
 function buildService(albums: SeedAlbum[], lists: SeedList[]) {
   const takes: { album?: number; list?: number } = {};
+  const control = { reads: 0, failNext: false };
 
   function project<T extends object>(row: T, select: Record<string, boolean>) {
     return Object.fromEntries(
@@ -47,8 +72,12 @@ function buildService(albums: SeedAlbum[], lists: SeedList[]) {
     album: {
       findMany: async (args: FindManyArgs) => {
         takes.album = args.take;
-        return [...albums]
-          .sort((a, b) => b.popularityScore - a.popularityScore)
+        control.reads += 1;
+        if (control.failNext) {
+          control.failNext = false;
+          throw new Error("database unavailable");
+        }
+        return applyOrderBy(albums, args.orderBy)
           .slice(0, args.take)
           .map((row) => project(row, args.select));
       },
@@ -56,13 +85,14 @@ function buildService(albums: SeedAlbum[], lists: SeedList[]) {
     list: {
       findMany: async (args: FindManyArgs) => {
         takes.list = args.take;
-        return lists
-          .filter(
+        return applyOrderBy(
+          lists.filter(
             (row) =>
               args.where?.isPublic === undefined ||
               row.isPublic === args.where.isPublic,
-          )
-          .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+          ),
+          args.orderBy,
+        )
           .slice(0, args.take)
           .map((row) => project(row, args.select));
       },
@@ -70,8 +100,12 @@ function buildService(albums: SeedAlbum[], lists: SeedList[]) {
   };
 
   const service = new SitemapService({ client } as unknown as PrismaService);
-  return { service, takes };
+  return { service, takes, control };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("SitemapService.getEntries", () => {
   it("returns every album with its id and last-modified time, most popular first", async () => {
@@ -170,6 +204,58 @@ describe("SitemapService.getEntries", () => {
       list: SITEMAP_MAX_LISTS,
     });
     expect(SITEMAP_MAX_ALBUMS + SITEMAP_MAX_LISTS).toBeLessThan(50_000);
+  });
+
+  it("breaks ties by id so the capped cut is deterministic", async () => {
+    const sameTime = new Date("2026-10-03T10:00:00.000Z");
+    const { service } = buildService(
+      [
+        { id: uuid(2), popularityScore: 7, updatedAt: sameTime },
+        { id: uuid(1), popularityScore: 7, updatedAt: sameTime },
+      ],
+      [
+        { id: uuid(12), isPublic: true, updatedAt: sameTime },
+        { id: uuid(11), isPublic: true, updatedAt: sameTime },
+      ],
+    );
+
+    const entries = await service.getEntries();
+
+    expect(entries.albums.map((entry) => entry.id)).toEqual([uuid(1), uuid(2)]);
+    expect(entries.lists.map((entry) => entry.id)).toEqual([
+      uuid(11),
+      uuid(12),
+    ]);
+  });
+
+  it("serves repeat callers from memory until the cache expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-01T00:00:00.000Z"));
+    const { service, control } = buildService([], []);
+
+    await service.getEntries();
+    await service.getEntries();
+    expect(control.reads).toBe(1);
+
+    vi.advanceTimersByTime(SITEMAP_CACHE_TTL_MS + 1);
+    await service.getEntries();
+    expect(control.reads).toBe(2);
+  });
+
+  it("shares one database read between concurrent callers", async () => {
+    const { service, control } = buildService([], []);
+
+    await Promise.all([service.getEntries(), service.getEntries()]);
+
+    expect(control.reads).toBe(1);
+  });
+
+  it("does not cache a failed read", async () => {
+    const { service, control } = buildService([], []);
+    control.failNext = true;
+
+    await expect(service.getEntries()).rejects.toThrow("database unavailable");
+    expect(await service.getEntries()).toEqual({ albums: [], lists: [] });
   });
 
   it("returns empty arrays when the catalog and the lists are empty", async () => {

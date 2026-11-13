@@ -29,6 +29,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 beforeEach(() => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://coda.example");
   vi.stubEnv("NEXT_PUBLIC_API_URL", "https://api.coda.example");
 });
@@ -36,6 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("fetchSitemapEntries", () => {
@@ -65,10 +67,44 @@ describe("fetchSitemapEntries", () => {
     expect(await fetchSitemapEntries()).toEqual({ albums: [], lists: [] });
   });
 
-  it("degrades to no entries when the payload does not match the contract", async () => {
-    stubFetch(json({ albums: [{ id: "not-a-uuid" }], lists: "nope" }));
+  it("degrades to no entries when the payload is not the expected object", async () => {
+    stubFetch(json({ albums: "nope" }));
 
     expect(await fetchSitemapEntries()).toEqual({ albums: [], lists: [] });
+  });
+
+  it("drops a malformed entry and keeps the valid ones", async () => {
+    stubFetch(
+      json({
+        albums: [{ id: "../admin", updatedAt: "now" }, ...ENTRIES.albums],
+        lists: ENTRIES.lists,
+      }),
+    );
+
+    expect(await fetchSitemapEntries()).toEqual(ENTRIES);
+  });
+
+  it("never caches the read and bounds how long it waits for the API", async () => {
+    const fetchMock = stubFetch(json(ENTRIES));
+
+    await fetchSitemapEntries();
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit | undefined,
+    ];
+    expect(init?.cache).toBe("no-store");
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("logs why the sitemap degraded", async () => {
+    const warn = vi.mocked(console.warn);
+    stubFetch(json({}, 503));
+
+    await fetchSitemapEntries();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("503");
   });
 });
 

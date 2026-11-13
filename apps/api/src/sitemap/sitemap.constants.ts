@@ -7,3 +7,10 @@
  */
 export const SITEMAP_MAX_ALBUMS = 40_000;
 export const SITEMAP_MAX_LISTS = 9_000;
+
+/**
+ * How long one process keeps the feed in memory. The route is public and its
+ * queries are large, so this bounds the database cost to one read per window
+ * per API instance; a new album or list shows up in the sitemap within it.
+ */
+export const SITEMAP_CACHE_TTL_MS = 10 * 60 * 1000;

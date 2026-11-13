@@ -5,7 +5,8 @@ import { getSiteUrl } from "../lib/site-url";
 /**
  * Rendered per request instead of at build time: the API is not reachable
  * during `next build`, and a prerendered file would freeze the degraded,
- * landing-only result. The API read itself is cached (see `lib/sitemap.ts`).
+ * landing-only result. The API keeps the feed in memory, so a request here
+ * does not cost a database read each time.
  */
 export const dynamic = "force-dynamic";
 
