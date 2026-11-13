@@ -156,7 +156,7 @@ export function ReviewLikeButton({
         aria-label={liked ? "Unlike this review" : "Like this review"}
         aria-pressed={liked}
         className={cn(
-          buttonVariants({ variant: liked ? "default" : "outline" }),
+          buttonVariants({ variant: liked ? "primary" : "secondary" }),
           "w-fit",
         )}
       >

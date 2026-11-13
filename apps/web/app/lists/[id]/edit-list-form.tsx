@@ -164,7 +164,7 @@ export function EditListForm({ list }: EditListFormProps) {
       <button
         type="button"
         onClick={open}
-        className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+        className={cn(buttonVariants({ variant: "secondary" }), "w-fit")}
       >
         Edit list
       </button>
@@ -248,7 +248,7 @@ export function EditListForm({ list }: EditListFormProps) {
           type="button"
           onClick={cancel}
           disabled={saving}
-          className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+          className={cn(buttonVariants({ variant: "secondary" }), "w-fit")}
         >
           Cancel
         </button>

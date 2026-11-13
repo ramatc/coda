@@ -30,7 +30,7 @@ export function SignInPrompt({ returnTo, label }: SignInPromptProps) {
     <SignInButton mode="redirect" forceRedirectUrl={returnTo}>
       <button
         type="button"
-        className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+        className={cn(buttonVariants({ variant: "secondary" }), "w-fit")}
       >
         {label}
       </button>

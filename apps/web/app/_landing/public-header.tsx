@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { buttonVariants, cn } from "@coda/ui";
 import Image from "next/image";
 import { PublicNav } from "./public-nav";
 
@@ -44,7 +45,10 @@ export function PublicHeader() {
           </Link>
           <Link
             href="/sign-up"
-            className="rounded-card bg-coda px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-coda-hover"
+            className={cn(
+              buttonVariants({ variant: "primary", size: "sm" }),
+              "h-auto py-1.5",
+            )}
           >
             Get started
           </Link>

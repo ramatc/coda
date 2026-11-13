@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Inter_Tight, Source_Serif_4 } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
@@ -23,6 +23,12 @@ export const metadata: Metadata = {
   description: "Track, rate, and review the music you love.",
 };
 
+/** Dark-first: tells the browser chrome and native controls to render dark. */
+export const viewport: Viewport = {
+  colorScheme: "dark",
+  themeColor: "#07060b",
+};
+
 // UI/product chrome, navigation, titles, metadata, ratings — binds
 // `--font-inter-tight`, read by the shared preset's `--font-sans` token.
 const interTight = Inter_Tight({
@@ -36,6 +42,8 @@ const interTight = Inter_Tight({
 const sourceSerif = Source_Serif_4({
   subsets: ["latin"],
   variable: "--font-source-serif",
+  // Load the real italic so emphasis in reviews is never browser-synthesized.
+  style: ["normal", "italic"],
   display: "swap",
 });
 

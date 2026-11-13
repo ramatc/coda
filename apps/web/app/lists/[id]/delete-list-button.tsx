@@ -74,7 +74,7 @@ export function DeleteListButton({ list }: DeleteListButtonProps) {
         disabled={deleting}
         onClick={() => void onDelete()}
         className={cn(
-          buttonVariants({ variant: "outline" }),
+          buttonVariants({ variant: "secondary" }),
           "w-fit border-red-300 text-red-600",
           deleting && "pointer-events-none opacity-50",
         )}

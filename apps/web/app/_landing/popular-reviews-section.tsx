@@ -91,11 +91,7 @@ export function PopularReviewsSection({ reviews }: PopularReviewsSectionProps) {
                   <span className="line-clamp-1 text-sm font-medium text-text-primary">
                     {displayNameOrHandle(review.author)}
                   </span>
-                  <RatingScale
-                    value={review.score}
-                    variant="aggregate"
-                    size="sm"
-                  />
+                  <RatingScale value={review.score} variant="other" size="sm" />
                 </div>
                 {review.isSpoiler ? (
                   <p className="text-sm italic text-text-tertiary">

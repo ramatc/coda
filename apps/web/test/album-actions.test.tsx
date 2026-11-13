@@ -175,7 +175,7 @@ describe("AlbumActions", () => {
     expect(screen.queryByText("Mark as listened")).toBeNull();
 
     // Existing rating is reflected by the interactive RatingScale's readout.
-    expect(screen.getByTestId("rating-scale-value").textContent).toBe("8.0");
+    expect(screen.getByTestId("rating-scale-value").textContent).toBe("8");
 
     // Existing review pre-fills the textarea and the button reads "Update".
     const review = screen.getByLabelText("Your review") as HTMLTextAreaElement;

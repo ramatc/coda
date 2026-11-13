@@ -201,7 +201,7 @@ export function AlbumActions({
                 ? void run((t) => deleteListen(t, viewer.listenId as string))
                 : undefined
             }
-            className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+            className={cn(buttonVariants({ variant: "secondary" }), "w-fit")}
           >
             Listened ✓ — remove
           </button>
@@ -210,7 +210,7 @@ export function AlbumActions({
             type="button"
             disabled={busy}
             onClick={() => void run((t) => markListened(t, albumId))}
-            className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+            className={cn(buttonVariants({ variant: "secondary" }), "w-fit")}
           >
             Mark as listened
           </button>
@@ -223,7 +223,7 @@ export function AlbumActions({
             // Addressed by ALBUM id: the API scopes the delete to the caller's
             // own row for that album, so `wantToListenId` never reaches the URL.
             onClick={() => void run((t) => unmarkWantToListen(t, albumId))}
-            className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+            className={cn(buttonVariants({ variant: "secondary" }), "w-fit")}
           >
             Want to listen ✓ — remove
           </button>
@@ -236,7 +236,7 @@ export function AlbumActions({
                 await markWantToListen(t, albumId);
               })
             }
-            className={cn(buttonVariants({ variant: "outline" }), "w-fit")}
+            className={cn(buttonVariants({ variant: "secondary" }), "w-fit")}
           >
             + Want to listen
           </button>
@@ -352,7 +352,7 @@ export function AlbumActions({
           onClick={() =>
             void run((t) => writeReview(t, albumId, reviewDraft.trim()), true)
           }
-          className={cn(buttonVariants({ variant: "default" }), "w-fit")}
+          className={cn(buttonVariants({ variant: "primary" }), "w-fit")}
         >
           {viewer.review ? "Update review" : "Save review"}
         </button>

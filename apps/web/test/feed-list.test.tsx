@@ -98,7 +98,7 @@ describe("FeedList", () => {
     // A present rating score renders as a RatingScale, not plain "N/10" text.
     expect(html).toContain("Rated");
     expect(html).toContain('data-testid="rating-scale"');
-    expect(html).toContain('aria-label="Rating 9.0 out of 10"');
+    expect(html).toContain('aria-label="Rating 9 out of 10"');
     expect(html).not.toContain("Rated 9/10");
     expect(html).toContain("Listened to");
     expect(html).toContain("Reviewed — &quot;A landmark record.&quot;");

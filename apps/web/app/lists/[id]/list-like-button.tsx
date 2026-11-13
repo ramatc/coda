@@ -176,7 +176,7 @@ export function ListLikeButton({
         aria-label={liked ? "Unlike this list" : "Like this list"}
         aria-pressed={liked}
         className={cn(
-          buttonVariants({ variant: liked ? "default" : "outline" }),
+          buttonVariants({ variant: liked ? "primary" : "secondary" }),
           "w-fit",
         )}
       >
