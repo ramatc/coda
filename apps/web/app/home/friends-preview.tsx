@@ -157,12 +157,12 @@ export function FriendsPreview({ items }: FriendsPreviewProps) {
               <img
                 src={item.album.coverUrl}
                 alt=""
-                className="h-12 w-12 shrink-0 rounded-card object-cover"
+                className="h-12 w-12 shrink-0 rounded-artwork object-cover"
                 data-testid="friends-preview-cover"
               />
             ) : (
               <div
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-card bg-surface-2 text-base font-semibold text-text-primary"
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-artwork bg-surface-2 text-base font-semibold text-text-primary"
                 data-testid="friends-preview-cover-placeholder"
                 aria-hidden="true"
               >

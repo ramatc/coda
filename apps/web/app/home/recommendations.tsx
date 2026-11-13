@@ -73,7 +73,9 @@ export function Recommendations({ items }: RecommendationsProps) {
       }
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not dismiss this recommendation.",
+        err instanceof Error
+          ? err.message
+          : "Could not dismiss this recommendation.",
       );
     } finally {
       // Clears only THIS card's entry, leaving any other card's still in-flight
@@ -88,7 +90,10 @@ export function Recommendations({ items }: RecommendationsProps) {
 
   if (visible.length === 0) {
     return (
-      <p className="text-sm italic opacity-60" data-testid="recommendations-empty">
+      <p
+        className="text-sm italic opacity-60"
+        data-testid="recommendations-empty"
+      >
         No recommendations yet. Rate a few albums you love and check back soon.
       </p>
     );
@@ -97,7 +102,7 @@ export function Recommendations({ items }: RecommendationsProps) {
   return (
     <div className="flex flex-col gap-4">
       {error ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -105,7 +110,7 @@ export function Recommendations({ items }: RecommendationsProps) {
         {visible.map((item) => (
           <li
             key={item.id}
-            className="flex items-center gap-4 rounded-card border border-brand-100 p-3"
+            className="flex items-center gap-4 rounded-panel border border-border-subtle p-3"
           >
             <Link
               href={`/albums/${item.album.id}`}
@@ -117,24 +122,26 @@ export function Recommendations({ items }: RecommendationsProps) {
                 <img
                   src={item.album.coverUrl}
                   alt={`${item.album.title} cover`}
-                  className="h-16 w-16 rounded-card object-cover"
+                  className="h-16 w-16 rounded-artwork object-cover"
                   data-testid="recommendation-cover"
                 />
               ) : (
                 <div
-                  className="flex h-16 w-16 items-center justify-center rounded-card bg-brand-100 text-xl font-semibold text-brand-700"
+                  className="flex h-16 w-16 items-center justify-center rounded-artwork bg-surface-2 text-xl font-semibold text-text-secondary"
                   data-testid="recommendation-cover-placeholder"
                 >
                   {item.album.title.charAt(0).toUpperCase()}
                 </div>
               )}
               <div className="flex flex-col gap-0.5">
-                <span className="text-sm font-semibold">{item.album.title}</span>
+                <span className="text-sm font-semibold">
+                  {item.album.title}
+                </span>
                 <span className="text-xs opacity-70">
                   {item.album.primaryArtistName}
                   {item.album.releaseYear ? ` · ${item.album.releaseYear}` : ""}
                 </span>
-                <span className="text-xs font-medium text-brand-600">
+                <span className="text-xs font-medium text-text-secondary">
                   {reasonLabel(item)}
                 </span>
               </div>
@@ -143,7 +150,7 @@ export function Recommendations({ items }: RecommendationsProps) {
               type="button"
               onClick={() => void handleDismiss(item.id)}
               disabled={pendingIds.has(item.id)}
-              className="shrink-0 rounded-full border border-brand-200 px-3 py-1 text-xs font-medium opacity-70 hover:opacity-100 disabled:opacity-40"
+              className="shrink-0 rounded-full border border-border-strong px-3 py-1 text-xs font-medium opacity-70 hover:opacity-100 disabled:opacity-40"
               aria-label={`Dismiss ${item.album.title}`}
             >
               {pendingIds.has(item.id) ? "Dismissing…" : "Dismiss"}
