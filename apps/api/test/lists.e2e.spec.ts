@@ -88,6 +88,25 @@ const LIST_ROWS = [
   },
 ];
 
+const OWNER_CLERK = "user_owner";
+const OWNER_ID = "11111111-1111-4111-8111-111111111111";
+const VISITOR_CLERK = "user_visitor";
+const VISITOR_ID = "22222222-2222-4222-8222-222222222222";
+
+/** Rows behind `GET /lists/:id`: one public and one private list of OWNER. */
+const DETAIL_ROWS = [PUBLIC_LIST_ID, PRIVATE_LIST_ID].map((id) => ({
+  id,
+  userId: OWNER_ID,
+  title: id === PUBLIC_LIST_ID ? "Late-night records" : "Private stash",
+  description: null,
+  isRanked: false,
+  isPublic: id === PUBLIC_LIST_ID,
+  createdAt: new Date("2026-07-25T10:00:00.000Z"),
+  updatedAt: new Date("2026-07-25T10:00:00.000Z"),
+  _count: { likes: 2 },
+  items: [],
+}));
+
 /**
  * The narrow Prisma surface `GET /lists/popular` touches, stubbed so the route
  * runs end to end without a live Postgres (the project's no-docker sandbox
@@ -97,11 +116,32 @@ const LIST_ROWS = [
  */
 function stubPrisma() {
   const client = {
+    user: {
+      async findUnique(args: { where: { clerkUserId: string } }) {
+        if (args.where.clerkUserId === OWNER_CLERK) {
+          return { id: OWNER_ID };
+        }
+        return args.where.clerkUserId === VISITOR_CLERK
+          ? { id: VISITOR_ID }
+          : null;
+      },
+    },
     list: {
       async findMany(args: { where: { isPublic: boolean }; take: number }) {
         return LIST_ROWS.filter(
           (row) => row.isPublic === args.where.isPublic,
         ).slice(0, args.take);
+      },
+      // Serves both the access-check row and the detail select.
+      async findUnique(args: { where: { id: string } }) {
+        return DETAIL_ROWS.find((row) => row.id === args.where.id) ?? null;
+      },
+    },
+    listLike: {
+      async findUnique(args: { where: { userId_listId: { userId: string } } }) {
+        return args.where.userId_listId.userId === OWNER_ID
+          ? { userId: OWNER_ID }
+          : null;
       },
     },
   };
@@ -180,12 +220,94 @@ describe("Lists API (e2e)", () => {
     ]);
   });
 
-  it("keeps GET /lists/:id behind the global ClerkGuard (anonymous → 401)", async () => {
-    // The public route must not leak its exemption to its `:id` sibling.
+  it("serves a PUBLIC list on GET /lists/:id to an anonymous caller (200, never 401)", async () => {
     const res = await request(app.getHttpServer()).get(
       `/lists/${PUBLIC_LIST_ID}`,
     );
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: PUBLIC_LIST_ID,
+      likeCount: 2,
+      viewerHasLiked: false,
+    });
+    expect(mockedVerifyToken).not.toHaveBeenCalled();
   });
+
+  it("hides a PRIVATE list from an anonymous caller (404, not 401)", async () => {
+    const res = await request(app.getHttpServer()).get(
+      `/lists/${PRIVATE_LIST_ID}`,
+    );
+
+    expect(res.status).toBe(404);
+  });
+
+  it("resolves a signed-in owner on GET /lists/:id (private list + their like)", async () => {
+    mockedVerifyToken.mockResolvedValue({
+      sub: OWNER_CLERK,
+      sid: "sess_1",
+    } as Awaited<ReturnType<typeof verifyToken>>);
+
+    const res = await request(app.getHttpServer())
+      .get(`/lists/${PRIVATE_LIST_ID}`)
+      .set("Authorization", "Bearer valid.jwt.token");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: PRIVATE_LIST_ID,
+      viewerHasLiked: true,
+    });
+    expect(mockedVerifyToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides a PRIVATE list from a signed-in NON-owner (404)", async () => {
+    mockedVerifyToken.mockResolvedValue({
+      sub: VISITOR_CLERK,
+      sid: "sess_2",
+    } as Awaited<ReturnType<typeof verifyToken>>);
+
+    const res = await request(app.getHttpServer())
+      .get(`/lists/${PRIVATE_LIST_ID}`)
+      .set("Authorization", "Bearer valid.jwt.token");
+
+    expect(res.status).toBe(404);
+    expect(mockedVerifyToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("degrades an expired or tampered token on GET /lists/:id to anonymous", async () => {
+    mockedVerifyToken.mockRejectedValue(new Error("token expired"));
+
+    const res = await request(app.getHttpServer())
+      .get(`/lists/${PRIVATE_LIST_ID}`)
+      .set("Authorization", "Bearer expired.jwt.token");
+
+    expect(res.status).toBe(404);
+  });
+
+  it.each([
+    ["PATCH", `/lists/${PUBLIC_LIST_ID}`],
+    ["DELETE", `/lists/${PUBLIC_LIST_ID}`],
+    ["POST", `/lists/${PUBLIC_LIST_ID}/like`],
+    ["POST", "/lists"],
+    ["GET", "/users/curator/lists"],
+    ["DELETE", `/lists/${PUBLIC_LIST_ID}/like`],
+    ["POST", `/lists/${PUBLIC_LIST_ID}/items`],
+    ["PATCH", `/lists/${PUBLIC_LIST_ID}/items/reorder`],
+    ["DELETE", `/lists/${PUBLIC_LIST_ID}/items/item-1`],
+  ] as const)(
+    "keeps %s %s behind the global ClerkGuard (anonymous → 401)",
+    async (method, path) => {
+      // The public read must not leak its exemption to its siblings.
+      const server = request(app.getHttpServer());
+      const res = await (method === "GET"
+        ? server.get(path)
+        : method === "POST"
+          ? server.post(path)
+          : method === "PATCH"
+            ? server.patch(path)
+            : server.delete(path));
+
+      expect(res.status).toBe(401);
+    },
+  );
 });

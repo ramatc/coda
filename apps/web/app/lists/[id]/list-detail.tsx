@@ -33,9 +33,8 @@ interface ListDetailViewProps {
    * own list and every viewer who can see the list may like it. Gating it here
    * would silently withhold a control the API would happily accept.
    *
-   * It carries no anonymous branch either, unlike its `/reviews/[id]` twin:
-   * `/lists(.*)` is a protected route, so the viewer is always authenticated by
-   * the time this renders.
+   * The island owns its own anonymous branch (a sign-in prompt), like its
+   * `/reviews/[id]` twin, since this page is public.
    */
   likeAction?: ReactNode;
   /**

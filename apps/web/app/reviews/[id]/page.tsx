@@ -11,17 +11,17 @@ interface ReviewPageProps {
 }
 
 /**
- * Review detail page at `/reviews/[id]` (server component) — the app's FIRST
+ * Review detail page at `/reviews/[id]` (server component) — an
  * anonymously-readable route. Two deliberate omissions make that work, and
- * neither may be "fixed" back into line with the other detail pages:
+ * neither may be "fixed" back into line with the signed-in pages:
  *
  * 1. **No entry in `protectedRoutePatterns`** (`middleware.config.ts`). Unlisted
  *    routes are public by default; adding `/reviews(.*)` would send every
  *    logged-out visitor to sign-in. `middleware-config.test.ts` asserts its
  *    absence so a careless addition fails a test.
- * 2. **No onboarding gate.** `/albums/[id]`, `/lists/[id]` and `/u/[username]`
- *    all call `fetchOnboardingStatus` + `resolveOnboardingRedirect` first. This
- *    page must not: the gate would bounce an anonymous visitor to `/onboarding`.
+ * 2. **No onboarding gate for an anonymous visitor.** It would bounce them to
+ *    `/onboarding`. `/albums/[id]` and `/lists/[id]` run it only for a
+ *    signed-in viewer; this page never runs it.
  *
  * `auth()` still runs, because a token is what lets the API resolve a SIGNED-IN
  * viewer (`viewer.canInteract`, `hasLiked`, per-comment `isOwn`). It simply

@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from "./api-client";
+import { getApiBaseUrl, optionalAuthHeaders } from "./api-client";
 
 /** The album denormalized onto a list item, as returned by the API. */
 export interface ListItemAlbum {
@@ -270,9 +270,11 @@ async function readListDetail(response: Response): Promise<ListDetail> {
 
 /**
  * Fetches a list with its ordered items, server-side, with the viewer's Clerk
- * token. Returns {@link LIST_NOT_FOUND} for a 404 (unknown OR private-to-this-
- * viewer) so the page can render `notFound()`, and throws for any other non-OK
- * response — same posture as `fetchAlbumDetail`.
+ * token, or with no Authorization header for an anonymous visitor (`token ===
+ * null`; the route is anonymous-readable). Returns {@link LIST_NOT_FOUND} for a
+ * 404 (unknown OR private-to-this-viewer) so the page can render `notFound()`,
+ * and throws for any other non-OK response — same posture as
+ * `fetchAlbumDetail`.
  */
 export async function fetchList(
   token: string | null,
@@ -280,7 +282,7 @@ export async function fetchList(
 ): Promise<ListDetail | typeof LIST_NOT_FOUND> {
   const response = await fetch(
     `${getApiBaseUrl()}/lists/${encodeURIComponent(id)}`,
-    { headers: authHeaders(token), cache: "no-store" },
+    { headers: optionalAuthHeaders(token), cache: "no-store" },
   );
   if (response.status === 404) {
     return LIST_NOT_FOUND;

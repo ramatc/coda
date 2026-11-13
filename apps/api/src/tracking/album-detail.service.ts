@@ -84,18 +84,19 @@ export interface AlbumDetail {
  * (mark listened / rate / review) stays in {@link TrackingService}; this
  * service is read-only and depends on {@link PrismaService} alone.
  *
- * Runs behind the global `ClerkGuard`, so a viewer is always authenticated.
- * The viewer's LOCAL `User` row, however, may not exist yet (the Clerk webhook
- * sync is eventually consistent) — in that case the album still renders with an
- * empty viewer state rather than 404-ing a perfectly valid album page. Only an
- * unknown ALBUM id is a 404.
+ * The route is anonymous-readable (`@Public()` + `OptionalClerkGuard`), so
+ * `clerkUserId` is `undefined` for a signed-out visitor; they get the shared
+ * album data with an empty viewer state. A signed-in viewer's LOCAL `User` row
+ * may not exist yet (the Clerk webhook sync is eventually consistent) — that
+ * also renders an empty viewer state rather than 404-ing a perfectly valid
+ * album page. Only an unknown ALBUM id is a 404.
  */
 @Injectable()
 export class AlbumDetailService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getAlbumDetail(
-    clerkUserId: string,
+    clerkUserId: string | undefined,
     albumId: unknown,
   ): Promise<AlbumDetail> {
     const id = this.validateId(albumId);
@@ -148,11 +149,11 @@ export class AlbumDetailService {
 
   /**
    * Resolves the viewer's own tracking state for the album. Degrades to an
-   * empty state (not a 404) when the Clerk id has no local `User` row yet, so a
-   * valid album page never breaks on an unsynced session.
+   * empty state (not a 404) for an anonymous caller and when the Clerk id has no
+   * local `User` row yet, so a valid album page never breaks.
    */
   private async resolveViewerState(
-    clerkUserId: string,
+    clerkUserId: string | undefined,
     albumId: string,
   ): Promise<AlbumViewerState> {
     const empty: AlbumViewerState = {
@@ -163,6 +164,11 @@ export class AlbumDetailService {
       resolved: false,
       wantToListenId: null,
     };
+
+    // Anonymous short-circuit: no Prisma call may see an `undefined` caller.
+    if (!clerkUserId) {
+      return empty;
+    }
 
     const user = await this.prisma.client.user.findUnique({
       where: { clerkUserId },

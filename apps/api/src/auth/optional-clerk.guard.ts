@@ -25,8 +25,13 @@ import { ClerkGuard } from "./clerk.guard.js";
  *
  * ## Scope — read before reusing
  *
- * This is the codebase's FIRST and ONLY optional-auth guard, and it is scoped
- * to exactly ONE route: `GET /reviews/:id` (anonymous review-detail read).
+ * This is the codebase's ONLY optional-auth guard, and it is scoped to exactly
+ * these anonymous-readable detail reads, each threat-reviewed on its own:
+ *
+ * - `GET /reviews/:id` (review detail).
+ * - `GET /albums/:id` (album detail; the anonymous viewer state is empty).
+ * - `GET /lists/:id` (list detail; private lists stay 404 to non-owners).
+ *
  * Every other route keeps the fail-closed global `ClerkGuard`.
  *
  * - It MUST NEVER be registered as an `APP_GUARD` — that would make the whole

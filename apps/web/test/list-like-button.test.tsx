@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 import {
   cleanup,
   fireEvent,
@@ -10,12 +11,25 @@ import {
 import { ListLikeButton } from "../app/lists/[id]/list-like-button";
 import { ListActionError, likeList, unlikeList } from "../lib/lists";
 
-// Only `useAuth` is stubbed. Unlike `review-like-button.test.tsx`, no
-// `SignInButton` double is needed: `/lists(.*)` is in `protectedRoutePatterns`,
-// so this island never renders an anonymous branch — importing one would be dead
-// code, and the missing double here is what would fail loudly if it appeared.
+// `useAuth` is stubbed for the live control; the `SignInButton` double carries
+// `forceRedirectUrl` into the DOM so the anonymous branch can prove where it
+// sends the visitor back to.
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: vi.fn().mockResolvedValue("test-token") }),
+  SignInButton: ({
+    children,
+    forceRedirectUrl,
+  }: {
+    children: ReactNode;
+    forceRedirectUrl?: string;
+  }) => (
+    <span
+      data-testid="clerk-sign-in-button"
+      data-force-redirect-url={forceRedirectUrl}
+    >
+      {children}
+    </span>
+  ),
 }));
 
 const refreshMock = vi.fn();
@@ -50,11 +64,16 @@ const LIST_ID = "22222222-2222-4222-8222-222222222222";
 
 /** The island as the list page hands it down — for owner and visitor alike. */
 function renderButton(
-  overrides: { likeCount?: number; hasLiked?: boolean } = {},
+  overrides: {
+    likeCount?: number;
+    hasLiked?: boolean;
+    canInteract?: boolean;
+  } = {},
 ) {
   return render(
     <ListLikeButton
       listId={LIST_ID}
+      canInteract={overrides.canInteract ?? true}
       initialLikeCount={overrides.likeCount ?? 3}
       initialHasLiked={overrides.hasLiked ?? false}
     />,
@@ -70,9 +89,8 @@ describe("ListLikeButton", () => {
   it("gives every viewer a live control, the list's own owner included", async () => {
     // Self-like is allowed server-side (`loadListForViewer` gates on READ
     // visibility, never on ownership), so this island deliberately takes NO
-    // ownership prop and NO `canInteract` prop: the page hands it down
-    // unconditionally, and `/lists(.*)` being a protected route means the viewer
-    // is always authenticated by the time it renders.
+    // ownership prop: the page hands it down unconditionally to every signed-in
+    // viewer.
     renderButton({ likeCount: 3, hasLiked: false });
 
     const button = screen.getByRole("button");
@@ -83,6 +101,23 @@ describe("ListLikeButton", () => {
     await waitFor(() =>
       expect(likeList).toHaveBeenCalledWith("test-token", LIST_ID),
     );
+  });
+
+  it("gives an anonymous visitor a sign-in prompt that returns to this list", () => {
+    renderButton({ canInteract: false });
+
+    expect(
+      screen.queryByRole("button", { name: /like this list/i }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Sign in to like" }),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByTestId("clerk-sign-in-button")
+        .getAttribute("data-force-redirect-url"),
+    ).toBe(`/lists/${LIST_ID}`);
+    expect(likeList).not.toHaveBeenCalled();
   });
 
   it("likes optimistically, then settles on the server's authoritative count", async () => {
@@ -217,6 +252,7 @@ describe("ListLikeButton", () => {
     rerender(
       <ListLikeButton
         listId={LIST_ID}
+        canInteract
         initialLikeCount={4}
         initialHasLiked={true}
       />,
@@ -234,6 +270,7 @@ describe("ListLikeButton", () => {
     rerender(
       <ListLikeButton
         listId={LIST_ID}
+        canInteract
         initialLikeCount={7}
         initialHasLiked={true}
       />,
@@ -266,6 +303,7 @@ describe("ListLikeButton", () => {
     rerender(
       <ListLikeButton
         listId={LIST_ID}
+        canInteract
         initialLikeCount={3}
         initialHasLiked={false}
       />,

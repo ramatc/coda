@@ -40,8 +40,7 @@ interface ReviewDetailViewProps {
  *
  * The read path is IDENTICAL for anonymous and signed-in visitors: body, counts
  * and comments always render. That is the point of the route — `/reviews/[id]`
- * is the app's only anonymously-readable page, so nothing here may depend on a
- * resolved viewer. Only the live controls differ, and they arrive as slots.
+ * is anonymously readable, so nothing here may depend on a resolved viewer. Only the live controls differ, and they arrive as slots.
  *
  * Cover art and author avatars are deliberately NOT rendered: this mirrors
  * `ListDetailView`'s text-first surface, and the payload's `coverUrl`/`avatarUrl`
