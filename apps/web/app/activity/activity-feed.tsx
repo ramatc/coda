@@ -76,7 +76,7 @@ function ReviewCounts({ item }: { item: ActivityItem }) {
   return (
     <Link
       href={reviewPath(item.reviewId)}
-      className="flex w-fit items-center gap-2 px-2 text-xs text-brand-600 hover:underline"
+      className="flex w-fit items-center gap-2 px-2 text-xs text-text-secondary hover:underline"
       data-testid="activity-review-link"
     >
       <span className="font-medium">View review</span>
@@ -108,12 +108,12 @@ export function ActivityFeed({ items }: ActivityFeedProps) {
   }
 
   return (
-    <ul className="flex flex-col divide-y divide-brand-100">
+    <ul className="flex flex-col divide-y divide-border-subtle">
       {items.map((item) => (
         <li key={item.id} className="flex flex-col gap-1 py-3">
           <Link
             href={`/albums/${item.album.id}`}
-            className="flex items-center gap-4 rounded-card p-2 hover:bg-brand-50"
+            className="flex items-center gap-4 rounded-card p-2 hover:bg-surface-2"
           >
             {item.album.coverUrl ? (
               // Remote cover art rendered with a plain <img>; next/image
@@ -126,14 +126,14 @@ export function ActivityFeed({ items }: ActivityFeedProps) {
               />
             ) : (
               <div
-                className="flex h-14 w-14 items-center justify-center rounded-card bg-brand-100 text-lg font-semibold text-brand-700"
+                className="flex h-14 w-14 items-center justify-center rounded-card bg-surface-2 text-lg font-semibold text-text-secondary"
                 data-testid="activity-cover-placeholder"
               >
                 {item.album.title.charAt(0).toUpperCase()}
               </div>
             )}
             <div className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium text-brand-600">
+              <span className="text-sm font-medium text-text-secondary">
                 {activityLabel(item)}
               </span>
               <span className="text-sm font-semibold">{item.album.title}</span>

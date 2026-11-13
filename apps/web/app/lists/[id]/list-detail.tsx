@@ -67,7 +67,7 @@ export function ListDetailView({
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
       {ownershipUnverified ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-danger" role="alert">
           Some features may be unavailable right now — refresh to retry.
         </p>
       ) : null}
@@ -103,11 +103,7 @@ export function ListDetailView({
       ) : null}
 
       <section aria-label="List items">
-        {isOwner && children ? (
-          children
-        ) : (
-          <ReadOnlyItems items={list.items} />
-        )}
+        {isOwner && children ? children : <ReadOnlyItems items={list.items} />}
       </section>
     </main>
   );
@@ -126,7 +122,7 @@ function ReadOnlyItems({ items }: { items: ListItem[] }) {
   }
 
   return (
-    <ol className="flex flex-col divide-y divide-brand-100">
+    <ol className="flex flex-col divide-y divide-border-subtle">
       {items.map((item, index) => (
         <li key={item.id} className="flex items-center gap-3 py-2 text-sm">
           <span className="w-8 shrink-0 text-right tabular-nums opacity-50">

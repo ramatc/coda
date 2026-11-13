@@ -3,8 +3,12 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { buttonVariants, cn } from "@coda/ui";
-import { updateList, type ListDetail, type UpdateListInput } from "../../../lib/lists";
+import { buttonVariants, cn, Input, Textarea } from "@coda/ui";
+import {
+  updateList,
+  type ListDetail,
+  type UpdateListInput,
+} from "../../../lib/lists";
 
 /** The list fields this form edits — everything `PATCH /lists/:id` accepts. */
 type EditableList = Pick<
@@ -174,10 +178,10 @@ export function EditListForm({ list }: EditListFormProps) {
   return (
     <form
       onSubmit={(event) => void onSubmit(event)}
-      className="flex w-full flex-col gap-4 rounded-card border border-brand-100 p-4"
+      className="flex w-full flex-col gap-4 rounded-card border border-border-subtle p-4"
     >
       {error ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -186,13 +190,12 @@ export function EditListForm({ list }: EditListFormProps) {
         <label htmlFor="edit-list-title" className="text-sm opacity-70">
           Title
         </label>
-        <input
+        <Input
           id="edit-list-title"
           type="text"
           value={draft.title}
           disabled={saving}
           onChange={(event) => update("title", event.target.value)}
-          className="rounded-card border border-brand-200 px-3 py-2"
         />
       </div>
 
@@ -200,14 +203,13 @@ export function EditListForm({ list }: EditListFormProps) {
         <label htmlFor="edit-list-description" className="text-sm opacity-70">
           Description
         </label>
-        <textarea
+        <Textarea
           id="edit-list-description"
           value={draft.description}
           disabled={saving}
           onChange={(event) => update("description", event.target.value)}
           placeholder="What ties these albums together?"
           rows={4}
-          className="rounded-card border border-brand-200 px-3 py-2 text-sm"
         />
       </div>
 

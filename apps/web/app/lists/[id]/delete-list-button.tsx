@@ -75,7 +75,7 @@ export function DeleteListButton({ list }: DeleteListButtonProps) {
         onClick={() => void onDelete()}
         className={cn(
           buttonVariants({ variant: "secondary" }),
-          "w-fit border-red-300 text-red-600",
+          "w-fit border-danger text-danger",
           deleting && "pointer-events-none opacity-50",
         )}
       >
@@ -83,7 +83,7 @@ export function DeleteListButton({ list }: DeleteListButtonProps) {
       </button>
 
       {error ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}

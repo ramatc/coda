@@ -51,6 +51,12 @@ vi.mock("@clerk/nextjs", () => ({
 // `data-testid` and friends survive into the DOM — without that, a
 // `getByTestId` on a link silently fails and a `not.toContain(testid)`
 // assertion passes for the wrong reason.
+// The shell has its own tests; this double lets the file assert WHETHER the
+// page mounts it without exercising its own auth and profile reads.
+vi.mock("../app/_shell/app-shell", () => ({
+  AppShell: ({ children }: { children: ReactNode }) =>
+    Promise.resolve(<div data-testid="app-shell">{children}</div>),
+}));
 vi.mock("next/link", () => ({
   default: ({
     href,
@@ -175,6 +181,7 @@ describe("ReviewPage", () => {
     // No token → no header at all, so OptionalClerkGuard resolves no viewer and
     // the API answers 200 with the anonymous viewer block.
     expect(headersOf(fetchMock)).not.toHaveProperty("Authorization");
+    expect(screen.queryByTestId("app-shell")).toBeNull();
   });
 
   it("passes a signed-in viewer's token through so the API can resolve them", async () => {
@@ -187,6 +194,7 @@ describe("ReviewPage", () => {
 
     expect(headersOf(fetchMock).Authorization).toBe("Bearer test-token");
     expect(screen.getByRole("heading", { name: "Kid A" })).not.toBeNull();
+    expect(screen.getByTestId("app-shell")).not.toBeNull();
   });
 
   it("renders the 404 page for an unknown review", async () => {

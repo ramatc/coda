@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { buttonVariants, cn } from "@coda/ui";
+import { buttonVariants, cn, Textarea } from "@coda/ui";
 import {
   ReviewActionError,
   createComment,
@@ -125,10 +125,10 @@ export function ReviewCommentForm({
   return (
     <form
       onSubmit={(event) => void onSubmit(event)}
-      className="flex flex-col gap-3 rounded-card border border-brand-100 p-4"
+      className="flex flex-col gap-3 rounded-card border border-border-subtle p-4"
     >
       {error ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -136,14 +136,13 @@ export function ReviewCommentForm({
       <label htmlFor="review-comment-body" className="text-sm opacity-70">
         Add a comment
       </label>
-      <textarea
+      <Textarea
         id="review-comment-body"
         value={draft}
         disabled={saving}
         onChange={(event) => setDraft(event.target.value)}
         placeholder="What did you make of this review?"
         rows={3}
-        className="rounded-card border border-brand-200 px-3 py-2 text-sm"
       />
 
       <div className="flex items-center justify-between gap-3">
@@ -151,7 +150,7 @@ export function ReviewCommentForm({
           data-testid="comment-remaining"
           className={cn(
             "text-xs opacity-60",
-            remaining < 0 && "text-red-600 opacity-100",
+            remaining < 0 && "text-danger opacity-100",
           )}
         >
           {remaining} characters left

@@ -17,6 +17,7 @@ import { EditListForm } from "./edit-list-form";
 import { ListDetailView } from "./list-detail";
 import { ListLikeButton } from "./list-like-button";
 import { ListReorder } from "./list-reorder";
+import { AppShell } from "../../_shell/app-shell";
 
 interface ListPageProps {
   params: Promise<{ id: string }>;
@@ -111,7 +112,7 @@ export default async function ListPage({ params }: ListPageProps) {
   // rendering apart from a definitive visitor.
   const ownershipUnverified = signedIn && viewerUserId === null;
 
-  return (
+  const view = (
     <ListDetailView
       list={list}
       isOwner={isListOwner(list, viewerUserId)}
@@ -134,4 +135,8 @@ export default async function ListPage({ params }: ListPageProps) {
       <ListReorder listId={list.id} items={list.items} />
     </ListDetailView>
   );
+
+  // Signed-in surfaces only, matching `/albums/[id]`: the shell's header
+  // and nav are not shown to an anonymous visitor.
+  return signedIn ? await AppShell({ children: view }) : view;
 }

@@ -7,6 +7,7 @@ import {
   resolveOnboardingRedirect,
 } from "../../lib/onboarding";
 import { ActivityFeed } from "./activity-feed";
+import { AppShell } from "../_shell/app-shell";
 
 interface ActivityPageProps {
   searchParams: Promise<{ cursor?: string }>;
@@ -50,20 +51,24 @@ export default async function ActivityPage({
     throw new Error("Failed to load activity.");
   }
 
-  return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-6 py-12">
-      <h1 className="text-3xl font-semibold text-brand-600">Your activity</h1>
+  return await AppShell({
+    children: (
+      <main className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-12">
+        <h1 className="text-h1 font-semibold text-text-primary">
+          Your activity
+        </h1>
 
-      <ActivityFeed items={page.items} />
+        <ActivityFeed items={page.items} />
 
-      {page.nextCursor ? (
-        <Link
-          href={`/activity?cursor=${encodeURIComponent(page.nextCursor)}`}
-          className="self-center text-sm font-medium text-brand-600 hover:underline"
-        >
-          Load older activity
-        </Link>
-      ) : null}
-    </main>
-  );
+        {page.nextCursor ? (
+          <Link
+            href={`/activity?cursor=${encodeURIComponent(page.nextCursor)}`}
+            className="self-center text-sm font-medium text-text-secondary hover:underline"
+          >
+            Load older activity
+          </Link>
+        ) : null}
+      </main>
+    ),
+  });
 }

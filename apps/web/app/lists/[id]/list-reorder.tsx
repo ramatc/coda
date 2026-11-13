@@ -146,9 +146,7 @@ export function ListReorder({ listId, items }: ListReorderProps) {
   }
 
   if (order.length === 0) {
-    return (
-      <p className="text-sm italic opacity-50">{EMPTY_LIST_MESSAGE}</p>
-    );
+    return <p className="text-sm italic opacity-50">{EMPTY_LIST_MESSAGE}</p>;
   }
 
   return (
@@ -162,7 +160,7 @@ export function ListReorder({ listId, items }: ListReorderProps) {
           items={order.map((entry) => entry.id)}
           strategy={verticalListSortingStrategy}
         >
-          <ol className="flex flex-col divide-y divide-brand-100">
+          <ol className="flex flex-col divide-y divide-border-subtle">
             {order.map((entry, index) => (
               <SortableRow
                 key={entry.id}
@@ -175,7 +173,7 @@ export function ListReorder({ listId, items }: ListReorderProps) {
         </SortableContext>
       </DndContext>
       {error ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
@@ -197,8 +195,14 @@ interface SortableRowProps {
  * the focused handle).
  */
 function SortableRow({ item, position, disabled }: SortableRowProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: item.id });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.id });
 
   return (
     <li
@@ -231,7 +235,7 @@ function SortableRow({ item, position, disabled }: SortableRowProps) {
         type="button"
         aria-label={`Reorder ${item.album.title} by ${item.album.primaryArtistName}, position ${position}`}
         disabled={disabled}
-        className="cursor-grab rounded-card border border-brand-200 px-2 py-1 opacity-70"
+        className="cursor-grab rounded-card border border-border-strong px-2 py-1 opacity-70"
         {...attributes}
         {...listeners}
       >

@@ -5,6 +5,7 @@ import {
   resolveOnboardingRedirect,
 } from "../../../lib/onboarding";
 import { CreateListForm } from "./create-list-form";
+import { AppShell } from "../../_shell/app-shell";
 
 /**
  * Create-list page at `/lists/new` (server component), protected by the Clerk
@@ -22,5 +23,5 @@ export default async function NewListPage() {
     redirect(redirectTo);
   }
 
-  return <CreateListForm />;
+  return await AppShell({ children: <CreateListForm /> });
 }

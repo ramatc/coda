@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { fetchOnboardingStatus, resolveOnboardingRedirect } from "../../lib/onboarding";
+import {
+  fetchOnboardingStatus,
+  resolveOnboardingRedirect,
+} from "../../lib/onboarding";
+import { AppShell } from "../_shell/app-shell";
 
 /**
  * Placeholder PROTECTED route. The middleware redirects unauthenticated
@@ -20,14 +24,16 @@ export default async function DashboardPage() {
     redirect(redirectTo);
   }
 
-  return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-4 px-6">
-      <div className="rounded-card border border-brand-600 bg-brand-50 px-4 py-3 text-brand-900">
-        This is a protected route — you are signed in.
-      </div>
-      <p className="text-sm opacity-70">
-        Clerk user id: <code>{userId}</code>
-      </p>
-    </main>
-  );
+  return await AppShell({
+    children: (
+      <main className="mx-auto flex max-w-2xl flex-col justify-center gap-4 px-6">
+        <div className="rounded-card border border-border-subtle bg-surface-1 px-4 py-3 text-text-primary">
+          This is a protected route — you are signed in.
+        </div>
+        <p className="text-sm opacity-70">
+          Clerk user id: <code>{userId}</code>
+        </p>
+      </main>
+    ),
+  });
 }

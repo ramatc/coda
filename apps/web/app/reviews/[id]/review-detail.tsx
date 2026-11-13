@@ -76,7 +76,7 @@ export function ReviewDetailView({
           <p
             role="note"
             data-testid="review-spoiler-warning"
-            className="w-fit rounded-full border border-brand-200 px-3 py-1 text-xs font-medium uppercase tracking-wide opacity-80"
+            className="w-fit rounded-full border border-border-strong px-3 py-1 text-xs font-medium uppercase tracking-wide opacity-80"
           >
             Contains spoilers
           </p>
@@ -106,7 +106,7 @@ export function ReviewDetailView({
         {review.comments.length === 0 ? (
           <p className="text-sm italic opacity-50">{EMPTY_COMMENTS_MESSAGE}</p>
         ) : (
-          <ul className="flex flex-col divide-y divide-brand-100">
+          <ul className="flex flex-col divide-y divide-border-subtle">
             {review.comments.map((entry) => (
               <li key={entry.id} className="flex flex-col gap-1 py-3 text-sm">
                 <p className="flex items-center gap-2 text-xs opacity-70">

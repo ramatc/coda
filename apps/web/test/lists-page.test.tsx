@@ -34,6 +34,12 @@ vi.mock("../lib/onboarding", () => ({
 
 // Every prop other than `href` is forwarded, so `ListsSection`'s links (and
 // its empty-state "Create your first list" link) survive into the DOM.
+// The shell has its own tests; this double lets the file assert WHETHER the
+// page mounts it without exercising its own auth and profile reads.
+vi.mock("../app/_shell/app-shell", () => ({
+  AppShell: ({ children }: { children: ReactNode }) =>
+    Promise.resolve(<div data-testid="app-shell">{children}</div>),
+}));
 vi.mock("next/link", () => ({
   default: ({
     href,
@@ -121,6 +127,7 @@ describe("ListsPage", () => {
     await renderPage();
 
     expect(screen.getByRole("link", { name: "Deep cuts" })).not.toBeNull();
+    expect(screen.getByTestId("app-shell")).not.toBeNull();
   });
 
   it("runs the onboarding gate and bounces a half-onboarded viewer", async () => {

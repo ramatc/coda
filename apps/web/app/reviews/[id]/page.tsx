@@ -5,6 +5,7 @@ import { ReviewDetailView } from "./review-detail";
 import { ReviewCommentForm } from "./review-comment-form";
 import { ReviewCommentItem } from "./review-comment-item";
 import { ReviewLikeButton } from "./review-like-button";
+import { AppShell } from "../../_shell/app-shell";
 
 interface ReviewPageProps {
   params: Promise<{ id: string }>;
@@ -49,7 +50,7 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
     notFound();
   }
 
-  return (
+  const view = (
     <ReviewDetailView
       review={review}
       likeAction={
@@ -71,4 +72,8 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
       )}
     />
   );
+
+  // Signed-in surfaces only, matching `/albums/[id]`: the shell's header
+  // and nav are not shown to an anonymous visitor.
+  return token !== null ? await AppShell({ children: view }) : view;
 }
