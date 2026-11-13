@@ -21,6 +21,8 @@ export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
   title: { default: "Coda", template: "%s · Coda" },
   description: "Track, rate, and review the music you love.",
+  openGraph: { siteName: "Coda", type: "website" },
+  twitter: { card: "summary_large_image" },
 };
 
 /** Dark-first: tells the browser chrome and native controls to render dark. */
