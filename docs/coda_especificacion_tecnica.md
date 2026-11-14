@@ -1103,7 +1103,7 @@ Cada reto otorga XP visible en el perfil; XP acumulado no es ranking público (e
 - ✅ Listas (crear, editar, rankear), más likes en listas y backlog "quiero escuchar".
 - ✅ Reseñas con likes y comentarios.
 - 🚧 Notificaciones in-app (Resend para email transaccional): la generación de notificaciones en follows y comentarios, la API de lectura, el worker de email y la UI (campana con contador de no leídas y dropdown) ya están hechos. Falta la prueba manual de punta a punta.
-- 🚧 SEO y páginas públicas indexables: la landing, las reseñas y ahora las páginas de álbum y de listas públicas se pueden ver sin iniciar sesión, con título, descripción y URL canónica por página, más `robots.txt`. Falta el sitemap (necesita un endpoint nuevo en la API). Los perfiles siguen siendo privados.
+- 🚧 SEO y páginas públicas indexables: la landing, las reseñas y ahora las páginas de álbum y de listas públicas se pueden ver sin iniciar sesión, con título, descripción y URL canónica por página, más `robots.txt` y `sitemap.xml` (álbumes y listas públicas, alimentado por `GET /sitemap` de la API). Los perfiles siguen siendo privados.
 
 **Salida:** beta abierta.
 

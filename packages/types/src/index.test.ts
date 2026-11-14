@@ -7,6 +7,7 @@ import {
   emailSchema,
   healthStatusSchema,
   paginationParamsSchema,
+  sitemapEntriesSchema,
 } from "./index";
 
 // Smoke test: proves the shared Vitest preset (@coda/config/vitest/base.js)
@@ -29,6 +30,29 @@ describe("@coda/types shared schemas", () => {
       status: "ok",
       uptime: 1.5,
     });
+  });
+
+  it("accepts a sitemap payload of ids and ISO timestamps", () => {
+    const payload = {
+      albums: [
+        {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          updatedAt: "2026-10-01T08:00:00.000Z",
+        },
+      ],
+      lists: [],
+    };
+
+    expect(sitemapEntriesSchema.parse(payload)).toEqual(payload);
+  });
+
+  it("rejects a sitemap entry whose id is not a UUID", () => {
+    expect(() =>
+      sitemapEntriesSchema.parse({
+        albums: [{ id: "../admin", updatedAt: "2026-10-01T08:00:00.000Z" }],
+        lists: [],
+      }),
+    ).toThrow();
   });
 
   it("exposes consistent onboarding capture bounds", () => {

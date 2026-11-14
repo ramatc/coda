@@ -175,7 +175,7 @@ Sin el worker en ejecución, los jobs quedan pendientes en Redis y se procesan c
 | 2 | Listas (crear, editar, reordenar) y "quiero escuchar" | ✅ Hecho |
 | 3 | Reseñas con likes y comentarios, likes en listas | ✅ Hecho |
 | 4 | Notificaciones in-app y por email (Resend) | ✅ Hecho |
-| 5 | SEO y páginas públicas indexables | 🚧 En curso (álbumes y listas públicas hechos; falta sitemap) |
+| 5 | SEO y páginas públicas indexables | 🚧 En curso (álbumes y listas públicas y sitemap hechos; faltan perfiles públicos) |
 
 Además, la landing pública (hero, secciones con datos reales, sign-in y sign-up in-app) ya está rediseñada.
 

@@ -15,6 +15,7 @@ import { ListsModule } from "./lists/lists.module.js";
 import { WantToListenModule } from "./want-to-listen/want-to-listen.module.js";
 import { ReviewsModule } from "./reviews/reviews.module.js";
 import { NotificationsModule } from "./notifications/notifications.module.js";
+import { SitemapModule } from "./sitemap/sitemap.module.js";
 
 /**
  * Root module for the Coda API. Fase 1 wires the global PrismaModule (first real
@@ -35,7 +36,8 @@ import { NotificationsModule } from "./notifications/notifications.module.js";
  * adds the notifications module (in-app notification read surface, and the
  * `notifyFollow`/`notifyComment` helpers the social and reviews modules call) —
  * every one of its routes is private to its recipient and stays behind the
- * global `ClerkGuard`.
+ * global `ClerkGuard`. Fase 2 slice 5 adds the sitemap module (the public
+ * `GET /sitemap` feed behind the web app's `sitemap.xml`).
  */
 @Module({
   imports: [
@@ -58,6 +60,7 @@ import { NotificationsModule } from "./notifications/notifications.module.js";
     WantToListenModule,
     ReviewsModule,
     NotificationsModule,
+    SitemapModule,
     HealthModule,
   ],
 })

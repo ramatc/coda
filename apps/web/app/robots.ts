@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { getSiteUrl } from "../lib/site-url";
 import { protectedRoutePatterns } from "../middleware.config";
 
 /**
@@ -18,8 +19,8 @@ function toRobotsPath(pattern: string): string {
  * `protectedRoutePatterns` so a newly protected route is never forgotten here,
  * plus the in-app sign-in and sign-up pages.
  *
- * No `sitemap` entry yet: listing every album and public list needs a new API
- * endpoint, tracked as a follow-up.
+ * `sitemap` points at `app/sitemap.ts`, which lists every album and public
+ * list page.
  */
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -32,5 +33,6 @@ export default function robots(): MetadataRoute.Robots {
         "/sign-up",
       ],
     },
+    sitemap: `${getSiteUrl()}/sitemap.xml`,
   };
 }
