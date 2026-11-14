@@ -32,13 +32,13 @@
 
 **Por qué Coda gana sobre las demás opciones:**
 
-| Nombre | Pros | Contras | Veredicto |
-|---|---|---|---|
-| **Coda** | Término musical reconocible (cierre de una pieza), 4 letras, fonéticamente fuerte, brandable, .com posiblemente disponible con sufijo (codaapp, codafm) | Hay una herramienta de docs llamada Coda.io (posible roce SEO, no de marca) | ★★★★★ |
-| Side B | Concepto perfecto (B-sides = joyas ocultas), evoca cultura vinilo | Dos palabras, dificultad SEO, complica URL | ★★★★ |
-| Crate | "Crate digging" es cultura de descubrimiento musical pura | Connotación de "caja" para no melómanos | ★★★★ |
-| Deep Cut | Significa "tema profundo / no comercial" | Demasiado largo, no es brandable como verbo | ★★★ |
-| Tempo / Sonar / Echo | Genéricos | Ya usados por otros productos tech | ★★ |
+| Nombre               | Pros                                                                                                                                                    | Contras                                                                     | Veredicto |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | --------- |
+| **Coda**             | Término musical reconocible (cierre de una pieza), 4 letras, fonéticamente fuerte, brandable, .com posiblemente disponible con sufijo (codaapp, codafm) | Hay una herramienta de docs llamada Coda.io (posible roce SEO, no de marca) | ★★★★★     |
+| Side B               | Concepto perfecto (B-sides = joyas ocultas), evoca cultura vinilo                                                                                       | Dos palabras, dificultad SEO, complica URL                                  | ★★★★      |
+| Crate                | "Crate digging" es cultura de descubrimiento musical pura                                                                                               | Connotación de "caja" para no melómanos                                     | ★★★★      |
+| Deep Cut             | Significa "tema profundo / no comercial"                                                                                                                | Demasiado largo, no es brandable como verbo                                 | ★★★       |
+| Tempo / Sonar / Echo | Genéricos                                                                                                                                               | Ya usados por otros productos tech                                          | ★★        |
 
 **Acción sugerida:** registrar simultáneamente `getcoda.fm`, `coda.app` o `listentocoda.com`, y handles `@codaapp` en redes. Como plan B, mantener Crate y Side B en reserva.
 
@@ -87,7 +87,7 @@
 
 ### Propuestas de valor diferenciales (vs. competencia)
 
-1. **Recomendaciones híbridas explicables.** No solo "esto te puede gustar", sino *"esto te puede gustar porque te encantó X y a usuarios con tu mismo gusto les voló la cabeza"*.
+1. **Recomendaciones híbridas explicables.** No solo "esto te puede gustar", sino _"esto te puede gustar porque te encantó X y a usuarios con tu mismo gusto les voló la cabeza"_.
 2. **Catálogo unificado.** MusicBrainz como fuente canónica + Spotify para metadata moderna + Last.fm para estadísticas históricas.
 3. **Listas con vida propia.** Como las de Letterboxd: rankeables, colaborativas, viralizables.
 4. **Diario, no algoritmo.** El usuario es dueño de su historial; no se le impone qué escuchar.
@@ -157,15 +157,15 @@ graph TB
 
 ### Decisiones clave de arquitectura
 
-| Decisión | Elección | Justificación |
-|---|---|---|
+| Decisión                    | Elección                                                 | Justificación                                                                                               |
+| --------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | Monolito vs. microservicios | **Monolito modular** (NestJS) + 1 servicio aparte (reco) | Velocidad de desarrollo; el equipo es pequeño. Solo separamos el motor de recomendaciones porque es Python. |
-| ORM | **Prisma** | Type-safety end-to-end con TypeScript; migraciones declarativas. |
-| Búsqueda | **Meilisearch** | Postgres FTS no escala para búsquedas tipográficas tolerantes; Algolia es muy caro. |
-| Cache | **Redis** | Sesiones, recomendaciones precomputadas, rate limiting, colas. |
-| Mobile | **React Native (Expo)** | Reuso del 70% del código con web (lógica + tipos), un solo equipo. |
-| Auth | **Clerk** para MVP, migrar a Auth.js si crece el costo | Time-to-market: OAuth con Spotify/Apple/Google listo. |
-| Vectores | **pgvector** | Almacenar embeddings de álbumes y usuarios en la misma DB; búsqueda ANN sin agregar Pinecone. |
+| ORM                         | **Prisma**                                               | Type-safety end-to-end con TypeScript; migraciones declarativas.                                            |
+| Búsqueda                    | **Meilisearch**                                          | Postgres FTS no escala para búsquedas tipográficas tolerantes; Algolia es muy caro.                         |
+| Cache                       | **Redis**                                                | Sesiones, recomendaciones precomputadas, rate limiting, colas.                                              |
+| Mobile                      | **React Native (Expo)**                                  | Reuso del 70% del código con web (lógica + tipos), un solo equipo.                                          |
+| Auth                        | **Clerk** para MVP, migrar a Auth.js si crece el costo   | Time-to-market: OAuth con Spotify/Apple/Google listo.                                                       |
+| Vectores                    | **pgvector**                                             | Almacenar embeddings de álbumes y usuarios en la misma DB; búsqueda ANN sin agregar Pinecone.               |
 
 ### Comunicación entre servicios
 
@@ -232,18 +232,18 @@ Python 3.11 + FastAPI
 
 ### Infraestructura
 
-| Componente | Servicio |
-|---|---|
-| Hosting frontend | Vercel (Next.js) |
-| Hosting backend | Railway o Fly.io (NestJS + Python) |
-| PostgreSQL | Supabase o Neon (con pgvector habilitado) |
-| Redis | Upstash |
-| Object storage | Cloudflare R2 |
-| CDN / DNS | Cloudflare |
-| Email transaccional | Resend |
-| Push notifications | Expo Push + FCM/APNs |
-| Observabilidad | Sentry (errores) + Axiom (logs) + Posthog (analytics + feature flags) |
-| CI/CD | GitHub Actions |
+| Componente          | Servicio                                                              |
+| ------------------- | --------------------------------------------------------------------- |
+| Hosting frontend    | Vercel (Next.js)                                                      |
+| Hosting backend     | Railway o Fly.io (NestJS + Python)                                    |
+| PostgreSQL          | Supabase o Neon (con pgvector habilitado)                             |
+| Redis               | Upstash                                                               |
+| Object storage      | Cloudflare R2                                                         |
+| CDN / DNS           | Cloudflare                                                            |
+| Email transaccional | Resend                                                                |
+| Push notifications  | Expo Push + FCM/APNs                                                  |
+| Observabilidad      | Sentry (errores) + Axiom (logs) + Posthog (analytics + feature flags) |
+| CI/CD               | GitHub Actions                                                        |
 
 ---
 
@@ -284,35 +284,35 @@ erDiagram
 
 ### Tablas principales (resumen)
 
-| Tabla | Propósito | Claves importantes |
-|---|---|---|
-| `users` | Usuario base, vinculado a Clerk vía `clerk_user_id` | `id` (uuid pk), `clerk_user_id` (unique), `email`, `created_at` |
-| `profiles` | Datos públicos del usuario | `user_id` (pk + fk), `username` (unique), `display_name`, `bio`, `avatar_url` |
-| `genres` | Catálogo de géneros (semilla curada) | `id`, `slug` (unique), `name`, `parent_genre_id` (jerarquía) |
-| `artists` | Catálogo de artistas | `id`, `mbid` (uuid de MusicBrainz, unique), `spotify_id`, `name`, `image_url` |
-| `albums` | Catálogo de álbumes | `id`, `mbid`, `spotify_id`, `title`, `release_date`, `cover_url`, `primary_artist_id` |
-| `tracks` | Canciones de cada álbum | `id`, `album_id`, `position`, `title`, `duration_ms` |
-| `album_artists` | Relación M:N álbum-artista (feats, colaboraciones) | `album_id`, `artist_id`, `role` |
-| `album_genres` | Relación M:N álbum-género | `album_id`, `genre_id`, `weight` |
-| `user_genre_preferences` | Géneros favoritos del usuario | `user_id`, `genre_id`, `weight` (1-5) |
-| `user_artist_favorites` | Artistas favoritos | `user_id`, `artist_id`, `added_at` |
-| `user_album_favorites` | Álbumes favoritos (los "4 favoritos" de Letterboxd) | `user_id`, `album_id`, `position` |
-| `listens` | Registro de escucha (puede haber varios por álbum) | `id`, `user_id`, `album_id`, `listened_at`, `source` (manual, spotify_sync, lastfm_sync) |
-| `ratings` | Puntuación 1-10 | `user_id`, `album_id` (pk compuesta), `score`, `updated_at` |
-| `reviews` | Reseña textual | `id`, `user_id`, `album_id`, `body`, `rating_id`, `is_spoiler`, `created_at` |
-| `lists` | Listas creadas por el usuario | `id`, `user_id`, `title`, `description`, `is_ranked`, `is_public` |
-| `list_items` | Álbumes dentro de listas | `list_id`, `album_id`, `position`, `note` |
-| `follows` | Grafo social | `follower_id`, `following_id`, `created_at` |
-| `activity_events` | Stream de actividad para feeds | `id`, `user_id`, `type` (LISTEN/RATING/REVIEW/LIST_CREATED/FOLLOW), `target_type`, `target_id`, `created_at` |
-| `recommendations` | Recomendaciones precomputadas | `id`, `user_id`, `album_id`, `kind` (DAILY/WEEKLY/DISCOVERY), `score`, `reason_json`, `generated_at` |
-| `badges` | Catálogo de insignias | `id`, `slug`, `name`, `description`, `icon_url`, `criteria_json` |
-| `user_badges` | Insignias otorgadas | `user_id`, `badge_id`, `awarded_at` |
-| `challenges` | Catálogo de retos | `id`, `slug`, `title`, `description`, `start_at`, `end_at`, `criteria_json` |
-| `user_challenges` | Progreso del usuario | `user_id`, `challenge_id`, `progress_json`, `completed_at` |
-| `streaks` | Racha de escucha diaria | `user_id` (pk), `current_days`, `longest_days`, `last_logged_date` |
-| `external_id_map` | Mapeo a IDs externos | `entity_type`, `entity_id`, `provider`, `external_id` |
-| `user_embeddings` | Vector de gusto del usuario | `user_id`, `embedding` (vector(128)) |
-| `album_embeddings` | Vector del álbum | `album_id`, `embedding` (vector(128)) |
+| Tabla                    | Propósito                                           | Claves importantes                                                                                           |
+| ------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `users`                  | Usuario base, vinculado a Clerk vía `clerk_user_id` | `id` (uuid pk), `clerk_user_id` (unique), `email`, `created_at`                                              |
+| `profiles`               | Datos públicos del usuario                          | `user_id` (pk + fk), `username` (unique), `display_name`, `bio`, `avatar_url`                                |
+| `genres`                 | Catálogo de géneros (semilla curada)                | `id`, `slug` (unique), `name`, `parent_genre_id` (jerarquía)                                                 |
+| `artists`                | Catálogo de artistas                                | `id`, `mbid` (uuid de MusicBrainz, unique), `spotify_id`, `name`, `image_url`                                |
+| `albums`                 | Catálogo de álbumes                                 | `id`, `mbid`, `spotify_id`, `title`, `release_date`, `cover_url`, `primary_artist_id`                        |
+| `tracks`                 | Canciones de cada álbum                             | `id`, `album_id`, `position`, `title`, `duration_ms`                                                         |
+| `album_artists`          | Relación M:N álbum-artista (feats, colaboraciones)  | `album_id`, `artist_id`, `role`                                                                              |
+| `album_genres`           | Relación M:N álbum-género                           | `album_id`, `genre_id`, `weight`                                                                             |
+| `user_genre_preferences` | Géneros favoritos del usuario                       | `user_id`, `genre_id`, `weight` (1-5)                                                                        |
+| `user_artist_favorites`  | Artistas favoritos                                  | `user_id`, `artist_id`, `added_at`                                                                           |
+| `user_album_favorites`   | Álbumes favoritos (los "4 favoritos" de Letterboxd) | `user_id`, `album_id`, `position`                                                                            |
+| `listens`                | Registro de escucha (puede haber varios por álbum)  | `id`, `user_id`, `album_id`, `listened_at`, `source` (manual, spotify_sync, lastfm_sync)                     |
+| `ratings`                | Puntuación 1-10                                     | `user_id`, `album_id` (pk compuesta), `score`, `updated_at`                                                  |
+| `reviews`                | Reseña textual                                      | `id`, `user_id`, `album_id`, `body`, `rating_id`, `is_spoiler`, `created_at`                                 |
+| `lists`                  | Listas creadas por el usuario                       | `id`, `user_id`, `title`, `description`, `is_ranked`, `is_public`                                            |
+| `list_items`             | Álbumes dentro de listas                            | `list_id`, `album_id`, `position`, `note`                                                                    |
+| `follows`                | Grafo social                                        | `follower_id`, `following_id`, `created_at`                                                                  |
+| `activity_events`        | Stream de actividad para feeds                      | `id`, `user_id`, `type` (LISTEN/RATING/REVIEW/LIST_CREATED/FOLLOW), `target_type`, `target_id`, `created_at` |
+| `recommendations`        | Recomendaciones precomputadas                       | `id`, `user_id`, `album_id`, `kind` (DAILY/WEEKLY/DISCOVERY), `score`, `reason_json`, `generated_at`         |
+| `badges`                 | Catálogo de insignias                               | `id`, `slug`, `name`, `description`, `icon_url`, `criteria_json`                                             |
+| `user_badges`            | Insignias otorgadas                                 | `user_id`, `badge_id`, `awarded_at`                                                                          |
+| `challenges`             | Catálogo de retos                                   | `id`, `slug`, `title`, `description`, `start_at`, `end_at`, `criteria_json`                                  |
+| `user_challenges`        | Progreso del usuario                                | `user_id`, `challenge_id`, `progress_json`, `completed_at`                                                   |
+| `streaks`                | Racha de escucha diaria                             | `user_id` (pk), `current_days`, `longest_days`, `last_logged_date`                                           |
+| `external_id_map`        | Mapeo a IDs externos                                | `entity_type`, `entity_id`, `provider`, `external_id`                                                        |
+| `user_embeddings`        | Vector de gusto del usuario                         | `user_id`, `embedding` (vector(128))                                                                         |
+| `album_embeddings`       | Vector del álbum                                    | `album_id`, `embedding` (vector(128))                                                                        |
 
 ### Índices y consideraciones de performance
 
@@ -338,12 +338,12 @@ ALTER TABLE ratings ADD CONSTRAINT uniq_user_album_rating UNIQUE (user_id, album
 
 ### Particionado y volumen estimado
 
-| Tabla | Volumen año 1 | Volumen año 3 | Estrategia |
-|---|---|---|---|
-| `listens` | ~10M filas | ~500M filas | Partitioning por mes con `pg_partman` desde día 0 |
-| `activity_events` | ~20M filas | ~1B filas | Particionado por mes + retención de 90 días con archivado a R2 |
-| `recommendations` | ~50M filas | ~5B filas | TTL automático: borrar > 14 días |
-| Resto | < 10M | < 100M | Sin particionado |
+| Tabla             | Volumen año 1 | Volumen año 3 | Estrategia                                                     |
+| ----------------- | ------------- | ------------- | -------------------------------------------------------------- |
+| `listens`         | ~10M filas    | ~500M filas   | Partitioning por mes con `pg_partman` desde día 0              |
+| `activity_events` | ~20M filas    | ~1B filas     | Particionado por mes + retención de 90 días con archivado a R2 |
+| `recommendations` | ~50M filas    | ~5B filas     | TTL automático: borrar > 14 días                               |
+| Resto             | < 10M         | < 100M        | Sin particionado                                               |
 
 ---
 
@@ -560,101 +560,101 @@ model AlbumEmbedding {
 
 ### 7.1 Autenticación y perfil
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `POST` | `/api/v1/auth/webhook/clerk` | Webhook que crea/sincroniza el usuario local desde Clerk |
-| `GET`  | `/api/v1/me` | Devuelve el usuario autenticado + perfil + estadísticas resumidas |
-| `PATCH`| `/api/v1/me` | Actualiza email, preferencias generales |
-| `GET`  | `/api/v1/me/profile` | Perfil propio detallado |
-| `PATCH`| `/api/v1/me/profile` | Actualiza username, bio, avatar, banner |
-| `POST` | `/api/v1/me/profile/avatar` | Sube avatar (multipart) — devuelve URL R2 |
-| `DELETE`| `/api/v1/me` | Borrado de cuenta (GDPR), cascade en cascada |
+| Método   | Ruta                         | Descripción                                                       |
+| -------- | ---------------------------- | ----------------------------------------------------------------- |
+| `POST`   | `/api/v1/auth/webhook/clerk` | Webhook que crea/sincroniza el usuario local desde Clerk          |
+| `GET`    | `/api/v1/me`                 | Devuelve el usuario autenticado + perfil + estadísticas resumidas |
+| `PATCH`  | `/api/v1/me`                 | Actualiza email, preferencias generales                           |
+| `GET`    | `/api/v1/me/profile`         | Perfil propio detallado                                           |
+| `PATCH`  | `/api/v1/me/profile`         | Actualiza username, bio, avatar, banner                           |
+| `POST`   | `/api/v1/me/profile/avatar`  | Sube avatar (multipart) — devuelve URL R2                         |
+| `DELETE` | `/api/v1/me`                 | Borrado de cuenta (GDPR), cascade en cascada                      |
 
 ### 7.2 Onboarding
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET`  | `/api/v1/onboarding/genres` | Lista de géneros sugeridos para selección inicial |
-| `POST` | `/api/v1/onboarding/genres` | `{ genreIds: string[] }` — guarda géneros preferidos |
-| `GET`  | `/api/v1/onboarding/artists/suggest?genres=...` | Sugiere artistas top según géneros elegidos |
-| `POST` | `/api/v1/onboarding/artists` | `{ artistIds: string[] }` (mín. 3) |
-| `POST` | `/api/v1/onboarding/albums` | `{ albumIds: string[] }` (opcional) |
-| `POST` | `/api/v1/onboarding/complete` | Marca onboarding como completo y dispara primer cómputo de recomendaciones |
+| Método | Ruta                                            | Descripción                                                                |
+| ------ | ----------------------------------------------- | -------------------------------------------------------------------------- |
+| `GET`  | `/api/v1/onboarding/genres`                     | Lista de géneros sugeridos para selección inicial                          |
+| `POST` | `/api/v1/onboarding/genres`                     | `{ genreIds: string[] }` — guarda géneros preferidos                       |
+| `GET`  | `/api/v1/onboarding/artists/suggest?genres=...` | Sugiere artistas top según géneros elegidos                                |
+| `POST` | `/api/v1/onboarding/artists`                    | `{ artistIds: string[] }` (mín. 3)                                         |
+| `POST` | `/api/v1/onboarding/albums`                     | `{ albumIds: string[] }` (opcional)                                        |
+| `POST` | `/api/v1/onboarding/complete`                   | Marca onboarding como completo y dispara primer cómputo de recomendaciones |
 
 ### 7.3 Catálogo: álbumes, artistas, géneros
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/v1/albums/:id` | Detalle del álbum: tracks, géneros, artistas, rating promedio, reviews top |
-| `GET` | `/api/v1/albums/:id/listeners?cursor=...` | Usuarios que lo escucharon (paginado) |
-| `GET` | `/api/v1/albums/:id/reviews?sort=recent\|top&cursor=...` | Reviews del álbum |
-| `GET` | `/api/v1/albums/:id/similar` | Álbumes similares (basado en embeddings) |
-| `GET` | `/api/v1/artists/:id` | Detalle de artista |
-| `GET` | `/api/v1/artists/:id/albums` | Discografía |
-| `GET` | `/api/v1/artists/:id/similar` | Artistas similares |
-| `GET` | `/api/v1/genres` | Árbol completo de géneros |
-| `GET` | `/api/v1/genres/:slug/top-albums?period=all\|year\|month` | Top de un género |
+| Método | Ruta                                                      | Descripción                                                                |
+| ------ | --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `GET`  | `/api/v1/albums/:id`                                      | Detalle del álbum: tracks, géneros, artistas, rating promedio, reviews top |
+| `GET`  | `/api/v1/albums/:id/listeners?cursor=...`                 | Usuarios que lo escucharon (paginado)                                      |
+| `GET`  | `/api/v1/albums/:id/reviews?sort=recent\|top&cursor=...`  | Reviews del álbum                                                          |
+| `GET`  | `/api/v1/albums/:id/similar`                              | Álbumes similares (basado en embeddings)                                   |
+| `GET`  | `/api/v1/artists/:id`                                     | Detalle de artista                                                         |
+| `GET`  | `/api/v1/artists/:id/albums`                              | Discografía                                                                |
+| `GET`  | `/api/v1/artists/:id/similar`                             | Artistas similares                                                         |
+| `GET`  | `/api/v1/genres`                                          | Árbol completo de géneros                                                  |
+| `GET`  | `/api/v1/genres/:slug/top-albums?period=all\|year\|month` | Top de un género                                                           |
 
 ### 7.4 Tracking del usuario
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `POST` | `/api/v1/listens` | `{ albumId, listenedAt?, note? }` — registra escucha |
-| `GET`  | `/api/v1/me/listens?cursor=...` | Historial paginado |
-| `DELETE`| `/api/v1/listens/:id` | Borra una escucha |
-| `PUT`  | `/api/v1/me/ratings/:albumId` | `{ score: 1-10 }` — crea o actualiza rating |
-| `DELETE`| `/api/v1/me/ratings/:albumId` | Borra rating |
-| `POST` | `/api/v1/reviews` | `{ albumId, body, score?, isSpoiler? }` |
-| `PATCH`| `/api/v1/reviews/:id` | Edita reseña |
-| `DELETE`| `/api/v1/reviews/:id` | Borra reseña |
-| `POST` | `/api/v1/me/favorites/albums` | `{ albumId, position: 1-4 }` |
-| `DELETE`| `/api/v1/me/favorites/albums/:albumId` | Quitar de favoritos |
+| Método   | Ruta                                   | Descripción                                          |
+| -------- | -------------------------------------- | ---------------------------------------------------- |
+| `POST`   | `/api/v1/listens`                      | `{ albumId, listenedAt?, note? }` — registra escucha |
+| `GET`    | `/api/v1/me/listens?cursor=...`        | Historial paginado                                   |
+| `DELETE` | `/api/v1/listens/:id`                  | Borra una escucha                                    |
+| `PUT`    | `/api/v1/me/ratings/:albumId`          | `{ score: 1-10 }` — crea o actualiza rating          |
+| `DELETE` | `/api/v1/me/ratings/:albumId`          | Borra rating                                         |
+| `POST`   | `/api/v1/reviews`                      | `{ albumId, body, score?, isSpoiler? }`              |
+| `PATCH`  | `/api/v1/reviews/:id`                  | Edita reseña                                         |
+| `DELETE` | `/api/v1/reviews/:id`                  | Borra reseña                                         |
+| `POST`   | `/api/v1/me/favorites/albums`          | `{ albumId, position: 1-4 }`                         |
+| `DELETE` | `/api/v1/me/favorites/albums/:albumId` | Quitar de favoritos                                  |
 
 ### 7.5 Listas
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `POST`  | `/api/v1/lists` | `{ title, description?, isRanked, isPublic }` |
-| `GET`   | `/api/v1/lists/:id` | Detalle de lista + items |
-| `PATCH` | `/api/v1/lists/:id` | Editar metadatos |
-| `DELETE`| `/api/v1/lists/:id` | Borrar |
-| `POST`  | `/api/v1/lists/:id/items` | `{ albumId, position?, note? }` |
-| `PATCH` | `/api/v1/lists/:id/items/:itemId` | Reordenar o editar nota |
-| `DELETE`| `/api/v1/lists/:id/items/:itemId` | Quitar álbum |
-| `POST`  | `/api/v1/lists/:id/like` / `DELETE` | Like a una lista |
-| `GET`   | `/api/v1/users/:userId/lists` | Listas públicas de un usuario |
+| Método   | Ruta                                | Descripción                                   |
+| -------- | ----------------------------------- | --------------------------------------------- |
+| `POST`   | `/api/v1/lists`                     | `{ title, description?, isRanked, isPublic }` |
+| `GET`    | `/api/v1/lists/:id`                 | Detalle de lista + items                      |
+| `PATCH`  | `/api/v1/lists/:id`                 | Editar metadatos                              |
+| `DELETE` | `/api/v1/lists/:id`                 | Borrar                                        |
+| `POST`   | `/api/v1/lists/:id/items`           | `{ albumId, position?, note? }`               |
+| `PATCH`  | `/api/v1/lists/:id/items/:itemId`   | Reordenar o editar nota                       |
+| `DELETE` | `/api/v1/lists/:id/items/:itemId`   | Quitar álbum                                  |
+| `POST`   | `/api/v1/lists/:id/like` / `DELETE` | Like a una lista                              |
+| `GET`    | `/api/v1/users/:userId/lists`       | Listas públicas de un usuario                 |
 
 ### 7.6 Social
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `POST`  | `/api/v1/users/:userId/follow` | Seguir |
-| `DELETE`| `/api/v1/users/:userId/follow` | Dejar de seguir |
-| `GET`   | `/api/v1/users/:userId/followers` | Lista de seguidores |
-| `GET`   | `/api/v1/users/:userId/following` | Lista de seguidos |
-| `GET`   | `/api/v1/feed?cursor=...` | Feed de actividad de los seguidos |
-| `GET`   | `/api/v1/feed/global` | Feed global (descubrimiento) |
+| Método   | Ruta                              | Descripción                       |
+| -------- | --------------------------------- | --------------------------------- |
+| `POST`   | `/api/v1/users/:userId/follow`    | Seguir                            |
+| `DELETE` | `/api/v1/users/:userId/follow`    | Dejar de seguir                   |
+| `GET`    | `/api/v1/users/:userId/followers` | Lista de seguidores               |
+| `GET`    | `/api/v1/users/:userId/following` | Lista de seguidos                 |
+| `GET`    | `/api/v1/feed?cursor=...`         | Feed de actividad de los seguidos |
+| `GET`    | `/api/v1/feed/global`             | Feed global (descubrimiento)      |
 
 ### 7.7 Recomendaciones y descubrimiento
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/v1/me/recommendations/daily` | 1 destacado + 3 picks + 1 artista |
-| `GET` | `/api/v1/me/recommendations/weekly` | Lista de 20 + artistas + clásicos pendientes |
-| `POST`| `/api/v1/me/recommendations/:id/dismiss` | Marca como "no me interesa" (mejora el modelo) |
-| `POST`| `/api/v1/me/recommendations/:id/feedback` | `{ signal: LOVE \| LIKE \| DISLIKE \| NOT_FOR_ME }` |
-| `GET` | `/api/v1/discover?genre=&year=&decade=&country=&minRating=&sort=` | Exploración filtrada |
-| `GET` | `/api/v1/search?q=&type=album\|artist\|user\|list` | Búsqueda (proxy a Meilisearch) |
+| Método | Ruta                                                              | Descripción                                         |
+| ------ | ----------------------------------------------------------------- | --------------------------------------------------- |
+| `GET`  | `/api/v1/me/recommendations/daily`                                | 1 destacado + 3 picks + 1 artista                   |
+| `GET`  | `/api/v1/me/recommendations/weekly`                               | Lista de 20 + artistas + clásicos pendientes        |
+| `POST` | `/api/v1/me/recommendations/:id/dismiss`                          | Marca como "no me interesa" (mejora el modelo)      |
+| `POST` | `/api/v1/me/recommendations/:id/feedback`                         | `{ signal: LOVE \| LIKE \| DISLIKE \| NOT_FOR_ME }` |
+| `GET`  | `/api/v1/discover?genre=&year=&decade=&country=&minRating=&sort=` | Exploración filtrada                                |
+| `GET`  | `/api/v1/search?q=&type=album\|artist\|user\|list`                | Búsqueda (proxy a Meilisearch)                      |
 
 ### 7.8 Gamificación
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/api/v1/me/streak` | Racha actual + más larga |
-| `GET` | `/api/v1/me/badges` | Insignias ganadas + en progreso |
-| `GET` | `/api/v1/challenges/active` | Retos semanales activos |
-| `POST`| `/api/v1/challenges/:id/join` | Unirse a un reto |
-| `GET` | `/api/v1/me/challenges` | Progreso del usuario |
+| Método | Ruta                          | Descripción                     |
+| ------ | ----------------------------- | ------------------------------- |
+| `GET`  | `/api/v1/me/streak`           | Racha actual + más larga        |
+| `GET`  | `/api/v1/me/badges`           | Insignias ganadas + en progreso |
+| `GET`  | `/api/v1/challenges/active`   | Retos semanales activos         |
+| `POST` | `/api/v1/challenges/:id/join` | Unirse a un reto                |
+| `GET`  | `/api/v1/me/challenges`       | Progreso del usuario            |
 
 ### 7.9 Códigos de error (estándar)
 
@@ -669,15 +669,15 @@ model AlbumEmbedding {
 }
 ```
 
-| HTTP | Code | Cuándo |
-|---|---|---|
-| 400 | `VALIDATION_ERROR` | Body / query inválido |
-| 401 | `UNAUTHENTICATED` | Sin token o expirado |
-| 403 | `FORBIDDEN` | Sin permiso (p.ej. ver perfil privado) |
-| 404 | `NOT_FOUND` | Recurso no existe |
-| 409 | `CONFLICT` | Duplicado (p.ej. ya sigue al usuario) |
-| 429 | `RATE_LIMITED` | Demasiadas peticiones |
-| 500 | `INTERNAL` | Error de servidor |
+| HTTP | Code               | Cuándo                                 |
+| ---- | ------------------ | -------------------------------------- |
+| 400  | `VALIDATION_ERROR` | Body / query inválido                  |
+| 401  | `UNAUTHENTICATED`  | Sin token o expirado                   |
+| 403  | `FORBIDDEN`        | Sin permiso (p.ej. ver perfil privado) |
+| 404  | `NOT_FOUND`        | Recurso no existe                      |
+| 409  | `CONFLICT`         | Duplicado (p.ej. ya sigue al usuario)  |
+| 429  | `RATE_LIMITED`     | Demasiadas peticiones                  |
+| 500  | `INTERNAL`         | Error de servidor                      |
 
 ---
 
@@ -939,21 +939,21 @@ score(u, a) = w_cf  · score_cf(u, a)
 
 Los pesos se ajustan según el estado del usuario:
 
-| Estado | w_cf | w_cb | w_pop | w_nov | w_div |
-|---|---|---|---|---|---|
-| Cold (<5 escuchas) | 0.0 | 0.5 | 0.4 | 0.1 | 0.0 |
-| Warm (5-20) | 0.2 | 0.5 | 0.2 | 0.1 | 0.0 |
-| Hot (>20) | 0.5 | 0.3 | 0.05 | 0.1 | 0.05 |
+| Estado             | w_cf | w_cb | w_pop | w_nov | w_div |
+| ------------------ | ---- | ---- | ----- | ----- | ----- |
+| Cold (<5 escuchas) | 0.0  | 0.5  | 0.4   | 0.1   | 0.0   |
+| Warm (5-20)        | 0.2  | 0.5  | 0.2   | 0.1   | 0.0   |
+| Hot (>20)          | 0.5  | 0.3  | 0.05  | 0.1   | 0.05  |
 
 ### 10.4 Generación de recomendaciones específicas
 
-| Tipo | Fuente | Reglas adicionales |
-|---|---|---|
-| **Álbum del día** | Top 1 del ranker | Debe ser de un álbum NO escuchado, con rating comunitario ≥ 7.5 |
-| **3 picks diarios** | Top 2-4 del ranker | Diversidad: al menos 2 géneros distintos |
-| **Artista para descubrir** | Score CB sobre artistas, excluyendo seguidos | Premia novedad (artista con < 100k oyentes en Spotify) |
-| **Lista semanal de 20** | Top 20 con re-ranking por diversidad | Distribución: 50% safe (alta similitud), 30% adyacente (géneros cercanos), 20% exploración |
-| **Clásicos pendientes** | Álbumes con rating comunitario ≥ 8.5 en géneros favoritos del usuario que NO escuchó | Limit 5 por semana |
+| Tipo                       | Fuente                                                                               | Reglas adicionales                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| **Álbum del día**          | Top 1 del ranker                                                                     | Debe ser de un álbum NO escuchado, con rating comunitario ≥ 7.5                            |
+| **3 picks diarios**        | Top 2-4 del ranker                                                                   | Diversidad: al menos 2 géneros distintos                                                   |
+| **Artista para descubrir** | Score CB sobre artistas, excluyendo seguidos                                         | Premia novedad (artista con < 100k oyentes en Spotify)                                     |
+| **Lista semanal de 20**    | Top 20 con re-ranking por diversidad                                                 | Distribución: 50% safe (alta similitud), 30% adyacente (géneros cercanos), 20% exploración |
+| **Clásicos pendientes**    | Álbumes con rating comunitario ≥ 8.5 en géneros favoritos del usuario que NO escuchó | Limit 5 por semana                                                                         |
 
 ### 10.5 Pipeline de datos y entrenamiento
 
@@ -1017,15 +1017,15 @@ Plantillas posibles (i18n):
 
 Cada interacción es señal:
 
-| Acción del usuario | Señal | Peso en próximo reentrenamiento |
-|---|---|---|
-| Marca escuchado | + implícito | +1.0 |
-| Rating ≥ 8 | + fuerte | +2.0 |
-| Rating ≤ 4 | − negativo | −1.5 |
-| Agrega a favoritos | + muy fuerte | +3.0 |
-| Dismiss recomendación | − débil | −0.5 |
-| Feedback explícito "NOT_FOR_ME" | − fuerte | −2.0 |
-| Skip (vio y no actuó en 48h) | − débil | −0.2 |
+| Acción del usuario              | Señal        | Peso en próximo reentrenamiento |
+| ------------------------------- | ------------ | ------------------------------- |
+| Marca escuchado                 | + implícito  | +1.0                            |
+| Rating ≥ 8                      | + fuerte     | +2.0                            |
+| Rating ≤ 4                      | − negativo   | −1.5                            |
+| Agrega a favoritos              | + muy fuerte | +3.0                            |
+| Dismiss recomendación           | − débil      | −0.5                            |
+| Feedback explícito "NOT_FOR_ME" | − fuerte     | −2.0                            |
+| Skip (vio y no actuó en 48h)    | − débil      | −0.2                            |
 
 ---
 
@@ -1042,20 +1042,20 @@ Cada interacción es señal:
 
 Catálogo inicial sugerido:
 
-| Slug | Nombre | Criterio |
-|---|---|---|
-| `first_listen` | Primera vuelta | Primer álbum registrado |
-| `crate_digger` | Crate Digger | 100 álbumes registrados |
-| `vinyl_head` | Coleccionista | 500 álbumes |
-| `archivist` | Archivista | 1000 álbumes |
-| `genre_explorer_5` | Explorador | Álbumes de 5 géneros distintos en un mes |
-| `decade_traveler` | Viajero | Álbumes de 5 décadas distintas |
-| `night_owl` | Búho nocturno | 10 escuchas entre 0am y 5am |
-| `critic` | Crítico | 25 reseñas escritas |
-| `tastemaker` | Curador | Una lista con 100+ likes |
-| `streak_30` | Mes sonoro | Racha de 30 días |
-| `streak_365` | Año sonoro | Racha de 365 días |
-| `social_butterfly` | Social | 50 seguidores |
+| Slug               | Nombre         | Criterio                                 |
+| ------------------ | -------------- | ---------------------------------------- |
+| `first_listen`     | Primera vuelta | Primer álbum registrado                  |
+| `crate_digger`     | Crate Digger   | 100 álbumes registrados                  |
+| `vinyl_head`       | Coleccionista  | 500 álbumes                              |
+| `archivist`        | Archivista     | 1000 álbumes                             |
+| `genre_explorer_5` | Explorador     | Álbumes de 5 géneros distintos en un mes |
+| `decade_traveler`  | Viajero        | Álbumes de 5 décadas distintas           |
+| `night_owl`        | Búho nocturno  | 10 escuchas entre 0am y 5am              |
+| `critic`           | Crítico        | 25 reseñas escritas                      |
+| `tastemaker`       | Curador        | Una lista con 100+ likes                 |
+| `streak_30`        | Mes sonoro     | Racha de 30 días                         |
+| `streak_365`       | Año sonoro     | Racha de 365 días                        |
+| `social_butterfly` | Social         | 50 seguidores                            |
 
 ### 11.3 Retos semanales
 
