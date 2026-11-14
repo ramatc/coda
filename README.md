@@ -40,16 +40,16 @@ No es un reproductor de audio, ni un agregador de reseñas profesionales, ni una
 
 ## ✨ Características
 
-| | Funcionalidad |
-|---|---|
-| 🔎 | Catálogo unificado (MusicBrainz + Spotify) |
-| ✅ | Tracking de escuchas, ratings (1–10) y reseñas |
-| 📝 | Listas rankeables, públicas o privadas |
-| 🤖 | Recomendaciones explicables (content-based + colaborativo) |
-| 👤 | Perfiles con favoritos, historial y estadísticas |
-| 🌐 | Feed social: seguís gente y ves su actividad |
-| 🔔 | Notificaciones in-app y por email de nuevos seguidores y comentarios |
-| 📱 | Web (Next.js) + mobile nativo (Expo) a futuro |
+|     | Funcionalidad                                                        |
+| --- | -------------------------------------------------------------------- |
+| 🔎  | Catálogo unificado (MusicBrainz + Spotify)                           |
+| ✅  | Tracking de escuchas, ratings (1–10) y reseñas                       |
+| 📝  | Listas rankeables, públicas o privadas                               |
+| 🤖  | Recomendaciones explicables (content-based + colaborativo)           |
+| 👤  | Perfiles con favoritos, historial y estadísticas                     |
+| 🌐  | Feed social: seguís gente y ves su actividad                         |
+| 🔔  | Notificaciones in-app y por email de nuevos seguidores y comentarios |
+| 📱  | Web (Next.js) + mobile nativo (Expo) a futuro                        |
 
 ---
 
@@ -145,12 +145,12 @@ Las notificaciones in-app funcionan sin configuración adicional. El envío de e
 pnpm --filter @coda/api worker:notifications
 ```
 
-| Variable | Uso |
-|---|---|
-| `RESEND_API_KEY` | Clave de la API de Resend. Si falta, el envío queda desactivado: cada job se completa sin enviar nada y se registra una advertencia al iniciar. |
-| `RESEND_FROM_EMAIL` | Remitente de los emails (`notificaciones@dominio` o `Coda <notificaciones@dominio>`). Si falta, el envío también queda desactivado, porque Resend rechaza envíos sin remitente. |
-| `APP_URL` | Origen público de la web (por ejemplo `https://coda.app`), usado para construir los enlaces de cada email. Es obligatoria para el worker: sin ella, el proceso termina con código 1. |
-| `REDIS_URL` | Redis de la cola (el mismo que usan los demás workers). |
+| Variable            | Uso                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `RESEND_API_KEY`    | Clave de la API de Resend. Si falta, el envío queda desactivado: cada job se completa sin enviar nada y se registra una advertencia al iniciar.                                      |
+| `RESEND_FROM_EMAIL` | Remitente de los emails (`notificaciones@dominio` o `Coda <notificaciones@dominio>`). Si falta, el envío también queda desactivado, porque Resend rechaza envíos sin remitente.      |
+| `APP_URL`           | Origen público de la web (por ejemplo `https://coda.app`), usado para construir los enlaces de cada email. Es obligatoria para el worker: sin ella, el proceso termina con código 1. |
+| `REDIS_URL`         | Redis de la cola (el mismo que usan los demás workers).                                                                                                                              |
 
 Sin el worker en ejecución, los jobs quedan pendientes en Redis y se procesan cuando el worker se inicia.
 
@@ -158,24 +158,24 @@ Sin el worker en ejecución, los jobs quedan pendientes en Redis y se procesan c
 
 ## 🗺️ Roadmap
 
-| Fase | Objetivo | Estado |
-|---|---|---|
-| **F0** | Setup, diseño y CI/CD | ✅ Hecho |
-| **F1** | MVP: auth, onboarding, catálogo, tracking, perfil, reco v1 | ✅ Hecho |
+| Fase   | Objetivo                                                                                     | Estado                                            |
+| ------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **F0** | Setup, diseño y CI/CD                                                                        | ✅ Hecho                                          |
+| **F1** | MVP: auth, onboarding, catálogo, tracking, perfil, reco v1                                   | ✅ Hecho                                          |
 | **F2** | Social y listas: follows, feed, listas, reseñas con likes y comentarios, notificaciones, SEO | 🚧 En curso (slices 1-4 hechas, falta la slice 5) |
-| **F3** | Reco v2: servicio Python, embeddings, explicabilidad | 🔜 |
-| **F4** | Gamificación: rachas, insignias, "Tu año en Coda" | 🔜 |
-| **F5** | Mobile nativo (Expo) | 🔜 |
+| **F3** | Reco v2: servicio Python, embeddings, explicabilidad                                         | 🔜                                                |
+| **F4** | Gamificación: rachas, insignias, "Tu año en Coda"                                            | 🔜                                                |
+| **F5** | Mobile nativo (Expo)                                                                         | 🔜                                                |
 
 ### Fase 2 — detalle por slice
 
-| Slice | Alcance | Estado |
-|---|---|---|
-| 1 | Follows y feed de actividad de seguidos | ✅ Hecho |
-| 2 | Listas (crear, editar, reordenar) y "quiero escuchar" | ✅ Hecho |
-| 3 | Reseñas con likes y comentarios, likes en listas | ✅ Hecho |
-| 4 | Notificaciones in-app y por email (Resend) | ✅ Hecho |
-| 5 | SEO y páginas públicas indexables | 🚧 En curso (álbumes y listas públicas y sitemap hechos; faltan perfiles públicos) |
+| Slice | Alcance                                               | Estado                                                                             |
+| ----- | ----------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 1     | Follows y feed de actividad de seguidos               | ✅ Hecho                                                                           |
+| 2     | Listas (crear, editar, reordenar) y "quiero escuchar" | ✅ Hecho                                                                           |
+| 3     | Reseñas con likes y comentarios, likes en listas      | ✅ Hecho                                                                           |
+| 4     | Notificaciones in-app y por email (Resend)            | ✅ Hecho                                                                           |
+| 5     | SEO y páginas públicas indexables                     | 🚧 En curso (álbumes y listas públicas y sitemap hechos; faltan perfiles públicos) |
 
 Además, la landing pública (hero, secciones con datos reales, sign-in y sign-up in-app) ya está rediseñada.
 
