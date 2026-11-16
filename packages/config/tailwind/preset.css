@@ -86,6 +86,32 @@
   --shadow-floating:
     0 12px 32px -8px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(0.26 0.022 300);
 
+  /*
+   * Motion (Brand Kit v1.2 §33): short, precise, functional. Opacity, small
+   * translations and subtle scale only — no bounce, elastic or glow. The kit
+   * sets no numbers; these are the system's.
+   *   fast — hover/press color changes
+   *   base — small state changes (rating fill, toggles)
+   *   slow — entering floating UI, larger layout moves
+   */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+  /* Decelerating, no overshoot. Overrides Tailwind's `ease-out`. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  /* Every bare `transition-*` utility picks these up. */
+  --default-transition-duration: var(--motion-fast);
+  --default-transition-timing-function: var(--ease-out);
+  /* Floating UI entrance: fade plus a 4px drop. */
+  --animate-enter: enter var(--motion-base) var(--ease-out) both;
+
+  @keyframes enter {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+
   /* UI/data — next/font in apps/web binds `--font-inter-tight`. */
   --font-sans: var(--font-inter-tight, ui-sans-serif, system-ui, sans-serif);
   /* Reviews and human opinion — never UI chrome or data. */
@@ -124,6 +150,21 @@
 @layer base {
   :root {
     color-scheme: dark;
+  }
+
+  /*
+   * Reduced motion: collapse every animation and transition to an instant
+   * change. 0.01ms (not 0) keeps `animationend`/`transitionend` firing.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 

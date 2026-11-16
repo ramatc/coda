@@ -108,7 +108,7 @@ export function InteractiveSegments({
             <span
               data-testid="rating-scale-segment"
               data-selected={checked || undefined}
-              className="relative overflow-hidden rounded-[1px] bg-surface-2"
+              className="relative overflow-hidden rounded-[1px] bg-surface-2 transition-[height] duration-(--motion-base)"
               style={{
                 width: config.segmentWidth,
                 height: checked
@@ -117,7 +117,10 @@ export function InteractiveSegments({
               }}
             >
               <span
-                className={cn("absolute inset-y-0 left-0", fillClass)}
+                className={cn(
+                  "absolute inset-y-0 left-0 transition-[width] duration-(--motion-base)",
+                  fillClass,
+                )}
                 style={{ width: `${fill}%` }}
               />
             </span>

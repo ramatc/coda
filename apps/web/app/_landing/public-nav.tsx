@@ -84,7 +84,7 @@ export function PublicNav() {
           id={panelId}
           aria-label="Landing mobile"
           hidden={!open}
-          className="absolute inset-x-0 top-full flex flex-col gap-1 border-b border-border-subtle bg-background/95 px-4 py-3 backdrop-blur md:hidden"
+          className="absolute inset-x-0 top-full flex animate-enter flex-col gap-1 border-b border-border-subtle bg-background/95 px-4 py-3 backdrop-blur md:hidden"
         >
           {SECTION_LINKS.map(({ href, label }) => (
             <a key={href} href={href} onClick={close} className={LINK_CLASS}>
