@@ -19,7 +19,7 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-// The monogram is decorative (`alt=""`) and asserted nowhere, so its double
+// The wordmark image is decorative (`alt=""`) and asserted nowhere, so its double
 // renders nothing rather than an unloaded image.
 vi.mock("next/image", () => ({
   default: () => null,

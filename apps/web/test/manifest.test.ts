@@ -14,7 +14,8 @@ describe("manifest", () => {
 
   it("declares the app icon with its real size", () => {
     expect(manifest().icons).toEqual([
-      { src: "/icon.png", sizes: "326x322", type: "image/png" },
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
     ]);
   });
 });

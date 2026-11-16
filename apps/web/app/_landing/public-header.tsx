@@ -4,7 +4,7 @@ import Image from "next/image";
 import { PublicNav } from "./public-nav";
 
 /**
- * Logged-out top bar for the public landing (`/`): the monogram + "CODA"
+ * Logged-out top bar for the public landing (`/`): the CODA wordmark
  * wordmark (linking to `/`, not `/home`), the on-page {@link PublicNav}, and
  * the two entry points into the app — "Sign in" and "Get started".
  *
@@ -20,19 +20,17 @@ export function PublicHeader() {
     <header className="sticky top-0 z-10 border-b border-border-subtle bg-background/95 px-4 py-3 backdrop-blur lg:px-6">
       <div className="mx-auto flex max-w-[1240px] items-center justify-between gap-4 lg:gap-8">
         <div className="flex items-center gap-6 lg:gap-8">
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-lg font-black tracking-tight text-text-primary"
-          >
+          <Link href="/" className="flex items-center text-text-primary">
+            {/* Horizontal brand format: the wordmark alone, per Brand Kit v1.2. */}
             <Image
-              src="/brand/coda-monogram.png"
+              src="/brand/coda-wordmark-offwhite.svg"
               alt=""
-              width={223}
-              height={222}
+              width={202}
+              height={56}
               priority
-              className="h-7 w-auto"
+              className="h-5 w-auto"
             />
-            CODA
+            <span className="sr-only">CODA</span>
           </Link>
           <PublicNav />
         </div>
