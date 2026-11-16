@@ -1,7 +1,11 @@
 import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Redis } from "ioredis";
-import { CHECKPOINT_KEY, DEFAULT_REDIS_URL, REDIS_URL_ENV } from "./catalog-import.constants.js";
+import {
+  CHECKPOINT_KEY,
+  DEFAULT_REDIS_URL,
+  REDIS_URL_ENV,
+} from "./catalog-import.constants.js";
 
 /**
  * Minimal cursor store the resumable importer depends on. Abstracted behind an

@@ -10,8 +10,7 @@ export interface CompleteOnboardingArgs {
 }
 
 export type CompleteOnboardingResult =
-  | { ok: true }
-  | { ok: false; error: string };
+  { ok: true } | { ok: false; error: string };
 
 /**
  * Server Action that submits the onboarding selection to the API with the
@@ -37,7 +36,10 @@ export async function completeOnboarding(
       body: JSON.stringify(args),
     });
   } catch {
-    return { ok: false, error: "Could not save your onboarding. Please retry." };
+    return {
+      ok: false,
+      error: "Could not save your onboarding. Please retry.",
+    };
   }
 
   if (response.ok) {
@@ -54,9 +56,9 @@ export async function completeOnboarding(
   // error"}` — that literal string must NOT reach the user; keep the
   // friendly fallback for those instead.
   if (response.status >= 400 && response.status < 500) {
-    const body = (await response.json().catch(() => null)) as
-      | { message?: string | string[] }
-      | null;
+    const body = (await response.json().catch(() => null)) as {
+      message?: string | string[];
+    } | null;
     const message = Array.isArray(body?.message)
       ? body?.message.join(" ")
       : body?.message;

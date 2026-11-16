@@ -67,7 +67,9 @@ describe("ListsController", () => {
     updateList = vi.fn().mockResolvedValue({ ...detail, title: "Renamed" });
     deleteList = vi.fn().mockResolvedValue(undefined);
     getUserLists = vi.fn().mockResolvedValue([]);
-    addItem = vi.fn().mockResolvedValue({ ...detail, items: [{ id: "item-1" }] });
+    addItem = vi
+      .fn()
+      .mockResolvedValue({ ...detail, items: [{ id: "item-1" }] });
     removeItem = vi.fn().mockResolvedValue(detail);
     reorder = vi.fn().mockResolvedValue(detail);
     likeList = vi.fn().mockResolvedValue({ likeCount: 1, hasLiked: true });

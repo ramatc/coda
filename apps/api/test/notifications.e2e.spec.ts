@@ -132,9 +132,7 @@ function stubPrisma() {
         }
         return page.slice(0, args.take);
       },
-      async count(args: {
-        where: { recipientUserId: string; readAt: null };
-      }) {
+      async count(args: { where: { recipientUserId: string; readAt: null } }) {
         return ownedBy(args.where.recipientUserId).filter(
           (r) => r.readAt === args.where.readAt,
         ).length;

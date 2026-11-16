@@ -45,7 +45,9 @@ describe("deterministic BullMQ job ids", () => {
   });
 
   it("the validator itself rejects a colon id (guards against a no-op check)", () => {
-    expect(() => validateJobId("album:x")).toThrow("Custom Id cannot contain :");
+    expect(() => validateJobId("album:x")).toThrow(
+      "Custom Id cannot contain :",
+    );
   });
 
   it("keeps ids distinct per queue key", () => {

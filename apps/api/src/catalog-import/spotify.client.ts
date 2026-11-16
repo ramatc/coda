@@ -133,7 +133,10 @@ export class SpotifyClient {
       // status code (not the arithmetic) is what actually decides clean-stop
       // vs. real error (judgment-day issue #4).
       const pastOffsetCapBoundary = offset + limit >= SPOTIFY_SEARCH_MAX_OFFSET;
-      if (pastOffsetCapBoundary && response.status === SPOTIFY_OFFSET_CAP_STATUS) {
+      if (
+        pastOffsetCapBoundary &&
+        response.status === SPOTIFY_OFFSET_CAP_STATUS
+      ) {
         this.logger.log(
           `Reached Spotify's /v1/search offset cap at offset=${offset} ` +
             `(limit=${limit}) — stopping the import cleanly rather than ` +
@@ -208,8 +211,7 @@ export class SpotifyClient {
     this.cachedToken = {
       accessToken: token.access_token,
       expiresAtMs:
-        Date.now() +
-        (token.expires_in - TOKEN_EXPIRY_SAFETY_SECONDS) * 1000,
+        Date.now() + (token.expires_in - TOKEN_EXPIRY_SAFETY_SECONDS) * 1000,
     };
     return this.cachedToken.accessToken;
   }
@@ -229,7 +231,8 @@ export class SpotifyClient {
     // only matches reality because the pager always requests a fixed `limit`
     // — it would silently diverge if Spotify's pagination ever returned a
     // different count. Fall back to arithmetic only if `next` is unparseable.
-    const nextOffset = this.parseNextOffset(page.next) ?? page.offset + page.limit;
+    const nextOffset =
+      this.parseNextOffset(page.next) ?? page.offset + page.limit;
     return nextOffset >= page.total ? null : nextOffset;
   }
 

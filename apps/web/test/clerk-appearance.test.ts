@@ -4,10 +4,7 @@ import { dark } from "@clerk/ui/themes";
 import { clerkAppearance } from "../lib/clerk-appearance";
 
 const presetCss = readFileSync(
-  new URL(
-    "../../../packages/config/tailwind/preset.css",
-    import.meta.url,
-  ),
+  new URL("../../../packages/config/tailwind/preset.css", import.meta.url),
   "utf8",
 );
 

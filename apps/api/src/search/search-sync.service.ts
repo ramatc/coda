@@ -10,7 +10,8 @@ import {
 } from "./search-document.js";
 
 /** Outcome of a single album's search-sync attempt. */
-export type SyncAlbumResult = { status: "synced" } | { status: "album-missing" };
+export type SyncAlbumResult =
+  { status: "synced" } | { status: "album-missing" };
 
 /** Counts produced by a full reindex run. */
 export interface ReindexResult {

@@ -1,10 +1,4 @@
-import {
-  Body,
-  Controller,
-  HttpCode,
-  Post,
-  UseGuards,
-} from "@nestjs/common";
+import { Body, Controller, HttpCode, Post, UseGuards } from "@nestjs/common";
 import { CatalogQueue } from "./catalog-queue.js";
 import { CatalogAdminGuard } from "./catalog-admin.guard.js";
 import { SPOTIFY_PAGE_LIMIT } from "./catalog-import.constants.js";

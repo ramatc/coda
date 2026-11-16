@@ -14,9 +14,7 @@ describe("ActivityController", () => {
   let controller: ActivityController;
 
   beforeEach(() => {
-    getOwnActivity = vi
-      .fn()
-      .mockResolvedValue({ items: [], nextCursor: null });
+    getOwnActivity = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
     const service = { getOwnActivity } as unknown as ActivityService;
     controller = new ActivityController(service);
   });

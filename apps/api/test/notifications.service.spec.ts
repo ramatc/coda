@@ -275,7 +275,10 @@ describe("NotificationsService (read surface)", () => {
 
   beforeEach(() => {
     fake = createFakePrisma();
-    service = new NotificationsService(fake.prisma, createFakeEmailQueue().queue);
+    service = new NotificationsService(
+      fake.prisma,
+      createFakeEmailQueue().queue,
+    );
     fake.users.set(CLERK_ID, RECIPIENT_ID);
   });
 
@@ -577,7 +580,10 @@ describe("NotificationsService (mark-as-read)", () => {
 
   beforeEach(() => {
     fake = createFakePrisma();
-    service = new NotificationsService(fake.prisma, createFakeEmailQueue().queue);
+    service = new NotificationsService(
+      fake.prisma,
+      createFakeEmailQueue().queue,
+    );
     fake.users.set(CLERK_ID, RECIPIENT_ID);
   });
 
@@ -838,9 +844,9 @@ describe("NotificationsService (write surface, unit layer)", () => {
   it("warn-logs and rethrows an insert failure that is NOT the dedup violation", async () => {
     fake.control.nextCreateError = new Error("connection terminated");
 
-    await expect(
-      service.notifyFollow(ACTOR_ID, RECIPIENT_ID),
-    ).rejects.toThrow("connection terminated");
+    await expect(service.notifyFollow(ACTOR_ID, RECIPIENT_ID)).rejects.toThrow(
+      "connection terminated",
+    );
 
     // The contrast case for the dedup test above: a genuine failure is NOT
     // silently absorbed. It is surfaced to the log AND propagated to the hook

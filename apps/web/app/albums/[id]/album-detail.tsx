@@ -68,7 +68,10 @@ export function AlbumDetailView({ album, children }: AlbumDetailViewProps) {
               </span>
             ) : null}
           </p>
-          <p className="text-sm font-medium text-text-primary" data-testid="aggregate-rating">
+          <p
+            className="text-sm font-medium text-text-primary"
+            data-testid="aggregate-rating"
+          >
             {formatAggregate(
               album.aggregateRating.average,
               album.aggregateRating.count,

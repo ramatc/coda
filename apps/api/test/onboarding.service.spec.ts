@@ -502,7 +502,10 @@ describe("OnboardingService", () => {
     for (const id of uniqueArtistIds) {
       fake.artists.set(id, { id, name: `Artist ${id}` });
     }
-    const duplicatedRawArtistIds = [...uniqueArtistIds, ...uniqueArtistIds.slice(0, 10)];
+    const duplicatedRawArtistIds = [
+      ...uniqueArtistIds,
+      ...uniqueArtistIds.slice(0, 10),
+    ];
     expect(duplicatedRawArtistIds.length).toBe(25);
 
     const status = await service.complete("clerk_1", {

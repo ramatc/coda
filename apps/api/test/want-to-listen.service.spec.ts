@@ -231,7 +231,10 @@ describe("WantToListenService", () => {
       expect(typeof row.id).toBe("string");
       expect(row.createdAt).toMatch(/^2026-/);
       expect(fake.wants).toHaveLength(1);
-      expect(fake.wants[0]).toMatchObject({ userId: OWNER_ID, albumId: ALBUM_ID });
+      expect(fake.wants[0]).toMatchObject({
+        userId: OWNER_ID,
+        albumId: ALBUM_ID,
+      });
     });
 
     it("rejects a duplicate mark with a 409 and creates no second row", async () => {
@@ -389,9 +392,9 @@ describe("WantToListenService", () => {
     });
 
     it("throws 404 for an unknown username", async () => {
-      await expect(
-        service.getUserWantToListen("ghost"),
-      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.getUserWantToListen("ghost")).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
   });
 });

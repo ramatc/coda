@@ -22,12 +22,7 @@ import { MeiliService } from "./meili.service.js";
  */
 @Module({
   controllers: [SearchController],
-  providers: [
-    SearchService,
-    SearchSyncService,
-    SearchQueue,
-    MeiliService,
-  ],
+  providers: [SearchService, SearchSyncService, SearchQueue, MeiliService],
   exports: [SearchSyncService, SearchQueue, MeiliService],
 })
 export class SearchModule {}

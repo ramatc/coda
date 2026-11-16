@@ -75,9 +75,12 @@ export class NotificationEmailQueue implements OnModuleDestroy {
   private getQueue(): Queue<NotificationEmailJobData> {
     const queue =
       this.queue ??
-      (this.queue = new Queue<NotificationEmailJobData>(NOTIFICATION_EMAIL_QUEUE, {
-        connection: this.getConnection(),
-      }));
+      (this.queue = new Queue<NotificationEmailJobData>(
+        NOTIFICATION_EMAIL_QUEUE,
+        {
+          connection: this.getConnection(),
+        },
+      ));
     return queue;
   }
 }

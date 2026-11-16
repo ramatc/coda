@@ -10,7 +10,11 @@ describe("resolveSingleton", () => {
     const container: ClientContainer<FakeClient> = {};
     let calls = 0;
 
-    const instance = resolveSingleton(container, () => ({ id: ++calls }), "development");
+    const instance = resolveSingleton(
+      container,
+      () => ({ id: ++calls }),
+      "development",
+    );
 
     expect(instance).toEqual({ id: 1 });
     expect(calls).toBe(1);

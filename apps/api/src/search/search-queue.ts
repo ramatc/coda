@@ -69,11 +69,17 @@ export class SearchQueue implements OnModuleDestroy {
     const jobId = searchAlbumSyncJobId(spotifyId);
     const queue = this.getQueue();
     const existing = await queue.getJob(jobId);
-    if (existing && ((await existing.isFailed()) || (await existing.isCompleted()))) {
+    if (
+      existing &&
+      ((await existing.isFailed()) || (await existing.isCompleted()))
+    ) {
       try {
         await existing.remove();
       } catch (error) {
-        if (error instanceof Error && error.message.includes("locked by another worker")) {
+        if (
+          error instanceof Error &&
+          error.message.includes("locked by another worker")
+        ) {
           this.logger.warn(
             `Skipping re-enqueue for ${jobId}: existing job was picked up by a worker concurrently. ${error.message}`,
           );

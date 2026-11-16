@@ -54,13 +54,18 @@ const ALBUM: AlbumDetail = {
 function stubAlbumResponse(album: AlbumDetail): void {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({ status: 200, ok: true, json: async () => album }),
+    vi
+      .fn()
+      .mockResolvedValue({ status: 200, ok: true, json: async () => album }),
   );
 }
 
 describe("fetchAlbumDetail", () => {
   it("returns ALBUM_NOT_FOUND on a 404", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 404, ok: false }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ status: 404, ok: false }),
+    );
     expect(await fetchAlbumDetail("t", "album-1")).toBe(ALBUM_NOT_FOUND);
   });
 
@@ -124,7 +129,10 @@ describe("fetchAlbumDetail", () => {
 
 describe("markListened", () => {
   it("resolves on success", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200 }),
+    );
     await expect(markListened("t", "album-1")).resolves.toBeUndefined();
   });
 
@@ -174,7 +182,10 @@ describe("markListened", () => {
   });
 
   it("throws a generic message for other failures", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+    );
     await expect(markListened("t", "album-1")).rejects.toThrow(
       "Could not mark this album as listened.",
     );
@@ -183,7 +194,10 @@ describe("markListened", () => {
 
 describe("deleteListen", () => {
   it("resolves on success", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200 }),
+    );
     await expect(deleteListen("t", "listen-1")).resolves.toBeUndefined();
   });
 
@@ -213,13 +227,17 @@ describe("deleteListen", () => {
         json: async () => ({ message: "Listen not found" }),
       }),
     );
-    await expect(deleteListen("t", "listen-1")).rejects.toThrow("Listen not found");
+    await expect(deleteListen("t", "listen-1")).rejects.toThrow(
+      "Listen not found",
+    );
   });
 
   it("falls back to the generic message on a 404 with no message and no code", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }),
+      vi
+        .fn()
+        .mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }),
     );
     await expect(deleteListen("t", "listen-1")).rejects.toThrow(
       "Could not remove this listen.",
@@ -227,7 +245,10 @@ describe("deleteListen", () => {
   });
 
   it("throws a generic message for other failures", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+    );
     await expect(deleteListen("t", "listen-1")).rejects.toThrow(
       "Could not remove this listen.",
     );
@@ -236,7 +257,10 @@ describe("deleteListen", () => {
 
 describe("rateAlbum", () => {
   it("resolves on success", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200 }),
+    );
     await expect(rateAlbum("t", "album-1", 8)).resolves.toBeUndefined();
   });
 
@@ -274,7 +298,9 @@ describe("rateAlbum", () => {
   it("falls back to the generic message on a 404 with no message and no code", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }),
+      vi
+        .fn()
+        .mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }),
     );
     await expect(rateAlbum("t", "album-1", 8)).rejects.toThrow(
       "Could not save your rating.",
@@ -282,7 +308,10 @@ describe("rateAlbum", () => {
   });
 
   it("throws a generic message for other failures", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+    );
     await expect(rateAlbum("t", "album-1", 8)).rejects.toThrow(
       "Could not save your rating.",
     );
@@ -291,7 +320,10 @@ describe("rateAlbum", () => {
 
 describe("deleteRating", () => {
   it("resolves on success", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200 }),
+    );
     await expect(deleteRating("t", "album-1")).resolves.toBeUndefined();
   });
 
@@ -321,13 +353,17 @@ describe("deleteRating", () => {
         json: async () => ({ message: "Rating not found" }),
       }),
     );
-    await expect(deleteRating("t", "album-1")).rejects.toThrow("Rating not found");
+    await expect(deleteRating("t", "album-1")).rejects.toThrow(
+      "Rating not found",
+    );
   });
 
   it("falls back to the generic message on a 404 with no message and no code", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }),
+      vi
+        .fn()
+        .mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }),
     );
     await expect(deleteRating("t", "album-1")).rejects.toThrow(
       "Could not remove your rating.",
@@ -335,7 +371,10 @@ describe("deleteRating", () => {
   });
 
   it("throws a generic message for other failures", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+    );
     await expect(deleteRating("t", "album-1")).rejects.toThrow(
       "Could not remove your rating.",
     );
@@ -344,12 +383,20 @@ describe("deleteRating", () => {
 
 describe("writeReview", () => {
   it("resolves on success", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
-    await expect(writeReview("t", "album-1", "Great record.")).resolves.toBeUndefined();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200 }),
+    );
+    await expect(
+      writeReview("t", "album-1", "Great record."),
+    ).resolves.toBeUndefined();
   });
 
   it("throws a specific message on a 400 (unrated album)", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 400 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 400 }),
+    );
     await expect(writeReview("t", "album-1", "Great record.")).rejects.toThrow(
       "Rate this album before writing a review.",
     );
@@ -389,7 +436,9 @@ describe("writeReview", () => {
   it("falls back to the generic message on a 404 with no message and no code", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }),
+      vi
+        .fn()
+        .mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }),
     );
     await expect(writeReview("t", "album-1", "Great record.")).rejects.toThrow(
       "Could not save your review.",
@@ -397,7 +446,10 @@ describe("writeReview", () => {
   });
 
   it("throws a generic message for other failures", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+    );
     await expect(writeReview("t", "album-1", "Great record.")).rejects.toThrow(
       "Could not save your review.",
     );

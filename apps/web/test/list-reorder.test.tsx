@@ -210,9 +210,7 @@ describe("ListReorder", () => {
     render(<ListReorder listId={LIST_ID} items={[]} />);
 
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
-    expect(
-      screen.getByText("No albums on this list yet."),
-    ).not.toBeNull();
+    expect(screen.getByText("No albums on this list yet.")).not.toBeNull();
   });
 
   it("exposes a keyboard-reachable drag handle per row", () => {
@@ -345,11 +343,9 @@ describe("ListReorder", () => {
 
     dropOn("b", "b");
 
-    await waitFor(() => expect(renderedTitles()).toEqual([
-      "Kid A",
-      "Amnesiac",
-      "In Rainbows",
-    ]));
+    await waitFor(() =>
+      expect(renderedTitles()).toEqual(["Kid A", "Amnesiac", "In Rainbows"]),
+    );
     expect(reorderListItems).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
   });
@@ -359,18 +355,14 @@ describe("ListReorder", () => {
 
     dropOn("c", null);
 
-    await waitFor(() => expect(renderedTitles()).toEqual([
-      "Kid A",
-      "Amnesiac",
-      "In Rainbows",
-    ]));
+    await waitFor(() =>
+      expect(renderedTitles()).toEqual(["Kid A", "Amnesiac", "In Rainbows"]),
+    );
     expect(reorderListItems).not.toHaveBeenCalled();
   });
 
   it("re-syncs from fresh server props after a refresh lands", () => {
-    const { rerender } = render(
-      <ListReorder listId={LIST_ID} items={ITEMS} />,
-    );
+    const { rerender } = render(<ListReorder listId={LIST_ID} items={ITEMS} />);
     expect(renderedTitles()).toEqual(["Kid A", "Amnesiac", "In Rainbows"]);
 
     const server: ListItem[] = [
@@ -392,9 +384,7 @@ describe("ListReorder", () => {
         }),
     );
 
-    const { rerender } = render(
-      <ListReorder listId={LIST_ID} items={ITEMS} />,
-    );
+    const { rerender } = render(<ListReorder listId={LIST_ID} items={ITEMS} />);
     dropOn("c", "a");
     expect(renderedTitles()).toEqual(["In Rainbows", "Kid A", "Amnesiac"]);
 

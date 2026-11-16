@@ -108,7 +108,9 @@ export function ProfileView({
         <p className="text-sm italic opacity-50">No bio yet.</p>
       )}
 
-      {isOwnProfile ? <section aria-label="Edit avatar">{children}</section> : null}
+      {isOwnProfile ? (
+        <section aria-label="Edit avatar">{children}</section>
+      ) : null}
 
       {listsSection}
       {wantToListenSection}

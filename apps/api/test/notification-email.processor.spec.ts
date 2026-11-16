@@ -67,7 +67,9 @@ describe("notification email processor", () => {
   it("completes without sending when the notification was cascade-deleted", async () => {
     const worker = harness(null);
 
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).resolves.toBeUndefined();
+    await expect(
+      worker.process({ notificationId: NOTIFICATION_ID }),
+    ).resolves.toBeUndefined();
 
     expect(worker.findUnique).toHaveBeenCalledWith({
       where: { id: NOTIFICATION_ID },
@@ -119,7 +121,10 @@ describe("notification email processor", () => {
 
     await worker.process({ notificationId: NOTIFICATION_ID });
 
-    const email = worker.send.mock.calls[0][0] as { subject: string; html: string };
+    const email = worker.send.mock.calls[0][0] as {
+      subject: string;
+      html: string;
+    };
     expect(email.subject).toBe("Ana Torres commented on your review");
     expect(email.html).toContain(`href="${APP_URL}/reviews/${REVIEW_ID}"`);
     expect(email.html).toContain("x".repeat(140));
@@ -153,9 +158,14 @@ describe("notification email processor", () => {
 
   it("completes without retry when Resend is disabled", async () => {
     const worker = harness();
-    worker.send.mockResolvedValueOnce({ status: "skipped", reason: "disabled" });
+    worker.send.mockResolvedValueOnce({
+      status: "skipped",
+      reason: "disabled",
+    });
 
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).resolves.toBeUndefined();
+    await expect(
+      worker.process({ notificationId: NOTIFICATION_ID }),
+    ).resolves.toBeUndefined();
 
     expect(worker.logger.debug).toHaveBeenCalledWith(
       `Notification email ${NOTIFICATION_ID} skipped because Resend is disabled.`,
@@ -164,33 +174,42 @@ describe("notification email processor", () => {
 
   it("turns a permanent Resend 4xx into an UnrecoverableError", async () => {
     const worker = harness();
-    worker.send.mockRejectedValueOnce(new ResendSendError(422, "invalid recipient"));
-
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBeInstanceOf(
-      UnrecoverableError,
+    worker.send.mockRejectedValueOnce(
+      new ResendSendError(422, "invalid recipient"),
     );
+
+    await expect(
+      worker.process({ notificationId: NOTIFICATION_ID }),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
   });
 
   it("keeps a non-retryable 4xx such as 400 unrecoverable", async () => {
     const worker = harness();
-    worker.send.mockRejectedValueOnce(new ResendSendError(400, "validation_error"));
-
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBeInstanceOf(
-      UnrecoverableError,
+    worker.send.mockRejectedValueOnce(
+      new ResendSendError(400, "validation_error"),
     );
+
+    await expect(
+      worker.process({ notificationId: NOTIFICATION_ID }),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
   });
 
   // 408 is a request timeout and 409 is what Resend answers while an earlier
   // attempt with the same idempotency key is still in flight
   // (`concurrent_idempotent_requests`) — both are transient, so the queue's
   // backoff must apply instead of failing the job permanently.
-  it.each([408, 409, 429, 503])("leaves Resend status %i retryable", async (status) => {
-    const worker = harness();
-    const error = new ResendSendError(status, "temporary failure");
-    worker.send.mockRejectedValueOnce(error);
+  it.each([408, 409, 429, 503])(
+    "leaves Resend status %i retryable",
+    async (status) => {
+      const worker = harness();
+      const error = new ResendSendError(status, "temporary failure");
+      worker.send.mockRejectedValueOnce(error);
 
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBe(error);
-  });
+      await expect(
+        worker.process({ notificationId: NOTIFICATION_ID }),
+      ).rejects.toBe(error);
+    },
+  );
 
   it("turns a 409 invalid_idempotent_request into an UnrecoverableError", async () => {
     // The key was reused with a DIFFERENT payload than the original request —
@@ -203,9 +222,9 @@ describe("notification email processor", () => {
     );
     worker.send.mockRejectedValueOnce(error);
 
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBeInstanceOf(
-      UnrecoverableError,
-    );
+    await expect(
+      worker.process({ notificationId: NOTIFICATION_ID }),
+    ).rejects.toBeInstanceOf(UnrecoverableError);
   });
 
   it("leaves a 409 concurrent_idempotent_requests retryable", async () => {
@@ -218,7 +237,9 @@ describe("notification email processor", () => {
     );
     worker.send.mockRejectedValueOnce(error);
 
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBe(error);
+    await expect(
+      worker.process({ notificationId: NOTIFICATION_ID }),
+    ).rejects.toBe(error);
   });
 
   it("leaves network failures retryable", async () => {
@@ -226,12 +247,14 @@ describe("notification email processor", () => {
     const error = new Error("socket closed");
     worker.send.mockRejectedValueOnce(error);
 
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toBe(error);
+    await expect(
+      worker.process({ notificationId: NOTIFICATION_ID }),
+    ).rejects.toBe(error);
   });
 
   it("HTML-escapes display names, usernames and comment excerpts at composition time", async () => {
     const follow = harness(
-      followRow({ username: 'a<&"\'', displayName: 'Ana <Admin> & "Boss"' }),
+      followRow({ username: "a<&\"'", displayName: 'Ana <Admin> & "Boss"' }),
     );
     await follow.process({ notificationId: NOTIFICATION_ID });
 
@@ -240,10 +263,13 @@ describe("notification email processor", () => {
     expect(followHtml).toContain("/u/a&lt;&amp;&quot;&#39;");
     expect(followHtml).not.toContain("<Admin>");
 
-    const comment = harness(commentRow('<script>alert("x")</script> & goodbye'));
+    const comment = harness(
+      commentRow('<script>alert("x")</script> & goodbye'),
+    );
     await comment.process({ notificationId: NOTIFICATION_ID });
 
-    const commentHtml = (comment.send.mock.calls[0][0] as { html: string }).html;
+    const commentHtml = (comment.send.mock.calls[0][0] as { html: string })
+      .html;
     expect(commentHtml).toContain(
       "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; goodbye",
     );
@@ -260,9 +286,12 @@ describe("notification email processor", () => {
   it("strips control characters from the subject without HTML-escaping it", async () => {
     const hostile = "Ana & Co\r\nBcc: evil@example.com\t<Boss>\u0007";
 
-    const follow = harness(followRow({ username: "ana", displayName: hostile }));
+    const follow = harness(
+      followRow({ username: "ana", displayName: hostile }),
+    );
     await follow.process({ notificationId: NOTIFICATION_ID });
-    const followSubject = (follow.send.mock.calls[0][0] as { subject: string }).subject;
+    const followSubject = (follow.send.mock.calls[0][0] as { subject: string })
+      .subject;
     expect(followSubject).toBe(
       "Ana & Co Bcc: evil@example.com <Boss> followed you on Coda",
     );
@@ -272,7 +301,9 @@ describe("notification email processor", () => {
       actor: { profile: { username: "ana", displayName: hostile } },
     });
     await comment.process({ notificationId: NOTIFICATION_ID });
-    const commentSubject = (comment.send.mock.calls[0][0] as { subject: string }).subject;
+    const commentSubject = (
+      comment.send.mock.calls[0][0] as { subject: string }
+    ).subject;
     expect(commentSubject).toBe(
       "Ana & Co Bcc: evil@example.com <Boss> commented on your review",
     );
@@ -285,9 +316,9 @@ describe("notification email processor", () => {
     const row = { ...followRow(), type: "UNKNOWN" as NotificationType };
     const worker = harness(row);
 
-    await expect(worker.process({ notificationId: NOTIFICATION_ID })).rejects.toThrow(
-      /unhandled notification type/i,
-    );
+    await expect(
+      worker.process({ notificationId: NOTIFICATION_ID }),
+    ).rejects.toThrow(/unhandled notification type/i);
   });
 
   it("falls back to 'Someone' when the display name is only control characters", async () => {
@@ -296,7 +327,8 @@ describe("notification email processor", () => {
     );
     await follow.process({ notificationId: NOTIFICATION_ID });
 
-    const subject = (follow.send.mock.calls[0][0] as { subject: string }).subject;
+    const subject = (follow.send.mock.calls[0][0] as { subject: string })
+      .subject;
     expect(subject).toBe("Someone followed you on Coda");
   });
 });

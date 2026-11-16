@@ -1,9 +1,6 @@
 import { Controller, Get, Query } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator.js";
-import {
-  ActivityService,
-  type ActivityPage,
-} from "./activity.service.js";
+import { ActivityService, type ActivityPage } from "./activity.service.js";
 
 /**
  * Personal activity-stream endpoint (PR10), behind the global {@link ClerkGuard}.

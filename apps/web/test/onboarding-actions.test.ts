@@ -48,14 +48,16 @@ describe("completeOnboarding", () => {
         ok: false,
         status: 409,
         json: async () => ({
-          message: "Your onboarding preferences conflicted with a concurrent update. Please retry.",
+          message:
+            "Your onboarding preferences conflicted with a concurrent update. Please retry.",
         }),
       }),
     );
 
     await expect(completeOnboarding(ARGS)).resolves.toEqual({
       ok: false,
-      error: "Your onboarding preferences conflicted with a concurrent update. Please retry.",
+      error:
+        "Your onboarding preferences conflicted with a concurrent update. Please retry.",
     });
   });
 

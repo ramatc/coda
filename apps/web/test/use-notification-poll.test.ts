@@ -14,9 +14,8 @@ vi.mock("../lib/notifications", () => ({
   fetchUnreadCount: vi.fn(),
 }));
 
-const { POLL_INTERVAL_MS, useNotificationPoll } = await import(
-  "../app/_shell/use-notification-poll"
-);
+const { POLL_INTERVAL_MS, useNotificationPoll } =
+  await import("../app/_shell/use-notification-poll");
 
 const fetchCount = vi.mocked(fetchUnreadCount);
 

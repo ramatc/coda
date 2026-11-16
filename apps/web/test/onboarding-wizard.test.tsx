@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { OnboardingWizard } from "../app/onboarding/onboarding-wizard";
 import { MAX_ARTISTS, MIN_GENRES, type GenreOption } from "../lib/onboarding";
 
@@ -24,9 +30,24 @@ vi.mock("@clerk/nextjs", () => ({
 }));
 
 const GENRES: GenreOption[] = [
-  { slug: "rock", name: "Rock", category: "Rock & Punk", descriptor: "Guitar-driven, riff-heavy, arena to garage" },
-  { slug: "pop", name: "Pop", category: "Pop & Global", descriptor: "Hook-driven, polished, chart-focused mainstream" },
-  { slug: "jazz", name: "Jazz", category: "Jazz & Blues", descriptor: "Modal, spiritual, fusion & hard bop" },
+  {
+    slug: "rock",
+    name: "Rock",
+    category: "Rock & Punk",
+    descriptor: "Guitar-driven, riff-heavy, arena to garage",
+  },
+  {
+    slug: "pop",
+    name: "Pop",
+    category: "Pop & Global",
+    descriptor: "Hook-driven, polished, chart-focused mainstream",
+  },
+  {
+    slug: "jazz",
+    name: "Jazz",
+    category: "Jazz & Blues",
+    descriptor: "Modal, spiritual, fusion & hard bop",
+  },
 ];
 
 function artist(i: number) {
@@ -50,7 +71,9 @@ afterEach(() => {
 
 describe("OnboardingWizard", () => {
   it("selecting artists respects the MAX_ARTISTS cap: further unselected results become disabled no-ops", async () => {
-    const results = Array.from({ length: MAX_ARTISTS + 1 }, (_, i) => artist(i));
+    const results = Array.from({ length: MAX_ARTISTS + 1 }, (_, i) =>
+      artist(i),
+    );
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: true, json: async () => results }),
@@ -63,10 +86,9 @@ describe("OnboardingWizard", () => {
       target: { value: "art" },
     });
 
-    await waitFor(
-      () => expect(screen.getByText("Artist 0")).toBeTruthy(),
-      { timeout: 2000 },
-    );
+    await waitFor(() => expect(screen.getByText("Artist 0")).toBeTruthy(), {
+      timeout: 2000,
+    });
 
     // Select exactly MAX_ARTISTS results, filling the cap.
     for (let i = 0; i < MAX_ARTISTS; i++) {
@@ -89,7 +111,9 @@ describe("OnboardingWizard", () => {
     ).toBeTruthy();
 
     // An already-selected item stays clickable so the user can still deselect.
-    const selectedButton = screen.getByText("Artist 0").closest("button") as HTMLButtonElement;
+    const selectedButton = screen
+      .getByText("Artist 0")
+      .closest("button") as HTMLButtonElement;
     expect(selectedButton.disabled).toBe(false);
   });
 
@@ -193,14 +217,16 @@ describe("OnboardingWizard", () => {
     fireEvent.click(screen.getByText("Artist 0").closest("button")!);
     fireEvent.click(screen.getByRole("button", { name: /^Next/ }));
 
-    await waitFor(
-      () => expect(screen.getByText("Album Zero")).toBeTruthy(),
-      { timeout: 2000 },
-    );
+    await waitFor(() => expect(screen.getByText("Album Zero")).toBeTruthy(), {
+      timeout: 2000,
+    });
   });
 
   it("narrows the genre grid with the category filter", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => [] }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => [] }),
+    );
     render(<OnboardingWizard genres={GENRES} />);
 
     // All three fixture genres are visible by default.
@@ -222,10 +248,15 @@ describe("OnboardingWizard", () => {
   });
 
   it("keeps the genres Next CTA disabled until MIN_GENRES are selected, matching the real rule", () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => [] }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => [] }),
+    );
     render(<OnboardingWizard genres={GENRES} />);
 
-    const nextButton = screen.getByRole("button", { name: /^Next/ }) as HTMLButtonElement;
+    const nextButton = screen.getByRole("button", {
+      name: /^Next/,
+    }) as HTMLButtonElement;
     expect(nextButton.disabled).toBe(true);
 
     for (const genre of GENRES.slice(0, MIN_GENRES - 1)) {
@@ -234,7 +265,8 @@ describe("OnboardingWizard", () => {
     expect(nextButton.disabled).toBe(true);
 
     const lastGenre = GENRES[MIN_GENRES - 1];
-    if (!lastGenre) throw new Error("fixture must have at least MIN_GENRES genres");
+    if (!lastGenre)
+      throw new Error("fixture must have at least MIN_GENRES genres");
     fireEvent.click(screen.getByText(lastGenre.name));
     expect(nextButton.disabled).toBe(false);
   });

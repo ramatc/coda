@@ -247,7 +247,11 @@ export class OnboardingService {
     const userId = await this.resolveUserId(clerkUserId);
 
     const genreSlugs = this.parseGenreSlugs(input.genreSlugs);
-    const artistIds = this.parseIdList(input.artistIds, "artistIds", MAX_ARTISTS);
+    const artistIds = this.parseIdList(
+      input.artistIds,
+      "artistIds",
+      MAX_ARTISTS,
+    );
     const albumIds = this.parseIdList(input.albumIds, "albumIds", MAX_ALBUMS);
 
     if (genreSlugs.length < MIN_GENRES) {
@@ -405,7 +409,9 @@ export class OnboardingService {
     // retry that appends rather than replaces) must not be rejected just
     // because its raw length exceeds `max` while its unique id count does not.
     if (Array.isArray(value) && new Set(value).size > max) {
-      throw new BadRequestException(`${field} must contain at most ${max} ids.`);
+      throw new BadRequestException(
+        `${field} must contain at most ${max} ids.`,
+      );
     }
     const ids = [...new Set(this.parseStringArray(value, field))];
     for (const id of ids) {

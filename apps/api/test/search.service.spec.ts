@@ -46,7 +46,9 @@ describe("SearchService", () => {
       meili as unknown as MeiliService,
     );
 
-    await expect(service.search("")).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.search("")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
     await expect(service.search("   ")).rejects.toBeInstanceOf(
       BadRequestException,
     );

@@ -45,7 +45,9 @@ async function bootstrap(): Promise<void> {
   // The Worker needs its OWN blocking connection; the nightly scheduler uses a
   // separate producer connection (same rationale as the catalog workers — a
   // Worker's blocking reads must not stall the scheduler's commands).
-  const workerConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
+  const workerConnection = createBullConnection(
+    config.get<string>(REDIS_URL_ENV),
+  );
   const schedulerConnection = createBullConnection(
     config.get<string>(REDIS_URL_ENV),
   );
@@ -122,7 +124,9 @@ async function regenerateAllOnboarded(
     distinct: ["userId"],
     select: { userId: true },
   });
-  logger.log(`Nightly refresh: regenerating for ${users.length} onboarded user(s).`);
+  logger.log(
+    `Nightly refresh: regenerating for ${users.length} onboarded user(s).`,
+  );
   for (const { userId } of users) {
     try {
       await generation.generateForUser(userId);

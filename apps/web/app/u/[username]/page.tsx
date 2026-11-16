@@ -1,7 +1,10 @@
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getApiBaseUrl } from "../../../lib/api-client";
-import { fetchOnboardingStatus, resolveOnboardingRedirect } from "../../../lib/onboarding";
+import {
+  fetchOnboardingStatus,
+  resolveOnboardingRedirect,
+} from "../../../lib/onboarding";
 import { fetchSocialStats } from "../../../lib/social";
 import { fetchUserLists } from "../../../lib/lists";
 import { fetchWantToListen } from "../../../lib/want-to-listen";

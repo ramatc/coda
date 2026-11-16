@@ -34,7 +34,9 @@ export function notificationEmailJobId(notificationId: string): string {
  * reuses it and a retry after a lost response cannot deliver a second email.
  * Well under Resend's 256-character limit (19-char prefix + a 36-char UUID).
  */
-export function notificationEmailIdempotencyKey(notificationId: string): string {
+export function notificationEmailIdempotencyKey(
+  notificationId: string,
+): string {
   return `notification-email-${notificationId}`;
 }
 
@@ -64,7 +66,8 @@ export const RETRYABLE_RESEND_4XX_STATUSES: ReadonlySet<number> = new Set([
  * still in flight), which is transient and left in
  * {@link RETRYABLE_RESEND_4XX_STATUSES}.
  */
-export const RESEND_INVALID_IDEMPOTENT_REQUEST_CODE = "invalid_idempotent_request";
+export const RESEND_INVALID_IDEMPOTENT_REQUEST_CODE =
+  "invalid_idempotent_request";
 
 /** Retry and bounded-retention policy for immediate notification emails. */
 export const NOTIFICATION_EMAIL_JOB_OPTIONS: JobsOptions = {

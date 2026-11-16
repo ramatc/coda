@@ -40,7 +40,9 @@ const CREATED: ListDetail = {
 
 /** The submit button, which is disabled until the form is valid. */
 function submitButton(): HTMLButtonElement {
-  return screen.getByRole("button", { name: "Create list" }) as HTMLButtonElement;
+  return screen.getByRole("button", {
+    name: "Create list",
+  }) as HTMLButtonElement;
 }
 
 /** Types `value` into the field with the given accessible label. */
@@ -91,7 +93,9 @@ describe("CreateListForm", () => {
         isPublic: true,
       }),
     );
-    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/lists/list-42"));
+    await waitFor(() =>
+      expect(pushMock).toHaveBeenCalledWith("/lists/list-42"),
+    );
   });
 
   it("sends the typed description and both flipped flags", async () => {

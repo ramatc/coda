@@ -80,7 +80,12 @@ function createFakeCatalogPrisma() {
     service: { client } as unknown as PrismaService,
     artists,
     albums,
-    counts: () => ({ artistCreates, artistUpdates, albumCreates, albumUpdates }),
+    counts: () => ({
+      artistCreates,
+      artistUpdates,
+      albumCreates,
+      albumUpdates,
+    }),
   };
 }
 
@@ -463,7 +468,9 @@ describe("CatalogImportService", () => {
   it("does not abort the run when enqueueEnrichment fails for an album — logs and continues (judgment-day issue #1, round 2)", async () => {
     const fakeQueue = createFakeQueue();
     fakeQueue.enqueueEnrichment
-      .mockRejectedValueOnce(new Error("simulated Redis/BullMQ producer failure"))
+      .mockRejectedValueOnce(
+        new Error("simulated Redis/BullMQ producer failure"),
+      )
       .mockResolvedValue(undefined);
     const service = new CatalogImportService(
       fakePrisma.service,

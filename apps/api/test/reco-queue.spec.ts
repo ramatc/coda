@@ -10,7 +10,9 @@ import {
 // No live Redis/BullMQ in the sandbox: stub the connection factory and the
 // `Queue` class, matching search-queue.spec.ts.
 vi.mock("../src/catalog-import/catalog-redis.js", () => ({
-  createBullProducerConnection: () => ({ quit: vi.fn().mockResolvedValue("OK") }),
+  createBullProducerConnection: () => ({
+    quit: vi.fn().mockResolvedValue("OK"),
+  }),
 }));
 
 interface FakeAddedJob {
@@ -303,9 +305,9 @@ describe("RecoQueue", () => {
       recoQueue.removeErrors.set(jobId, new Error("ECONNRESET"));
       const originalJob = recoQueue.added[0];
 
-      await expect(
-        queue.enqueueDebouncedGeneration("user-1"),
-      ).rejects.toThrow("ECONNRESET");
+      await expect(queue.enqueueDebouncedGeneration("user-1")).rejects.toThrow(
+        "ECONNRESET",
+      );
 
       expect(recoQueue.added).toHaveLength(1);
       expect(recoQueue.added[0]).toBe(originalJob);

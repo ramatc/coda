@@ -90,13 +90,13 @@ describe("ListDetailView", () => {
     expect(
       screen.getByRole("heading", { name: "Best of 2026" }),
     ).not.toBeNull();
-    expect(
-      screen.getByText("A ranked run through the year."),
-    ).not.toBeNull();
+    expect(screen.getByText("A ranked run through the year.")).not.toBeNull();
   });
 
   it("falls back to a placeholder when the list has no description", () => {
-    render(<ListDetailView list={list({ description: null })} isOwner={false} />);
+    render(
+      <ListDetailView list={list({ description: null })} isOwner={false} />,
+    );
 
     expect(screen.getByText("No description yet.")).not.toBeNull();
   });
@@ -143,9 +143,9 @@ describe("ListDetailView", () => {
     );
 
     expect(renderedTitles()).toEqual(["Kid A", "Amnesiac"]);
-    expect(screen.getByRole("link", { name: "Kid A" }).getAttribute("href")).toBe(
-      "/albums/album-a",
-    );
+    expect(
+      screen.getByRole("link", { name: "Kid A" }).getAttribute("href"),
+    ).toBe("/albums/album-a");
     // The owner-only island is never handed to a visitor.
     expect(screen.queryByText("reorder island")).toBeNull();
   });
@@ -245,7 +245,11 @@ describe("ListDetailView", () => {
 
   it("surfaces a notice when ownership could not be verified", () => {
     render(
-      <ListDetailView list={list()} isOwner={false} ownershipUnverified={true} />,
+      <ListDetailView
+        list={list()}
+        isOwner={false}
+        ownershipUnverified={true}
+      />,
     );
 
     expect(screen.getByRole("alert").textContent).toBe(

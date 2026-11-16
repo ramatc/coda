@@ -90,7 +90,9 @@ describe("MeiliService", () => {
 
   it("configureIndexes creates both indexes and applies their attribute settings", async () => {
     stubFetch(calls);
-    const service = new MeiliService(config({ MEILI_HOST: "http://meili:7700" }));
+    const service = new MeiliService(
+      config({ MEILI_HOST: "http://meili:7700" }),
+    );
 
     await service.configureIndexes();
 
@@ -114,7 +116,9 @@ describe("MeiliService", () => {
 
   it("indexAlbums POSTs documents to the albums index; an empty batch is a no-op", async () => {
     const fetchMock = stubFetch(calls);
-    const service = new MeiliService(config({ MEILI_HOST: "http://meili:7700" }));
+    const service = new MeiliService(
+      config({ MEILI_HOST: "http://meili:7700" }),
+    );
 
     await service.indexAlbums([]);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -145,9 +149,14 @@ describe("MeiliService", () => {
     stubFetch(calls, () =>
       okResponse({ hits: [albumDoc], estimatedTotalHits: 1 }),
     );
-    const service = new MeiliService(config({ MEILI_HOST: "http://meili:7700" }));
+    const service = new MeiliService(
+      config({ MEILI_HOST: "http://meili:7700" }),
+    );
 
-    const page = await service.searchAlbums("radiohead", { limit: 20, offset: 0 });
+    const page = await service.searchAlbums("radiohead", {
+      limit: 20,
+      offset: 0,
+    });
 
     const call = calls[0];
     expect(call.url).toBe(`http://meili:7700/indexes/${ALBUMS_INDEX}/search`);
@@ -165,13 +174,13 @@ describe("MeiliService", () => {
     const debugSpy = vi
       .spyOn(Logger.prototype, "debug")
       .mockImplementation(() => undefined);
-    const service = new MeiliService(config({ MEILI_HOST: "http://meili:7700" }));
+    const service = new MeiliService(
+      config({ MEILI_HOST: "http://meili:7700" }),
+    );
 
     await service.indexAlbums([albumDoc]);
 
-    expect(debugSpy).toHaveBeenCalledWith(
-      expect.stringContaining("42"),
-    );
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining("42"));
 
     debugSpy.mockRestore();
   });
@@ -181,7 +190,9 @@ describe("MeiliService", () => {
     const debugSpy = vi
       .spyOn(Logger.prototype, "debug")
       .mockImplementation(() => undefined);
-    const service = new MeiliService(config({ MEILI_HOST: "http://meili:7700" }));
+    const service = new MeiliService(
+      config({ MEILI_HOST: "http://meili:7700" }),
+    );
 
     await service.searchAlbums("x", { limit: 10, offset: 0 });
 
@@ -200,7 +211,9 @@ describe("MeiliService", () => {
         json: async () => ({}),
       })),
     );
-    const service = new MeiliService(config({ MEILI_HOST: "http://meili:7700" }));
+    const service = new MeiliService(
+      config({ MEILI_HOST: "http://meili:7700" }),
+    );
 
     await expect(service.indexAlbums([albumDoc])).rejects.toThrow(/500/);
   });

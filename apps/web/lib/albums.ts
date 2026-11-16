@@ -119,7 +119,10 @@ interface ErrorBody {
 /** Reads a JSON error body's `message`/`code` fields, tolerating a non-JSON body. */
 async function readErrorBody(response: Response): Promise<ErrorBody> {
   try {
-    const body = (await response.json()) as { message?: unknown; code?: unknown };
+    const body = (await response.json()) as {
+      message?: unknown;
+      code?: unknown;
+    };
     return {
       message: typeof body.message === "string" ? body.message : undefined,
       code: typeof body.code === "string" ? body.code : undefined,

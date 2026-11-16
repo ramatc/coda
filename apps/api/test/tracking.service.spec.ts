@@ -261,9 +261,7 @@ function createFakePrisma() {
         const [removed] = ratings.splice(index, 1);
         return removed;
       },
-      async aggregate(args: {
-        where: { albumId: string };
-      }): Promise<{
+      async aggregate(args: { where: { albumId: string } }): Promise<{
         _avg: { score: number | null };
         _count: { _all: number };
       }> {
@@ -473,7 +471,9 @@ describe("TrackingService", () => {
 
     it("triggers a debounced recommendation refresh on a new listen (PR11 tracking trigger)", async () => {
       await service.markListened("clerk_1", ALBUM_ID);
-      expect(recoQueue.enqueueDebouncedGeneration).toHaveBeenCalledWith("user_1");
+      expect(recoQueue.enqueueDebouncedGeneration).toHaveBeenCalledWith(
+        "user_1",
+      );
     });
 
     it("does not re-trigger recommendations on an idempotent re-mark", async () => {

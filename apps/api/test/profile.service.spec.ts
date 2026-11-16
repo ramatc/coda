@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import { Prisma } from "@coda/db";
 import { ProfileService } from "../src/profile/profile.service.js";
@@ -210,7 +214,9 @@ describe("ProfileService", () => {
   });
 
   it("persists a valid avatarUrl (upload succeeds)", async () => {
-    seedProfile({ avatarUrl: "https://cdn.coda.test/avatars/avatars/local_1/old" });
+    seedProfile({
+      avatarUrl: "https://cdn.coda.test/avatars/avatars/local_1/old",
+    });
 
     const newUrl = "https://cdn.coda.test/avatars/avatars/local_1/new-uuid";
     const result = await service.updateOwnProfile("clerk_1", {
@@ -274,9 +280,13 @@ describe("ProfileService", () => {
   });
 
   it("clears avatarUrl when set to null", async () => {
-    seedProfile({ avatarUrl: "https://cdn.coda.test/avatars/avatars/local_1/old" });
+    seedProfile({
+      avatarUrl: "https://cdn.coda.test/avatars/avatars/local_1/old",
+    });
 
-    const result = await service.updateOwnProfile("clerk_1", { avatarUrl: null });
+    const result = await service.updateOwnProfile("clerk_1", {
+      avatarUrl: null,
+    });
 
     expect(result.avatarUrl).toBeNull();
     expect(profiles.get("local_1")?.avatarUrl).toBeNull();
@@ -314,10 +324,9 @@ describe("ProfileService", () => {
 
   it("fails closed when R2_PUBLIC_BASE is not configured", async () => {
     seedProfile({ avatarUrl: null });
-    const unconfigured = new ProfileService(
-      prismaService,
-      { get: () => undefined } as unknown as ConfigService,
-    );
+    const unconfigured = new ProfileService(prismaService, {
+      get: () => undefined,
+    } as unknown as ConfigService);
 
     await expect(
       unconfigured.updateOwnProfile("clerk_1", {

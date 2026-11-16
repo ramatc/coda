@@ -8,7 +8,10 @@ import {
 import { fetchRecommendations } from "../../lib/recommendations";
 import { fetchPopularAlbums } from "../../lib/search";
 import { fetchFeed, INVALID_CURSOR } from "../../lib/feed";
-import { fetchActivity, INVALID_CURSOR as INVALID_ACTIVITY_CURSOR } from "../../lib/activity";
+import {
+  fetchActivity,
+  INVALID_CURSOR as INVALID_ACTIVITY_CURSOR,
+} from "../../lib/activity";
 import { Recommendations } from "./recommendations";
 import { PopularRow } from "./popular-row";
 import { FriendsPreview } from "./friends-preview";
@@ -93,7 +96,10 @@ export default async function HomePage() {
             <PopularRow albums={popularAlbums.slice(0, POPULAR_ROW_COUNT)} />
           </section>
 
-          <section aria-label="New from friends" className="flex flex-col gap-3">
+          <section
+            aria-label="New from friends"
+            className="flex flex-col gap-3"
+          >
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-text-secondary">
                 New from friends

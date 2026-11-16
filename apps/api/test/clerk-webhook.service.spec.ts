@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebhookEvent } from "@clerk/backend";
-import { ConflictException, Logger, UnprocessableEntityException } from "@nestjs/common";
+import {
+  ConflictException,
+  Logger,
+  UnprocessableEntityException,
+} from "@nestjs/common";
 import { Prisma } from "@coda/db";
 import { ClerkWebhookService } from "../src/auth/clerk-webhook.service.js";
 import type { PrismaService } from "../src/prisma/prisma.service.js";
@@ -155,9 +159,7 @@ function userCreatedEvent(overrides: {
       last_name: overrides.lastName ?? null,
       image_url: "",
       primary_email_address_id: "idn_primary",
-      email_addresses: [
-        { id: "idn_primary", email_address: overrides.email },
-      ],
+      email_addresses: [{ id: "idn_primary", email_address: overrides.email }],
     },
   } as unknown as WebhookEvent;
 }
@@ -179,9 +181,7 @@ function userUpdatedEvent(overrides: {
       last_name: overrides.lastName ?? null,
       image_url: overrides.avatarUrl ?? "",
       primary_email_address_id: "idn_primary",
-      email_addresses: [
-        { id: "idn_primary", email_address: overrides.email },
-      ],
+      email_addresses: [{ id: "idn_primary", email_address: overrides.email }],
     },
   } as unknown as WebhookEvent;
 }
@@ -266,7 +266,11 @@ describe("ClerkWebhookService", () => {
 
   it("lowercases a mixed-case Clerk username for the username column but preserves its casing in displayName", async () => {
     await service.handleEvent(
-      userCreatedEvent({ clerkId: "user_16", email: "mixed@coda.dev", username: "AdaLovelace" }),
+      userCreatedEvent({
+        clerkId: "user_16",
+        email: "mixed@coda.dev",
+        username: "AdaLovelace",
+      }),
     );
 
     const user = users.get("user_16");
@@ -448,7 +452,9 @@ describe("ClerkWebhookService", () => {
         }),
       ),
     ).rejects.toThrow(
-      new ConflictException("Username taken is already in use by another account"),
+      new ConflictException(
+        "Username taken is already in use by another account",
+      ),
     );
   });
 
@@ -469,7 +475,9 @@ describe("ClerkWebhookService", () => {
         }),
       ),
     ).rejects.toThrow(
-      new ConflictException("Email dup@coda.dev is already in use by another account"),
+      new ConflictException(
+        "Email dup@coda.dev is already in use by another account",
+      ),
     );
   });
 
@@ -498,10 +506,7 @@ describe("ClerkWebhookService", () => {
 
   it("does not mislabel a P2002 with a missing constraint as an email conflict", async () => {
     client.user.upsert = () => {
-      throw p2002WithFields(
-        "Unique constraint failed",
-        undefined,
-      );
+      throw p2002WithFields("Unique constraint failed", undefined);
     };
 
     await expect(

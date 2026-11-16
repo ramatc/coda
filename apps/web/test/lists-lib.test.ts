@@ -758,9 +758,9 @@ describe("addListItem", () => {
       errorResponse(409, "This album is already on the list."),
     );
 
-    await expect(
-      addListItem("test-token", LIST_ID, ALBUM_ID),
-    ).rejects.toThrow("This album is already on the list.");
+    await expect(addListItem("test-token", LIST_ID, ALBUM_ID)).rejects.toThrow(
+      "This album is already on the list.",
+    );
   });
 });
 
@@ -810,7 +810,10 @@ describe("reorderListItems", () => {
 
   it("surfaces the API's 400 when the order does not match the list", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      errorResponse(400, "itemIds must list every item on the list exactly once."),
+      errorResponse(
+        400,
+        "itemIds must list every item on the list exactly once.",
+      ),
     );
 
     await expect(

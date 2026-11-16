@@ -17,9 +17,10 @@ describe("RecommendationsController", () => {
 
   beforeEach(() => {
     getRecommendations = vi.fn().mockResolvedValue([]);
-    dismiss = vi
-      .fn()
-      .mockResolvedValue({ id: REC_ID, status: RecommendationStatus.DISMISSED });
+    dismiss = vi.fn().mockResolvedValue({
+      id: REC_ID,
+      status: RecommendationStatus.DISMISSED,
+    });
     const service = {
       getRecommendations,
       dismiss,
@@ -35,6 +36,9 @@ describe("RecommendationsController", () => {
   it("forwards the dismiss with the caller's id and the recommendation id", async () => {
     const result = await controller.dismiss("clerk_1", REC_ID);
     expect(dismiss).toHaveBeenCalledWith("clerk_1", REC_ID);
-    expect(result).toEqual({ id: REC_ID, status: RecommendationStatus.DISMISSED });
+    expect(result).toEqual({
+      id: REC_ID,
+      status: RecommendationStatus.DISMISSED,
+    });
   });
 });

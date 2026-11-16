@@ -41,8 +41,7 @@ export interface ResendSendOptions {
 
 /** Outcome of a send: delivered to Resend, or skipped because it is disabled. */
 export type ResendSendResult =
-  | { status: "sent"; id: string }
-  | { status: "skipped"; reason: "disabled" };
+  { status: "sent"; id: string } | { status: "skipped"; reason: "disabled" };
 
 /**
  * A non-OK response from Resend, carrying the HTTP status so the caller can
@@ -192,7 +191,11 @@ export class ResendService {
         }
         return "";
       });
-      throw new ResendSendError(response.status, detail, parseResendErrorCode(detail));
+      throw new ResendSendError(
+        response.status,
+        detail,
+        parseResendErrorCode(detail),
+      );
     }
 
     const body = (await response.json().catch((err: unknown) => {

@@ -249,15 +249,17 @@ export class SocialService {
     const targetId = await this.requireTargetId(username);
     const callerId = await this.resolveUserId(clerkUserId);
 
-    const [followerCount, followingCount, isFollowingCount] = await Promise.all([
-      this.prisma.client.follow.count({ where: { followingId: targetId } }),
-      this.prisma.client.follow.count({ where: { followerId: targetId } }),
-      callerId === null
-        ? Promise.resolve(0)
-        : this.prisma.client.follow.count({
-            where: { followerId: callerId, followingId: targetId },
-          }),
-    ]);
+    const [followerCount, followingCount, isFollowingCount] = await Promise.all(
+      [
+        this.prisma.client.follow.count({ where: { followingId: targetId } }),
+        this.prisma.client.follow.count({ where: { followerId: targetId } }),
+        callerId === null
+          ? Promise.resolve(0)
+          : this.prisma.client.follow.count({
+              where: { followerId: callerId, followingId: targetId },
+            }),
+      ],
+    );
 
     return {
       followerCount,
@@ -288,10 +290,7 @@ export class SocialService {
    * crashing the feed. Each item additionally carries its `actor` (the followed
    * author), fetched in the same query via a nested profile select (no N+1).
    */
-  async getFeed(
-    clerkUserId: string,
-    query: FeedQuery = {},
-  ): Promise<FeedPage> {
+  async getFeed(clerkUserId: string, query: FeedQuery = {}): Promise<FeedPage> {
     const limit = this.resolveLimit(query.limit);
     const cursor = this.resolveCursor(query.cursor);
 

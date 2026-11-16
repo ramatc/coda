@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { UUID_PATTERN } from "./tracking.constants.js";
 import {
@@ -137,7 +141,9 @@ export class AlbumDetailService {
       title: album.title,
       coverUrl: album.coverUrl,
       releaseDate,
-      releaseYear: album.releaseDate ? album.releaseDate.getUTCFullYear() : null,
+      releaseYear: album.releaseDate
+        ? album.releaseDate.getUTCFullYear()
+        : null,
       trackCount: album.trackCount,
       primaryArtist: album.primaryArtist,
       genres: album.genres.map((g) => g.genre),

@@ -133,7 +133,9 @@ describe("SpotifyClient", () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(TOKEN_BODY))
       .mockResolvedValueOnce(
-        jsonResponse(albumPageBody("https://api.spotify.com/v1/search?offset=2")),
+        jsonResponse(
+          albumPageBody("https://api.spotify.com/v1/search?offset=2"),
+        ),
       )
       .mockResolvedValueOnce(jsonResponse(albumPageBody(null)));
 
@@ -231,30 +233,32 @@ describe("SpotifyClient", () => {
   });
 
   it("falls back to offset+limit arithmetic when `next`'s offset param is missing/malformed (judgment-day issue #9)", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(TOKEN_BODY)).mockResolvedValueOnce(
-      jsonResponse({
-        albums: {
-          total: 10,
-          limit: 2,
-          offset: 0,
-          // No `offset` query param on `next` ⇒ unparseable, so `getAlbumPage`
-          // must fall back to `page.offset + page.limit` instead.
-          next: "https://api.spotify.com/v1/search?q=year",
-          items: [
-            {
-              id: "spotify_alb_1",
-              name: "OK Computer",
-              artists: [{ id: "spotify_art_1", name: "Radiohead" }],
-            },
-            {
-              id: "spotify_alb_2",
-              name: "In Rainbows",
-              artists: [{ id: "spotify_art_1", name: "Radiohead" }],
-            },
-          ],
-        },
-      }),
-    );
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(TOKEN_BODY))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          albums: {
+            total: 10,
+            limit: 2,
+            offset: 0,
+            // No `offset` query param on `next` ⇒ unparseable, so `getAlbumPage`
+            // must fall back to `page.offset + page.limit` instead.
+            next: "https://api.spotify.com/v1/search?q=year",
+            items: [
+              {
+                id: "spotify_alb_1",
+                name: "OK Computer",
+                artists: [{ id: "spotify_art_1", name: "Radiohead" }],
+              },
+              {
+                id: "spotify_alb_2",
+                name: "In Rainbows",
+                artists: [{ id: "spotify_art_1", name: "Radiohead" }],
+              },
+            ],
+          },
+        }),
+      );
 
     const client = makeClient();
     const page = await client.getAlbumPage(0, 2);

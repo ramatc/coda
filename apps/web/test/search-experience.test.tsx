@@ -32,7 +32,12 @@ vi.mock("next/link", () => ({
 }));
 
 const POPULAR: PopularAlbum[] = [
-  { id: "pop-1", title: "Popular Album", coverUrl: null, primaryArtistName: "Pop Artist" },
+  {
+    id: "pop-1",
+    title: "Popular Album",
+    coverUrl: null,
+    primaryArtistName: "Pop Artist",
+  },
 ];
 
 const RESULTS: SearchResults = {

@@ -96,9 +96,7 @@ function createFakeEnrichPrisma() {
       }
     },
     album: {
-      async findUnique(args: {
-        where: { spotifyId: string };
-      }): Promise<{
+      async findUnique(args: { where: { spotifyId: string } }): Promise<{
         id: string;
         title: string;
         mbid: string | null;
@@ -184,7 +182,11 @@ function createFakeEnrichPrisma() {
 
   // Seed a small catalog (as PR5's Spotify leg would have): albums + artists,
   // all lacking an mbid until enrichment fills it in.
-  function seedAlbum(spotifyId: string, title: string, artistName: string): void {
+  function seedAlbum(
+    spotifyId: string,
+    title: string,
+    artistName: string,
+  ): void {
     const artistId = `artist_${spotifyId}`;
     artists.set(artistId, { id: artistId, name: artistName, mbid: null });
     albums.set(spotifyId, {
@@ -216,7 +218,9 @@ function enrichment(
   return {
     mbid,
     artist: { mbid: `art-${mbid}`, name: "Radiohead" },
-    genres: [{ slug: "alternative-rock", name: "Alternative Rock", weight: 10 }],
+    genres: [
+      { slug: "alternative-rock", name: "Alternative Rock", weight: 10 },
+    ],
     ...overrides,
   };
 }

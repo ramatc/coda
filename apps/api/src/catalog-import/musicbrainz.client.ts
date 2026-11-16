@@ -156,8 +156,7 @@ export class MusicBrainzClient {
       if (waitMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, waitMs));
       }
-      this.nextAvailableAtMs =
-        Date.now() + MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS;
+      this.nextAvailableAtMs = Date.now() + MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS;
     });
     this.gate = acquire.then(
       () => undefined,
@@ -182,12 +181,10 @@ export class MusicBrainzClient {
 
   private normalize(group: MusicBrainzReleaseGroup): MusicBrainzEnrichment {
     const credited = group["artist-credit"]?.find((c) => c.artist?.id)?.artist;
-    const artist = credited
-      ? { mbid: credited.id, name: credited.name }
-      : null;
+    const artist = credited ? { mbid: credited.id, name: credited.name } : null;
 
     // Prefer curated `genres`; fall back to folksonomy `tags` when absent.
-    const rawGenres = group.genres?.length ? group.genres : group.tags ?? [];
+    const rawGenres = group.genres?.length ? group.genres : (group.tags ?? []);
     // Dedupe by slug BEFORE slicing to MAX_GENRES (judgment-day issue #8): two
     // raw tags that collapse to the same slug (e.g. differing only in casing or
     // punctuation) would otherwise consume two of the limited slots instead of

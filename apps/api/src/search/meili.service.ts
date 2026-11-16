@@ -87,11 +87,7 @@ export class MeiliService {
     if (documents.length === 0) {
       return;
     }
-    await this.request(
-      "POST",
-      `/indexes/${ALBUMS_INDEX}/documents`,
-      documents,
-    );
+    await this.request("POST", `/indexes/${ALBUMS_INDEX}/documents`, documents);
   }
 
   /** Adds/updates artist documents (upsert by pk `id`). No-op on an empty batch. */
@@ -201,7 +197,9 @@ export class MeiliService {
     // task history (`GET /tasks/{taskUid}`) if something looks wrong.
     const taskUid = (parsed as { taskUid?: unknown } | undefined)?.taskUid;
     if (taskUid !== undefined) {
-      this.logger.debug(`Meilisearch ${method} ${path} accepted as task ${taskUid}`);
+      this.logger.debug(
+        `Meilisearch ${method} ${path} accepted as task ${taskUid}`,
+      );
     }
     return parsed as T;
   }

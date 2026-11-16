@@ -93,7 +93,9 @@ export class ProfileService {
     }
     return {
       ...this.toResponse(profile),
-      isOwnProfile: callerClerkUserId != null && callerClerkUserId === profile.user.clerkUserId,
+      isOwnProfile:
+        callerClerkUserId != null &&
+        callerClerkUserId === profile.user.clerkUserId,
     };
   }
 
@@ -123,7 +125,9 @@ export class ProfileService {
     }
   }
 
-  private buildUpdateData(input: UpdateProfileInput): Prisma.ProfileUpdateInput {
+  private buildUpdateData(
+    input: UpdateProfileInput,
+  ): Prisma.ProfileUpdateInput {
     const data: Prisma.ProfileUpdateInput = {};
 
     if (input.username !== undefined) {
@@ -178,7 +182,10 @@ export class ProfileService {
       throw new BadRequestException("displayName must be a string.");
     }
     const displayName = value.trim();
-    if (displayName.length === 0 || displayName.length > DISPLAY_NAME_MAX_LENGTH) {
+    if (
+      displayName.length === 0 ||
+      displayName.length > DISPLAY_NAME_MAX_LENGTH
+    ) {
       throw new BadRequestException(
         `displayName must be 1-${DISPLAY_NAME_MAX_LENGTH} characters.`,
       );
@@ -195,7 +202,9 @@ export class ProfileService {
     }
     const bio = value.trim();
     if (bio.length > BIO_MAX_LENGTH) {
-      throw new BadRequestException(`bio must be at most ${BIO_MAX_LENGTH} characters.`);
+      throw new BadRequestException(
+        `bio must be at most ${BIO_MAX_LENGTH} characters.`,
+      );
     }
     return bio.length === 0 ? null : bio;
   }
@@ -205,7 +214,9 @@ export class ProfileService {
       return null;
     }
     if (typeof value !== "string" || value.trim().length === 0) {
-      throw new BadRequestException("avatarUrl must be a non-empty string or null.");
+      throw new BadRequestException(
+        "avatarUrl must be a non-empty string or null.",
+      );
     }
     const avatarUrl = value.trim();
     let parsed: URL;
@@ -223,18 +234,24 @@ export class ProfileService {
     // silently skipping the check.
     const publicBase = this.config.get<string>("R2_PUBLIC_BASE");
     if (!publicBase) {
-      throw new BadRequestException("Avatar storage is not configured (R2_PUBLIC_BASE).");
+      throw new BadRequestException(
+        "Avatar storage is not configured (R2_PUBLIC_BASE).",
+      );
     }
     let publicBaseUrl: URL;
     try {
       publicBaseUrl = new URL(publicBase);
     } catch {
-      throw new BadRequestException("Avatar storage is misconfigured (R2_PUBLIC_BASE).");
+      throw new BadRequestException(
+        "Avatar storage is misconfigured (R2_PUBLIC_BASE).",
+      );
     }
     const basePath = publicBaseUrl.pathname.replace(/\/+$/, "");
     const isSameOrigin = parsed.origin === publicBaseUrl.origin;
     const isUnderBasePath =
-      basePath === "" || parsed.pathname === basePath || parsed.pathname.startsWith(`${basePath}/`);
+      basePath === "" ||
+      parsed.pathname === basePath ||
+      parsed.pathname.startsWith(`${basePath}/`);
     if (!isSameOrigin || !isUnderBasePath) {
       throw new BadRequestException(
         "avatarUrl must point to the configured avatar storage.",

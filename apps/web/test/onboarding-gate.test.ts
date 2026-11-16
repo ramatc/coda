@@ -59,9 +59,9 @@ describe("resolveOnboardingRedirect", () => {
   });
 
   it("redirects an unonboarded user off /u/[username] to /onboarding", () => {
-    expect(
-      resolveOnboardingRedirect({ complete: false }, "/u/someone"),
-    ).toBe(ONBOARDING_PATH);
+    expect(resolveOnboardingRedirect({ complete: false }, "/u/someone")).toBe(
+      ONBOARDING_PATH,
+    );
   });
 });
 
