@@ -225,7 +225,7 @@ export function NotificationBell() {
         <div
           role="region"
           aria-label="Notifications"
-          className="absolute right-0 top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-card border border-border-subtle bg-surface-1 shadow-floating"
+          className="absolute right-0 top-full z-20 mt-2 w-80 animate-enter max-w-[calc(100vw-2rem)] overflow-hidden rounded-card border border-border-subtle bg-surface-1 shadow-floating"
         >
           <p className="border-b border-border-subtle px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
             Notifications

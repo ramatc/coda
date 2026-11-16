@@ -78,9 +78,9 @@ export function OnboardingWizard({
   const [selectedArtists, setSelectedArtists] = useState<
     Map<string, ArtistOption>
   >(new Map());
-  const [selectedAlbums, setSelectedAlbums] = useState<Map<string, AlbumOption>>(
-    new Map(),
-  );
+  const [selectedAlbums, setSelectedAlbums] = useState<
+    Map<string, AlbumOption>
+  >(new Map());
 
   const [artistQuery, setArtistQuery] = useState("");
   const [artistResults, setArtistResults] = useState<ArtistOption[]>([]);
@@ -96,7 +96,10 @@ export function OnboardingWizard({
   // response can never overwrite a faster later one, and every keystroke
   // doesn't fire its own request.
   const searchStateRef = useRef<
-    Record<SearchKind, { timer: ReturnType<typeof setTimeout> | null; seq: number }>
+    Record<
+      SearchKind,
+      { timer: ReturnType<typeof setTimeout> | null; seq: number }
+    >
   >({
     artists: { timer: null, seq: 0 },
     albums: { timer: null, seq: 0 },
@@ -368,7 +371,10 @@ export function OnboardingWizard({
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-background text-text-primary">
       {/* Faint archival grid — the one decorative layer (no glow or blur). Fully decorative (aria-hidden, inert to
           pointer events) and never carries content. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 overflow-hidden"
+      >
         <div
           className="absolute inset-0 opacity-[0.035]"
           style={{
@@ -383,7 +389,10 @@ export function OnboardingWizard({
 
       <main className="relative z-10 mx-auto flex w-full max-w-[1440px] flex-1 flex-col justify-center px-5 py-8 sm:px-8 lg:px-12 lg:py-12">
         <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-12 lg:gap-14">
-          <EditorialPanel genreCount={selectedGenres.size} spotlightAlbums={spotlightAlbums} />
+          <EditorialPanel
+            genreCount={selectedGenres.size}
+            spotlightAlbums={spotlightAlbums}
+          />
 
           <div className="flex flex-col gap-4 lg:col-span-7">
             {/* Condensed identity strip — replaces the full editorial panel below `lg`. */}
@@ -407,7 +416,10 @@ export function OnboardingWizard({
 
               <form onSubmit={onSubmit} className="flex flex-col gap-6">
                 {step === "genres" ? (
-                  <section aria-label="Pick genres" className="flex flex-col gap-6">
+                  <section
+                    aria-label="Pick genres"
+                    className="flex flex-col gap-6"
+                  >
                     <StepHeading
                       title="Welcome to Coda"
                       subtitle="Tell us what you love so we can tune your recommendations."
@@ -494,7 +506,9 @@ export function OnboardingWizard({
                                 <span
                                   className={cn(
                                     "truncate text-xs",
-                                    active ? "text-text-primary/80" : "text-text-secondary",
+                                    active
+                                      ? "text-text-primary/80"
+                                      : "text-text-secondary",
                                   )}
                                 >
                                   {genre.descriptor}
@@ -533,7 +547,10 @@ export function OnboardingWizard({
                 ) : null}
 
                 {step === "artists" ? (
-                  <section aria-label="Pick artists" className="flex flex-col gap-6">
+                  <section
+                    aria-label="Pick artists"
+                    className="flex flex-col gap-6"
+                  >
                     <StepHeading
                       title="Favorite artists"
                       subtitle="Suggested from the genres you just picked — search for anyone else."
@@ -609,7 +626,10 @@ export function OnboardingWizard({
                 ) : null}
 
                 {step === "albums" ? (
-                  <section aria-label="Pick albums" className="flex flex-col gap-6">
+                  <section
+                    aria-label="Pick albums"
+                    className="flex flex-col gap-6"
+                  >
                     <StepHeading
                       title="Cornerstone albums"
                       subtitle="Optional — a few records that already define your taste."
@@ -683,7 +703,9 @@ export function OnboardingWizard({
                         disabled={!submittable || status === "submitting"}
                       >
                         <span>
-                          {status === "submitting" ? "Saving…" : "Finish calibration"}
+                          {status === "submitting"
+                            ? "Saving…"
+                            : "Finish calibration"}
                         </span>
                         {status === "submitting" ? null : (
                           <Check className="h-4 w-4" aria-hidden="true" />
@@ -759,18 +781,23 @@ function EditorialPanel({ genreCount, spotlightAlbums }: EditorialPanelProps) {
               className="absolute h-72 w-72 rounded-full border border-border-subtle/20"
             />
             <div className="relative z-10 flex items-center justify-center -space-x-8">
-              {left ? <SpotlightCover album={left} size="sm" rotate="-rotate-6" /> : null}
+              {left ? (
+                <SpotlightCover album={left} size="sm" rotate="-rotate-6" />
+              ) : null}
               {center ? (
                 <SpotlightCover album={center} size="lg" rotate="" caption />
               ) : null}
-              {right ? <SpotlightCover album={right} size="sm" rotate="rotate-6" /> : null}
+              {right ? (
+                <SpotlightCover album={right} size="sm" rotate="rotate-6" />
+              ) : null}
             </div>
           </div>
         ) : null}
 
         <div className="space-y-3 pt-2">
           <p className="font-serif text-lg leading-snug text-text-primary sm:text-xl">
-            &ldquo;Where the music player ends, your cultural history begins.&rdquo;
+            &ldquo;Where the music player ends, your cultural history
+            begins.&rdquo;
           </p>
           <p className="text-xs leading-relaxed text-text-secondary">
             Coda is not a stream or background noise. It is an editorial diary
@@ -790,7 +817,10 @@ function EditorialPanel({ genreCount, spotlightAlbums }: EditorialPanelProps) {
       </div>
 
       <div className="flex items-start gap-3 rounded-panel border border-border-subtle/60 bg-surface-1/30 p-4 text-xs text-text-secondary">
-        <Compass className="mt-0.5 h-4 w-4 shrink-0 text-coda" aria-hidden="true" />
+        <Compass
+          className="mt-0.5 h-4 w-4 shrink-0 text-coda"
+          aria-hidden="true"
+        />
         <div>
           <span className="mb-0.5 block font-semibold text-text-primary">
             Explainable Discovery
@@ -815,7 +845,7 @@ function SpotlightCover({ album, size, rotate, caption }: SpotlightCoverProps) {
   return (
     <div
       className={cn(
-        "relative shrink-0 overflow-hidden rounded-artwork border transition-transform duration-300 hover:rotate-0",
+        "relative shrink-0 overflow-hidden rounded-artwork border transition-transform duration-(--motion-slow) hover:rotate-0",
         size === "lg"
           ? "z-10 h-36 w-36 border-2 border-coda/60 hover:scale-105 sm:h-40 sm:w-40"
           : "h-28 w-28 border-border-subtle sm:h-32 sm:w-32",
@@ -823,7 +853,11 @@ function SpotlightCover({ album, size, rotate, caption }: SpotlightCoverProps) {
       )}
     >
       {album.coverUrl ? (
-        <img src={album.coverUrl} alt="" className="h-full w-full object-cover" />
+        <img
+          src={album.coverUrl}
+          alt=""
+          className="h-full w-full object-cover"
+        />
       ) : (
         <span
           aria-hidden="true"
@@ -870,7 +904,8 @@ function ProgressSteps({ stepIndex }: ProgressStepsProps) {
   return (
     <ol aria-label="Onboarding steps" className="mb-8 flex items-center">
       {STEPS.map((s, i) => {
-        const state = i < stepIndex ? "done" : i === stepIndex ? "current" : "upcoming";
+        const state =
+          i < stepIndex ? "done" : i === stepIndex ? "current" : "upcoming";
         return (
           <li
             key={s.key}
@@ -898,7 +933,9 @@ function ProgressSteps({ stepIndex }: ProgressStepsProps) {
               <span
                 className={cn(
                   "text-xs font-semibold uppercase tracking-wide",
-                  state === "upcoming" ? "text-text-tertiary" : "text-text-primary",
+                  state === "upcoming"
+                    ? "text-text-tertiary"
+                    : "text-text-primary",
                 )}
               >
                 {s.label}
@@ -1029,7 +1066,12 @@ interface CtaButtonProps {
  * Primary call to action — the shared `primary` button (coda-solid fill),
  * dimmed by its disabled state until the step's rule is met.
  */
-function CtaButton({ children, disabled, onClick, type = "button" }: CtaButtonProps) {
+function CtaButton({
+  children,
+  disabled,
+  onClick,
+  type = "button",
+}: CtaButtonProps) {
   return (
     <button
       type={type}
@@ -1100,10 +1142,7 @@ function PickerGrid<T>({
   return (
     <ul
       aria-label={ariaLabel}
-      className={cn(
-        "grid grid-cols-2 gap-3 sm:grid-cols-3",
-        gridClassName,
-      )}
+      className={cn("grid grid-cols-2 gap-3 sm:grid-cols-3", gridClassName)}
     >
       {items.map((item) => {
         const id = getId(item);
