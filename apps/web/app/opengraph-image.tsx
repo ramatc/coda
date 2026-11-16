@@ -18,15 +18,15 @@ const TEXT_SECONDARY = "#a9a8b4";
 const CODA = "#8c4fff";
 
 /**
- * Site-wide Open Graph image: the monogram, the wordmark and the tagline on
+ * Site-wide Open Graph image: the wordmark (Brand Kit v1.2) and the tagline on
  * the dark archive background. No glow, gradient or shadow. Pages with their
  * own image (album covers) override it.
  */
 export default async function OpengraphImage() {
-  const monogram = await readFile(
-    join(process.cwd(), "public/brand/coda-monogram.png"),
+  const wordmark = await readFile(
+    join(process.cwd(), "public/brand/coda-wordmark-offwhite.svg"),
   );
-  const monogramSrc = `data:image/png;base64,${monogram.toString("base64")}`;
+  const wordmarkSrc = `data:image/svg+xml;base64,${wordmark.toString("base64")}`;
 
   return new ImageResponse(
     <div
@@ -41,11 +41,8 @@ export default async function OpengraphImage() {
         color: TEXT_PRIMARY,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-        <img src={monogramSrc} width={88} height={88} alt="" />
-        <span style={{ fontSize: 56, fontWeight: 800, letterSpacing: 4 }}>
-          CODA
-        </span>
+      <div style={{ display: "flex" }}>
+        <img src={wordmarkSrc} width={202} height={56} alt="Coda" />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <span
