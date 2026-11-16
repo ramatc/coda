@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { buttonVariants, cn } from "@coda/ui";
+import { AnimatedNumber, buttonVariants, cn } from "@coda/ui";
 import { ListActionError, likeList, unlikeList } from "../../../lib/lists";
 // `likeCountLabel` was briefly duplicated here, on the reasoning that only one
 // surface on this page labelled likes so the copy never crossed a module
@@ -180,7 +180,9 @@ export function ListLikeButton({
           "w-fit",
         )}
       >
-        <span data-testid="list-like-count">{likeCountLabel(count)}</span>
+        <span data-testid="list-like-count">
+          <AnimatedNumber value={count} format={likeCountLabel} />
+        </span>
       </button>
       {error ? (
         <p className="text-sm text-danger" role="alert">
