@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { buttonVariants, cn } from "@coda/ui";
+import { AnimatedNumber, buttonVariants, cn } from "@coda/ui";
 import {
   ReviewActionError,
   likeCountLabel,
@@ -160,7 +160,9 @@ export function ReviewLikeButton({
           "w-fit",
         )}
       >
-        <span data-testid="like-count">{likeCountLabel(count)}</span>
+        <span data-testid="like-count">
+          <AnimatedNumber value={count} format={likeCountLabel} />
+        </span>
       </button>
       {error ? (
         <p className="text-sm text-danger" role="alert">

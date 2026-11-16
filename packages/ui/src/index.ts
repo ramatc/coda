@@ -20,3 +20,7 @@ export {
 } from "./components/rating-scale";
 export { IndexNumber, type IndexNumberProps } from "./components/index-number";
 export { Artwork, type ArtworkProps } from "./components/artwork";
+export {
+  AnimatedNumber,
+  type AnimatedNumberProps,
+} from "./components/animated-number";
