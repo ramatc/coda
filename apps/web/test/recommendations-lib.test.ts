@@ -36,9 +36,9 @@ describe("fetchRecommendations", () => {
     const url = fetchMock.mock.calls[0]?.[0];
     expect(String(url)).toContain("/recommendations");
     const init = fetchMock.mock.calls[0]?.[1];
-    expect(
-      (init?.headers as Record<string, string>).Authorization,
-    ).toBe("Bearer test-token");
+    expect((init?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer test-token",
+    );
   });
 
   it("fails safe to an empty list on a non-OK response", async () => {
@@ -68,9 +68,9 @@ describe("dismissRecommendation", () => {
     expect(url).toContain("/recommendations/rec-1/dismiss");
     const init = fetchMock.mock.calls[0]?.[1];
     expect(init?.method).toBe("POST");
-    expect(
-      (init?.headers as Record<string, string>).Authorization,
-    ).toBe("Bearer test-token");
+    expect((init?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer test-token",
+    );
   });
 
   it("throws on a non-OK response (so the island keeps the card)", async () => {
@@ -78,6 +78,8 @@ describe("dismissRecommendation", () => {
       new Response("nope", { status: 404 }),
     );
 
-    await expect(dismissRecommendation("test-token", "rec-1")).rejects.toThrow();
+    await expect(
+      dismissRecommendation("test-token", "rec-1"),
+    ).rejects.toThrow();
   });
 });

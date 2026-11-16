@@ -39,7 +39,8 @@ const createBullConnectionMock = vi.fn(() => ({
 }));
 
 vi.mock("../src/catalog-import/catalog-redis.js", () => ({
-  createBullConnection: (...args: unknown[]) => createBullConnectionMock(...args),
+  createBullConnection: (...args: unknown[]) =>
+    createBullConnectionMock(...args),
 }));
 
 const workerInstances: Array<{
@@ -113,7 +114,11 @@ function album(spotifyId: string): NormalizedAlbum {
     coverUrl: null,
     trackCount: null,
     popularityScore: 0,
-    primaryArtist: { spotifyId: `artist-${spotifyId}`, name: "x", imageUrl: null },
+    primaryArtist: {
+      spotifyId: `artist-${spotifyId}`,
+      name: "x",
+      imageUrl: null,
+    },
   };
 }
 
@@ -142,13 +147,20 @@ describe("catalog-worker bootstrap", () => {
     set: vi.fn().mockResolvedValue(undefined),
   };
 
-  let pageProcessor: (job: FakeJob<{ offset: number; limit: number }>) => Promise<unknown>;
-  let albumProcessor: (job: FakeJob<{ album: NormalizedAlbum }>) => Promise<unknown>;
-  let enrichProcessor: (job: FakeJob<{ spotifyId: string }>) => Promise<unknown>;
-  let searchProcessor: (job: FakeJob<{ spotifyId: string }>) => Promise<unknown>;
+  let pageProcessor: (
+    job: FakeJob<{ offset: number; limit: number }>,
+  ) => Promise<unknown>;
+  let albumProcessor: (
+    job: FakeJob<{ album: NormalizedAlbum }>,
+  ) => Promise<unknown>;
+  let enrichProcessor: (
+    job: FakeJob<{ spotifyId: string }>,
+  ) => Promise<unknown>;
+  let searchProcessor: (
+    job: FakeJob<{ spotifyId: string }>,
+  ) => Promise<unknown>;
   let enrichWorkerOptions:
-    | { limiter?: { max: number; duration: number } }
-    | undefined;
+    { limiter?: { max: number; duration: number } } | undefined;
   let connectionCallsDuringBootstrap = 0;
   let meiliConfiguredDuringBootstrap = 0;
 
@@ -178,18 +190,22 @@ describe("catalog-worker bootstrap", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     connectionCallsDuringBootstrap = createBullConnectionMock.mock.calls.length;
-    meiliConfiguredDuringBootstrap = fakeMeili.configureIndexes.mock.calls.length;
-    pageProcessor = workerInstances.find((w) => w.queueName === CATALOG_PAGE_QUEUE)!
-      .processor as typeof pageProcessor;
-    albumProcessor = workerInstances.find((w) => w.queueName === CATALOG_ALBUM_QUEUE)!
-      .processor as typeof albumProcessor;
+    meiliConfiguredDuringBootstrap =
+      fakeMeili.configureIndexes.mock.calls.length;
+    pageProcessor = workerInstances.find(
+      (w) => w.queueName === CATALOG_PAGE_QUEUE,
+    )!.processor as typeof pageProcessor;
+    albumProcessor = workerInstances.find(
+      (w) => w.queueName === CATALOG_ALBUM_QUEUE,
+    )!.processor as typeof albumProcessor;
     const enrichWorker = workerInstances.find(
       (w) => w.queueName === CATALOG_ENRICH_QUEUE,
     )!;
     enrichProcessor = enrichWorker.processor as typeof enrichProcessor;
     enrichWorkerOptions = enrichWorker.options;
-    searchProcessor = workerInstances.find((w) => w.queueName === SEARCH_SYNC_QUEUE)!
-      .processor as typeof searchProcessor;
+    searchProcessor = workerInstances.find(
+      (w) => w.queueName === SEARCH_SYNC_QUEUE,
+    )!.processor as typeof searchProcessor;
   });
 
   beforeEach(() => {
@@ -238,12 +254,19 @@ describe("catalog-worker bootstrap", () => {
 
     expect(fakeQueue.enqueueAlbums).toHaveBeenCalledWith(albums);
     expect(fakeQueue.enqueuePage).toHaveBeenCalledWith(50, 50);
-    expect(callOrder).toEqual(["enqueueAlbums", "enqueuePage", "checkpoint.set"]);
+    expect(callOrder).toEqual([
+      "enqueueAlbums",
+      "enqueuePage",
+      "checkpoint.set",
+    ]);
     expect(result).toEqual({ processed: 2, nextOffset: 50 });
   });
 
   it("uses an explicit `limit: 0` as-is instead of falling back to the default (judgment-day issue #11)", async () => {
-    fakeSpotify.getAlbumPage.mockResolvedValue({ albums: [], nextOffset: null });
+    fakeSpotify.getAlbumPage.mockResolvedValue({
+      albums: [],
+      nextOffset: null,
+    });
 
     await pageProcessor({ data: { offset: 0, limit: 0 } });
 
@@ -252,7 +275,10 @@ describe("catalog-worker bootstrap", () => {
   });
 
   it("clears the checkpoint on the final page (no next-page enqueue)", async () => {
-    fakeSpotify.getAlbumPage.mockResolvedValue({ albums: [], nextOffset: null });
+    fakeSpotify.getAlbumPage.mockResolvedValue({
+      albums: [],
+      nextOffset: null,
+    });
 
     await pageProcessor({ data: { offset: 950, limit: 50 } });
 
@@ -270,7 +296,9 @@ describe("catalog-worker bootstrap", () => {
 
   it("album worker skips a malformed record (Prisma validation error) instead of failing the job", async () => {
     fakeService.upsertAlbum.mockRejectedValue(
-      new Prisma.PrismaClientValidationError("bad shape", { clientVersion: "test" }),
+      new Prisma.PrismaClientValidationError("bad shape", {
+        clientVersion: "test",
+      }),
     );
 
     await expect(
@@ -423,7 +451,9 @@ describe("catalog-worker bootstrap", () => {
       enrichProcessor({ data: { spotifyId: "genre-collision" } }),
     ).resolves.toBeUndefined();
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('due to a unique constraint conflict on field "slug"'),
+      expect.stringContaining(
+        'due to a unique constraint conflict on field "slug"',
+      ),
     );
     expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("mbid"));
 
@@ -447,7 +477,9 @@ describe("catalog-worker bootstrap", () => {
   });
 
   it("search-sync worker tolerates a benign album-missing result without throwing", async () => {
-    fakeSearchSyncService.syncAlbum.mockResolvedValue({ status: "album-missing" });
+    fakeSearchSyncService.syncAlbum.mockResolvedValue({
+      status: "album-missing",
+    });
 
     await expect(
       searchProcessor({ data: { spotifyId: "gone" } }),

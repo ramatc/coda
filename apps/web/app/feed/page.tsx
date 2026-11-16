@@ -55,9 +55,7 @@ export default async function FeedPage({ searchParams }: FeedPageProps) {
   return await AppShell({
     children: (
       <main className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-8">
-        <h1 className="text-2xl font-semibold text-text-primary">
-          Your feed
-        </h1>
+        <h1 className="text-2xl font-semibold text-text-primary">Your feed</h1>
 
         <FeedList items={page.items} />
 

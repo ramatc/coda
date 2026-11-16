@@ -25,7 +25,9 @@ describe("ClerkGuard authorizedParties warning", () => {
   });
 
   it("logs a warning naming APP_URL once when it is missing at construction time", () => {
-    const warnSpy = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
     const config = {
       get: (key: string) => (key === "APP_URL" ? undefined : "test-secret"),
     } as unknown as ConfigService;
@@ -37,7 +39,9 @@ describe("ClerkGuard authorizedParties warning", () => {
   });
 
   it("does not re-log the warning on subsequent guarded requests (fires once at boot, not per-request)", async () => {
-    const warnSpy = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
     const config = {
       get: (key: string) => (key === "APP_URL" ? undefined : "test-secret"),
     } as unknown as ConfigService;

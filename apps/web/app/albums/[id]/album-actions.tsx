@@ -54,11 +54,7 @@ type Status = "idle" | "saving" | "error";
  * therefore wins over remove: resolving never deletes the row, so a resolved
  * album can still carry a surviving `wantToListenId`.
  */
-export function AlbumActions({
-  albumId,
-  viewer,
-  ownLists,
-}: AlbumActionsProps) {
+export function AlbumActions({ albumId, viewer, ownLists }: AlbumActionsProps) {
   const { getToken } = useAuth();
   const router = useRouter();
   const [status, setStatus] = useState<Status>("idle");
@@ -258,9 +254,7 @@ export function AlbumActions({
             // mid-flight and race two action+refresh cycles over the one
             // shared `pendingRefresh` boolean (judgment-day round 4).
             disabled={reviewBusy}
-            onChange={(score) =>
-              void run((t) => rateAlbum(t, albumId, score))
-            }
+            onChange={(score) => void run((t) => rateAlbum(t, albumId, score))}
           />
           {viewer.score !== null ? (
             <button
@@ -348,7 +342,9 @@ export function AlbumActions({
         />
         <button
           type="button"
-          disabled={reviewBusy || viewer.score === null || reviewDraft.trim() === ""}
+          disabled={
+            reviewBusy || viewer.score === null || reviewDraft.trim() === ""
+          }
           onClick={() =>
             void run((t) => writeReview(t, albumId, reviewDraft.trim()), true)
           }

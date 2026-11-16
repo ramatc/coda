@@ -49,7 +49,8 @@ export interface NotificationEmailProcessorDependencies {
 function sliceExcerpt(value: string, maxLength: number): string {
   const sliced = value.slice(0, maxLength);
   const lastCharCode = sliced.charCodeAt(sliced.length - 1);
-  const isTrailingHighSurrogate = lastCharCode >= 0xd800 && lastCharCode <= 0xdbff;
+  const isTrailingHighSurrogate =
+    lastCharCode >= 0xd800 && lastCharCode <= 0xdbff;
   return isTrailingHighSurrogate ? sliced.slice(0, -1) : sliced;
 }
 
@@ -76,14 +77,18 @@ export function createNotificationEmailProcessor({
 }: NotificationEmailProcessorDependencies) {
   const baseUrl = appUrl.replace(/\/+$/, "");
 
-  return async ({ notificationId }: NotificationEmailJobData): Promise<void> => {
+  return async ({
+    notificationId,
+  }: NotificationEmailJobData): Promise<void> => {
     const notification = (await prisma.client.notification.findUnique({
       where: { id: notificationId },
       select: EMAIL_NOTIFICATION_SELECT,
     })) as EmailNotificationRow | null;
 
     if (!notification) {
-      logger.debug(`Notification ${notificationId} no longer exists; skipping email.`);
+      logger.debug(
+        `Notification ${notificationId} no longer exists; skipping email.`,
+      );
       return;
     }
 
@@ -104,7 +109,8 @@ export function createNotificationEmailProcessor({
         // means the idempotency key was reused with a DIFFERENT payload,
         // which is permanent — retrying only ever reproduces it.
         const isPermanentIdempotencyConflict =
-          err.status === 409 && err.code === RESEND_INVALID_IDEMPOTENT_REQUEST_CODE;
+          err.status === 409 &&
+          err.code === RESEND_INVALID_IDEMPOTENT_REQUEST_CODE;
         const isPermanent4xx =
           err.status >= 400 &&
           err.status < 500 &&
@@ -133,7 +139,10 @@ function actorName(profile: EmailNotificationRow["actor"]["profile"]): string {
   return name || "Someone";
 }
 
-function composeEmail(notification: EmailNotificationRow, appUrl: string): ResendEmail {
+function composeEmail(
+  notification: EmailNotificationRow,
+  appUrl: string,
+): ResendEmail {
   const profile = notification.actor.profile;
   const name = actorName(profile);
   const displayName = escapeHtml(name);

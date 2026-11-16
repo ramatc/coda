@@ -147,7 +147,9 @@ describe("ResendService", () => {
 
   it("also skips when RESEND_FROM_EMAIL is unset — Resend rejects a send with no sender", async () => {
     const fetchMock = stubFetch(calls);
-    const service = new ResendService(config({ RESEND_API_KEY: "re_test_key" }));
+    const service = new ResendService(
+      config({ RESEND_API_KEY: "re_test_key" }),
+    );
 
     const result = await service.send(email);
 
@@ -349,12 +351,16 @@ describe("ResendService", () => {
   });
 
   it("leaves `code` undefined when the error body is not JSON", async () => {
-    stubFetch(calls, () => ({
-      ok: false,
-      status: 500,
-      json: () => Promise.reject(new Error("not json")),
-      text: async () => "Internal Server Error",
-    }) as unknown as Response);
+    stubFetch(
+      calls,
+      () =>
+        ({
+          ok: false,
+          status: 500,
+          json: () => Promise.reject(new Error("not json")),
+          text: async () => "Internal Server Error",
+        }) as unknown as Response,
+    );
     const service = new ResendService(enabledConfig());
 
     const error = await service.send(email).catch((err: unknown) => err);
@@ -363,7 +369,9 @@ describe("ResendService", () => {
   });
 
   it("leaves `code` undefined when the JSON error body has no `name` field", async () => {
-    stubFetch(calls, () => jsonResponse(422, { message: "Invalid `to` field" }));
+    stubFetch(calls, () =>
+      jsonResponse(422, { message: "Invalid `to` field" }),
+    );
     const service = new ResendService(enabledConfig());
 
     const error = await service.send(email).catch((err: unknown) => err);

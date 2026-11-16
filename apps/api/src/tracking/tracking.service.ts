@@ -269,22 +269,24 @@ export class TrackingService {
         // create it, so retry as a create — the caller's intent ("set my
         // rating to X") is still valid (judgment-day PR8 round 3, issue #1).
         try {
-          const createdRow = await this.prisma.client.$transaction(async (tx) => {
-            const row = await tx.rating.create({
-              data: { userId, albumId, score },
-              select: { id: true, score: true },
-            });
-            await tx.activityEvent.create({
-              data: {
-                userId,
-                type: ActivityType.RATING,
-                albumId,
-                ratingId: row.id,
-                payload: { score },
-              },
-            });
-            return row;
-          });
+          const createdRow = await this.prisma.client.$transaction(
+            async (tx) => {
+              const row = await tx.rating.create({
+                data: { userId, albumId, score },
+                select: { id: true, score: true },
+              });
+              await tx.activityEvent.create({
+                data: {
+                  userId,
+                  type: ActivityType.RATING,
+                  albumId,
+                  ratingId: row.id,
+                  payload: { score },
+                },
+              });
+              return row;
+            },
+          );
           rating = createdRow;
           created = true;
         } catch (retryErr) {
@@ -488,21 +490,23 @@ export class TrackingService {
         // intent ("set my review to X") is still valid (judgment-day PR8
         // round 3, issue #1).
         try {
-          const createdRow = await this.prisma.client.$transaction(async (tx) => {
-            const row = await tx.review.create({
-              data: { userId, albumId, body },
-              select: { id: true, body: true },
-            });
-            await tx.activityEvent.create({
-              data: {
-                userId,
-                type: ActivityType.REVIEW,
-                albumId,
-                reviewId: row.id,
-              },
-            });
-            return row;
-          });
+          const createdRow = await this.prisma.client.$transaction(
+            async (tx) => {
+              const row = await tx.review.create({
+                data: { userId, albumId, body },
+                select: { id: true, body: true },
+              });
+              await tx.activityEvent.create({
+                data: {
+                  userId,
+                  type: ActivityType.REVIEW,
+                  albumId,
+                  reviewId: row.id,
+                },
+              });
+              return row;
+            },
+          );
           review = createdRow;
           created = true;
         } catch (retryErr) {

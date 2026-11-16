@@ -70,13 +70,11 @@ function fakePrisma(albums: DbAlbum[]): PrismaService {
       findUnique: vi.fn(async ({ where }: { where: { spotifyId: string } }) => {
         return albums.find((a) => a.spotifyId === where.spotifyId) ?? null;
       }),
-      findMany: vi.fn(
-        async ({ cursor }: { cursor?: { id: string } } = {}) => {
-          // Single-batch fake: return everything once, then nothing on the
-          // cursor-follow call so the pager terminates.
-          return cursor ? [] : albums;
-        },
-      ),
+      findMany: vi.fn(async ({ cursor }: { cursor?: { id: string } } = {}) => {
+        // Single-batch fake: return everything once, then nothing on the
+        // cursor-follow call so the pager terminates.
+        return cursor ? [] : albums;
+      }),
     },
     artist: {
       findMany: vi.fn(async ({ cursor }: { cursor?: { id: string } } = {}) => {

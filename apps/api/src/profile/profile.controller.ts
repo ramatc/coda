@@ -1,9 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator.js";
-import {
-  AvatarService,
-  type AvatarPresignResult,
-} from "./avatar.service.js";
+import { AvatarService, type AvatarPresignResult } from "./avatar.service.js";
 import {
   ProfileService,
   type ProfileResponse,
@@ -26,9 +23,7 @@ export class ProfileController {
 
   /** The authenticated user's own profile. */
   @Get()
-  getOwn(
-    @CurrentUser("sub") clerkUserId: string,
-  ): Promise<ProfileResponse> {
+  getOwn(@CurrentUser("sub") clerkUserId: string): Promise<ProfileResponse> {
     return this.profiles.getOwnProfile(clerkUserId);
   }
 

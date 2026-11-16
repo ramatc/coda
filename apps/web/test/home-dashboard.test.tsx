@@ -189,7 +189,9 @@ describe("HomePage", () => {
 
     await renderPage();
 
-    expect(screen.getAllByTestId("friends-preview-cover-placeholder")).toHaveLength(3);
+    expect(
+      screen.getAllByTestId("friends-preview-cover-placeholder"),
+    ).toHaveLength(3);
   });
 
   it("runs the onboarding gate and bounces a half-onboarded viewer", async () => {

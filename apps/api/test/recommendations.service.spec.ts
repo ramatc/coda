@@ -101,7 +101,9 @@ describe("RecommendationsService", () => {
 
   beforeEach(() => {
     fake = createFakePrisma();
-    generation = { generateForUser: vi.fn().mockResolvedValue({ generated: 0, pruned: 0 }) };
+    generation = {
+      generateForUser: vi.fn().mockResolvedValue({ generated: 0, pruned: 0 }),
+    };
     service = new RecommendationsService(
       fake.prisma,
       generation as unknown as RecoGenerationService,
@@ -149,7 +151,10 @@ describe("RecommendationsService", () => {
 
     const result = await service.dismiss(CLERK_ID, REC_1);
 
-    expect(result).toEqual({ id: REC_1, status: RecommendationStatus.DISMISSED });
+    expect(result).toEqual({
+      id: REC_1,
+      status: RecommendationStatus.DISMISSED,
+    });
     expect(fake.recos[0].status).toBe(RecommendationStatus.DISMISSED);
   });
 
@@ -178,8 +183,8 @@ describe("RecommendationsService", () => {
   });
 
   it("rejects a malformed recommendation id with a 400", async () => {
-    await expect(service.dismiss(CLERK_ID, "not-a-uuid")).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.dismiss(CLERK_ID, "not-a-uuid"),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

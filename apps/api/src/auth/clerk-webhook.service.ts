@@ -42,7 +42,9 @@ export class ClerkWebhookService {
         }
         break;
       default:
-        this.logger.debug(`Ignoring unhandled Clerk webhook event: ${event.type}`);
+        this.logger.debug(
+          `Ignoring unhandled Clerk webhook event: ${event.type}`,
+        );
     }
   }
 

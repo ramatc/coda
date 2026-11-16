@@ -30,7 +30,9 @@ describe("buildCorsOptions", () => {
   });
 
   it("fails closed (origin: false) and logs a warning naming APP_URL when it is missing", () => {
-    const warnSpy = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const warnSpy = vi
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
 
     const options = buildCorsOptions(fakeConfig(undefined));
 

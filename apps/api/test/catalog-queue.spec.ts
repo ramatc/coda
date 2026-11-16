@@ -21,7 +21,9 @@ import type { NormalizedAlbum } from "../src/catalog-import/spotify.types.js";
 // in spotify-checkpoint.store.spec.ts.
 vi.mock("../src/catalog-import/catalog-redis.js", () => ({
   createBullConnection: () => ({ quit: vi.fn().mockResolvedValue("OK") }),
-  createBullProducerConnection: () => ({ quit: vi.fn().mockResolvedValue("OK") }),
+  createBullProducerConnection: () => ({
+    quit: vi.fn().mockResolvedValue("OK"),
+  }),
 }));
 
 interface FakeAddedJob {

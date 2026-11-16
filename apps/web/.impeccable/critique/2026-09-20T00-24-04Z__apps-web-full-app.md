@@ -2,27 +2,28 @@
 target: apps/web (full app)
 total_score: 15
 max_score: 40
-na_heuristics: 
+na_heuristics:
 p0_count: 2
 p1_count: 2
 timestamp: 2026-09-20T00-24-04Z
 slug: apps-web-full-app
 ---
+
 ## Design Health Score
 
-| # | Heuristic | Score | Key Issue |
-|---|-----------|-------|-----------|
-| 1 | Visibility of System Status | 2 | No loading/saving indicator beyond disabled controls; `router.refresh()` gives no spinner |
-| 2 | Match System / Real World | 3 | "Diary", "Want to listen" read clearly; solid |
-| 3 | User Control and Freedom | 1 | Clearing a rating is one click, no confirm, cascades the attached review away |
-| 4 | Consistency and Standards | 1 | Two full visual/component languages coexist; rating rendered 3 different ways (segmented bar / native `<select>` / plain text) |
-| 5 | Error Prevention | 1 | No confirm before destructive rating/review delete; onboarding "Next" just disables, doesn't explain why |
-| 6 | Recognition Rather Than Recall | 2 | Legacy pages give no way back into the app but browser Back |
-| 7 | Flexibility and Efficiency | 1 | No shortcuts, no bulk actions, no keyboard rating input |
-| 8 | Aesthetic and Minimalist Design | 2 | /home and /feed are clean; legacy screens are dense and visually inconsistent |
-| 9 | Error Recovery | 1 | Generic "Something went wrong." with no retry affordance |
-| 10 | Help and Documentation | 1 | Zero onboarding hints or empty-state guidance beyond static sentences |
-| **Total** | | **15/40** | **Poor — major UX overhaul required** |
+| #         | Heuristic                       | Score     | Key Issue                                                                                                                      |
+| --------- | ------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1         | Visibility of System Status     | 2         | No loading/saving indicator beyond disabled controls; `router.refresh()` gives no spinner                                      |
+| 2         | Match System / Real World       | 3         | "Diary", "Want to listen" read clearly; solid                                                                                  |
+| 3         | User Control and Freedom        | 1         | Clearing a rating is one click, no confirm, cascades the attached review away                                                  |
+| 4         | Consistency and Standards       | 1         | Two full visual/component languages coexist; rating rendered 3 different ways (segmented bar / native `<select>` / plain text) |
+| 5         | Error Prevention                | 1         | No confirm before destructive rating/review delete; onboarding "Next" just disables, doesn't explain why                       |
+| 6         | Recognition Rather Than Recall  | 2         | Legacy pages give no way back into the app but browser Back                                                                    |
+| 7         | Flexibility and Efficiency      | 1         | No shortcuts, no bulk actions, no keyboard rating input                                                                        |
+| 8         | Aesthetic and Minimalist Design | 2         | /home and /feed are clean; legacy screens are dense and visually inconsistent                                                  |
+| 9         | Error Recovery                  | 1         | Generic "Something went wrong." with no retry affordance                                                                       |
+| 10        | Help and Documentation          | 1         | Zero onboarding hints or empty-state guidance beyond static sentences                                                          |
+| **Total** |                                 | **15/40** | **Poor — major UX overhaul required**                                                                                          |
 
 ## Design Specificity Verdict
 
@@ -45,31 +46,37 @@ Coda has one real design foundation (the OKLCH token system) and one real showca
 ## Priority Issues
 
 **[P0] Two visual languages coexist across the app, and the redesign only reaches 2 of ~9 routes**
+
 - **Why it matters**: `/search`, `/albums/[id]`, `/u/[username]` inherit the new dark `bg-background` from the root layout but keep light-UI-era component styling (`bg-white` buttons, `border-brand-200` hairlines, opacity values tuned for a white background) and a different violet shade (`brand-600`) than the new `coda` token. This is an unintended hybrid, worse than either pure state — it reads as broken, not unfinished.
 - **Fix**: Either finish migrating the remaining routes to the semantic tokens (same pattern already used on /home, /feed), or gate the dark background behind the shell so unmigrated routes keep their original light background until their turn.
 - **Suggested command**: `/impeccable polish` (repo-wide token pass) or `/impeccable layout` per route.
 
 **[P0] No persistent navigation on `/search`, `/albums/[id]`, `/u/[username]`**
+
 - **Why it matters**: None of these three pages import `Header`/`BottomNav`. A user who taps into search, opens an album, or opens a profile is stranded with no way back except the browser Back button — a functional dead-end, not just a style gap.
 - **Fix**: Wrap these routes in the existing `AppShell` — it's already a drop-in `{children}` wrapper, so this is close to a one-line change per page.
 - **Suggested command**: `/impeccable layout`
 
 **[P1] The flagship rating component is unshipped — the core interaction uses a bare native `<select>`**
+
 - **Why it matters**: `album-actions.tsx` renders `<select aria-label="Your rating">` with numeric options and no custom styling, while `RatingScale` sits unused. For a Letterboxd-for-music app, rating IS the product — its input surface currently looks like an unstyled HTML form.
 - **Fix**: Build the interactive/drag-to-rate variant of `RatingScale` the component's own docs flag as deferred, wire it into album detail, and use `RatingScale` (not plain text) in `FeedList`/`FriendsPreview` too.
 - **Suggested command**: `/impeccable typeset` → `/impeccable delight` (interaction), then `/impeccable polish`
 
 **[P1] Clearing a rating is one click, no confirmation, and silently deletes the attached review**
+
 - **Why it matters**: Selecting "—" in the rating dropdown cascade-deletes any attached review with zero warning, zero undo — the highest-stakes moment in the flow gets the least ceremony (less than adding an album to a list).
 - **Fix**: Add a confirm step when a review is attached: "Clearing your rating will also delete your review — continue?"
 - **Suggested command**: `/impeccable harden`
 
 **[P2] BottomNav labels render at 10px — below accessibility-readable size — on both finished screens**
+
 - **Why it matters**: Detector-verified (not a judgment call): "Home", "Search", "Diary", "Lists", "You" all render under the 11px floor on `/home` and `/feed`. One shared component, one fix, clears it app-wide the moment the shell reaches other routes too.
 - **Fix**: Bump the BottomNav label font-size token by 1-2px; re-run `/impeccable audit` to confirm the floor is cleared.
 - **Suggested command**: `/impeccable typeset`
 
 **[P2] Home's first-run empty states have no CTA**
+
 - **Why it matters**: "Follow people to see what they listen to..." and "Rate a few albums..." are static italic text, not links — a new user hits two dead ends stacked right under a populated Popular row.
 - **Fix**: Turn these into real buttons linking to `/search` — the copy already implies the action, it just isn't clickable.
 - **Suggested command**: `/impeccable clarify` → `/impeccable delight`
@@ -78,7 +85,7 @@ Coda has one real design foundation (the OKLCH token system) and one real showca
 
 **Jordan (first-timer), logging their first album**: After onboarding, Jordan lands on `/home`, taps an album cover, and arrives at `/albums/[id]` — a visually disconnected legacy screen with no header, logo, or nav (just floats at the top of a black page). To rate, Jordan meets a raw `<select>`, not the app's showcase widget. To get back to Home there's no button, only browser Back. Jordan's very first core action happens on the app's worst-designed, most disconnected screen.
 
-**Sam (accessibility), any screen**: `RatingScale`'s segments are properly `aria-hidden` with the value announced via `aria-label` — but the far uglier native `<select>` on album detail is, ironically, the *most* accessible rating control in the app. Independently, the detector confirmed BottomNav labels sit below the 11px readability floor on both finished screens, and several legacy-screen opacity values (`opacity-50`/`60`/`70`, calibrated for a light background) look visually close to invisible against the now-inherited dark background in screenshots — worth a contrast check before further polish.
+**Sam (accessibility), any screen**: `RatingScale`'s segments are properly `aria-hidden` with the value announced via `aria-label` — but the far uglier native `<select>` on album detail is, ironically, the _most_ accessible rating control in the app. Independently, the detector confirmed BottomNav labels sit below the 11px readability floor on both finished screens, and several legacy-screen opacity values (`opacity-50`/`60`/`70`, calibrated for a light background) look visually close to invisible against the now-inherited dark background in screenshots — worth a contrast check before further polish.
 
 **Riley (stress-tester), rapidly rate/unrate**: The codebase's own comments show real race-condition fixes already fought over (`pendingRefresh` vs. overlapping mutations) — a good sign it was stress-tested. But the UI gives zero feedback during the lock window: the textarea just silently disables with no toast or spinner explaining why, which reads as a bug rather than a safety guard.
 
@@ -94,6 +101,6 @@ Coda has one real design foundation (the OKLCH token system) and one real showca
 
 ## Questions to Consider
 
-- If `RatingScale` was built and tested but never wired into the one screen where users actually rate something, was "ship the redesign to /home and /feed" the right slice — or did the team redesign the two screens that *display* ratings while leaving the one that *creates* them untouched?
+- If `RatingScale` was built and tested but never wired into the one screen where users actually rate something, was "ship the redesign to /home and /feed" the right slice — or did the team redesign the two screens that _display_ ratings while leaving the one that _creates_ them untouched?
 - Is the dark background on legacy pages an accident of the root layout change, or a known interim state? Right now it reads as broken, not "in progress" — worth deciding explicitly.
 - Given rating-then-reviewing is the core loop, why does clearing a rating get less confirmation ceremony than adding an album to a list?

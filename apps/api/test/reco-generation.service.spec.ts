@@ -190,8 +190,9 @@ function createFakePrisma() {
         }));
       },
     },
-    $transaction: async <T>(fn: (tx: typeof client) => Promise<T>): Promise<T> =>
-      fn(client),
+    $transaction: async <T>(
+      fn: (tx: typeof client) => Promise<T>,
+    ): Promise<T> => fn(client),
   };
 
   return {
@@ -407,7 +408,10 @@ describe("scoreCandidate (pure heuristic)", () => {
 
     // genreOverlap = (1*1)/2 = 0.5 → 0.5*0.5 = 0.25; artistOverlap = 1 → 0.35;
     // popNorm = log1p(50)/log1p(100) → 0.15*~0.852 ≈ 0.128. Total ≈ 0.728.
-    expect(scored.score).toBeCloseTo(0.25 + 0.35 + 0.15 * (Math.log1p(50) / Math.log1p(100)), 5);
+    expect(scored.score).toBeCloseTo(
+      0.25 + 0.35 + 0.15 * (Math.log1p(50) / Math.log1p(100)),
+      5,
+    );
     expect(scored.reason).toEqual({ topGenre: "Rock", matchedArtist: true });
   });
 

@@ -11,7 +11,11 @@ import { defineConfig } from "prisma/config";
 // The single source of truth for env vars is the repo-root .env (see
 // .env.example). Resolve it from this file's location so the migrate scripts
 // work no matter which directory the CLI is invoked from.
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 for (const candidate of [
   path.join(repoRoot, ".env"),
   path.join(process.cwd(), ".env"),

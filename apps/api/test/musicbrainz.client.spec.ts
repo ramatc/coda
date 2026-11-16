@@ -60,7 +60,10 @@ describe("MusicBrainzClient", () => {
             title: "OK Computer",
             score: 100,
             "artist-credit": [
-              { name: "Radiohead", artist: { id: "art-mbid-1", name: "Radiohead" } },
+              {
+                name: "Radiohead",
+                artist: { id: "art-mbid-1", name: "Radiohead" },
+              },
             ],
             // Deliberately out of weight order to prove the sort.
             genres: [
@@ -124,7 +127,9 @@ describe("MusicBrainzClient", () => {
       }),
     );
 
-    expect(await makeClient().lookupAlbum("Greatest Hits", "Various")).toBeNull();
+    expect(
+      await makeClient().lookupAlbum("Greatest Hits", "Various"),
+    ).toBeNull();
   });
 
   // judgment-day issue #4, round 2: a candidate missing `score` entirely must
@@ -144,7 +149,9 @@ describe("MusicBrainzClient", () => {
   it("accepts a top candidate exactly at the minimum score threshold", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
-        "release-groups": [{ id: "rg-borderline", score: 80, "artist-credit": [] }],
+        "release-groups": [
+          { id: "rg-borderline", score: 80, "artist-credit": [] },
+        ],
       }),
     );
 
@@ -203,7 +210,9 @@ describe("MusicBrainzClient", () => {
       fakeConfig({ MUSICBRAINZ_USER_AGENT: "" }),
     );
 
-    await expect(client.lookupAlbum("x", "y")).rejects.toThrow(/not configured/);
+    await expect(client.lookupAlbum("x", "y")).rejects.toThrow(
+      /not configured/,
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -283,7 +292,9 @@ describe("MusicBrainzClient", () => {
       client.lookupAlbum("Album 3", "Artist 3"),
     ]);
 
-    await vi.advanceTimersByTimeAsync(3 * (RESPONSE_DELAY_MS + MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS));
+    await vi.advanceTimersByTimeAsync(
+      3 * (RESPONSE_DELAY_MS + MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS),
+    );
     await calls;
 
     expect(callTimes).toHaveLength(3);

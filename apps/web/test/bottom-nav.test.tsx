@@ -62,9 +62,7 @@ describe("BottomNav", () => {
       screen.getByRole("link", { name: /Home/ }).getAttribute("aria-current"),
     ).toBe("page");
     expect(
-      screen
-        .getByRole("link", { name: /Search/ })
-        .getAttribute("aria-current"),
+      screen.getByRole("link", { name: /Search/ }).getAttribute("aria-current"),
     ).toBeNull();
   });
 

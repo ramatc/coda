@@ -27,9 +27,8 @@ vi.mock("ioredis", () => {
   return { Redis, default: Redis };
 });
 
-const { SpotifyCheckpointStore } = await import(
-  "../src/catalog-import/spotify-checkpoint.store.js"
-);
+const { SpotifyCheckpointStore } =
+  await import("../src/catalog-import/spotify-checkpoint.store.js");
 
 function fakeConfig(): ConfigService {
   return {

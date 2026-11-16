@@ -46,7 +46,11 @@ vi.mock("../lib/want-to-listen", async (importOriginal) => {
 });
 
 /** Builds a backlog entry whose album title doubles as its test identity. */
-function entry(id: string, title: string, artist = "Radiohead"): WantToListenEntry {
+function entry(
+  id: string,
+  title: string,
+  artist = "Radiohead",
+): WantToListenEntry {
   return {
     id,
     albumId: `album-${id}`,
@@ -88,9 +92,9 @@ describe("WantToListenSection", () => {
     render(<WantToListenSection entries={ENTRIES} isOwnProfile={false} />);
 
     expect(renderedTitles()).toEqual(["Kid A", "Amnesiac", "In Rainbows"]);
-    expect(screen.getByRole("link", { name: "Kid A" }).getAttribute("href")).toBe(
-      "/albums/album-a",
-    );
+    expect(
+      screen.getByRole("link", { name: "Kid A" }).getAttribute("href"),
+    ).toBe("/albums/album-a");
     expect(screen.getAllByText("Radiohead")).toHaveLength(3);
   });
 

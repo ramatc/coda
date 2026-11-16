@@ -47,9 +47,8 @@ vi.mock("../lib/notifications", () => ({
   markAllRead: vi.fn(),
 }));
 
-const { NotificationBell, notificationHref } = await import(
-  "../app/_shell/notification-bell"
-);
+const { NotificationBell, notificationHref } =
+  await import("../app/_shell/notification-bell");
 
 const COMMENT_UNREAD: NotificationItem = {
   id: "n-1",
@@ -316,15 +315,11 @@ describe("NotificationBell", () => {
 
     // Open #1: the request is sent but never resolves yet.
     fireEvent.click(bellButton());
-    await waitFor(() =>
-      expect(fetchNotifications).toHaveBeenCalledTimes(1),
-    );
+    await waitFor(() => expect(fetchNotifications).toHaveBeenCalledTimes(1));
 
     // Close before it settles, then reopen: this is the request that should win.
     fireEvent.keyDown(document, { key: "Escape" });
-    vi.mocked(fetchNotifications).mockResolvedValueOnce(
-      page([FOLLOW_READ]),
-    );
+    vi.mocked(fetchNotifications).mockResolvedValueOnce(page([FOLLOW_READ]));
     fireEvent.click(bellButton());
     const region = await screen.findByRole("region", { name: "Notifications" });
     await waitFor(() => expect(markAllRead).toHaveBeenCalledTimes(1));
@@ -343,7 +338,9 @@ describe("NotificationBell", () => {
   it("shows Loading again on reopen instead of flashing the previous open's items", async () => {
     await renderBell();
     const first = await openDropdown();
-    expect(within(first).getByText("Ada commented on your review")).toBeTruthy();
+    expect(
+      within(first).getByText("Ada commented on your review"),
+    ).toBeTruthy();
 
     fireEvent.keyDown(document, { key: "Escape" });
 
@@ -396,9 +393,7 @@ describe("NotificationBell", () => {
     );
 
     fireEvent.click(bellButton());
-    await waitFor(() =>
-      expect(fetchNotifications).toHaveBeenCalledTimes(1),
-    );
+    await waitFor(() => expect(fetchNotifications).toHaveBeenCalledTimes(1));
 
     unmount();
 

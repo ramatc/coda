@@ -112,7 +112,8 @@ export function scoreCandidate(
   const artistOverlap = taste.artistAffinity.has(album.primaryArtistId) ? 1 : 0;
   const popularity =
     maxPopularity > 0
-      ? Math.log1p(Math.max(album.popularityScore, 0)) / Math.log1p(maxPopularity)
+      ? Math.log1p(Math.max(album.popularityScore, 0)) /
+        Math.log1p(maxPopularity)
       : 0;
 
   const score =
@@ -124,7 +125,7 @@ export function scoreCandidate(
     albumId: album.id,
     score,
     reason: {
-      topGenre: bestGenreId ? genreNameById.get(bestGenreId) ?? null : null,
+      topGenre: bestGenreId ? (genreNameById.get(bestGenreId) ?? null) : null,
       matchedArtist: artistOverlap === 1,
     },
   };
@@ -377,7 +378,9 @@ export class RecoGenerationService {
         where: {
           userId,
           status: RecommendationStatus.ACTIVE,
-          ...(topAlbumIds.length > 0 ? { albumId: { notIn: topAlbumIds } } : {}),
+          ...(topAlbumIds.length > 0
+            ? { albumId: { notIn: topAlbumIds } }
+            : {}),
         },
       });
       await this.upsertBatch(tx, userId, top);
@@ -428,7 +431,9 @@ export class RecoGenerationService {
       where: {
         userId,
         status: RecommendationStatus.ACTIVE,
-        ...(keepAlbumIds.length > 0 ? { albumId: { notIn: keepAlbumIds } } : {}),
+        ...(keepAlbumIds.length > 0
+          ? { albumId: { notIn: keepAlbumIds } }
+          : {}),
       },
     });
     return pruned.count;

@@ -152,10 +152,16 @@ function createFakePrisma() {
         where: { followerId?: string; followingId?: string };
       }): Promise<number> {
         return follows.filter((f) => {
-          if (args.where.followerId !== undefined && f.followerId !== args.where.followerId) {
+          if (
+            args.where.followerId !== undefined &&
+            f.followerId !== args.where.followerId
+          ) {
             return false;
           }
-          if (args.where.followingId !== undefined && f.followingId !== args.where.followingId) {
+          if (
+            args.where.followingId !== undefined &&
+            f.followingId !== args.where.followingId
+          ) {
             return false;
           }
           return true;

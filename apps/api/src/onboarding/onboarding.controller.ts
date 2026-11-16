@@ -43,9 +43,7 @@ export class OnboardingController {
 
   /** Catalog album search for the optional album picker (empty until import). */
   @Get("albums")
-  searchAlbums(
-    @Query("q") query: unknown = "",
-  ): Promise<AlbumSearchResult[]> {
+  searchAlbums(@Query("q") query: unknown = ""): Promise<AlbumSearchResult[]> {
     return this.onboarding.searchAlbums(this.normalizeQuery(query));
   }
 

@@ -92,7 +92,8 @@ describe("EditListForm", () => {
       (screen.getByLabelText("Ranked list") as HTMLInputElement).checked,
     ).toBe(false);
     expect(
-      (screen.getByLabelText("Visible to everyone") as HTMLInputElement).checked,
+      (screen.getByLabelText("Visible to everyone") as HTMLInputElement)
+        .checked,
     ).toBe(true);
   });
 

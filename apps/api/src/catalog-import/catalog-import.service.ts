@@ -155,7 +155,9 @@ export class CatalogImportService {
         select: { id: true },
       });
 
-      const releaseDate = album.releaseDate ? new Date(album.releaseDate) : null;
+      const releaseDate = album.releaseDate
+        ? new Date(album.releaseDate)
+        : null;
       await tx.album.upsert({
         where: { spotifyId: album.spotifyId },
         create: {

@@ -144,7 +144,9 @@ const UNTRACKED: AlbumViewerState = {
  * mirroring the `list(overrides)` helper in `list-detail.test.tsx`, so each test
  * states only the fields it cares about.
  */
-function viewerState(overrides: Partial<AlbumViewerState> = {}): AlbumViewerState {
+function viewerState(
+  overrides: Partial<AlbumViewerState> = {},
+): AlbumViewerState {
   return { ...UNTRACKED, ...overrides };
 }
 
@@ -652,7 +654,11 @@ describe("AlbumActions — add to list", () => {
     });
 
     await waitFor(() =>
-      expect(addListItem).toHaveBeenCalledWith("test-token", "list-2", ALBUM_ID),
+      expect(addListItem).toHaveBeenCalledWith(
+        "test-token",
+        "list-2",
+        ALBUM_ID,
+      ),
     );
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toBe(
@@ -669,14 +675,22 @@ describe("AlbumActions — add to list", () => {
     fireEvent.change(picker, { target: { value: "list-1" } });
 
     await waitFor(() =>
-      expect(addListItem).toHaveBeenCalledWith("test-token", "list-1", ALBUM_ID),
+      expect(addListItem).toHaveBeenCalledWith(
+        "test-token",
+        "list-1",
+        ALBUM_ID,
+      ),
     );
     expect(picker.value).toBe("");
 
     fireEvent.change(picker, { target: { value: "list-2" } });
 
     await waitFor(() =>
-      expect(addListItem).toHaveBeenCalledWith("test-token", "list-2", ALBUM_ID),
+      expect(addListItem).toHaveBeenCalledWith(
+        "test-token",
+        "list-2",
+        ALBUM_ID,
+      ),
     );
     expect(addListItem).toHaveBeenCalledTimes(2);
   });

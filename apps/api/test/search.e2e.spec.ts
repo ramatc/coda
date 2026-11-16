@@ -1,4 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import request from "supertest";
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
@@ -38,10 +46,13 @@ const POPULAR_ROWS = [
 describe("Search API (e2e)", () => {
   let app: INestApplication;
   const fakeMeili = {
-    searchAlbums: vi
+    searchAlbums: vi.fn().mockResolvedValue({
+      hits: [{ id: "a1", title: "OK Computer" }],
+      estimatedTotalHits: 1,
+    }),
+    searchArtists: vi
       .fn()
-      .mockResolvedValue({ hits: [{ id: "a1", title: "OK Computer" }], estimatedTotalHits: 1 }),
-    searchArtists: vi.fn().mockResolvedValue({ hits: [], estimatedTotalHits: 0 }),
+      .mockResolvedValue({ hits: [], estimatedTotalHits: 0 }),
   };
 
   const albumFindMany = vi

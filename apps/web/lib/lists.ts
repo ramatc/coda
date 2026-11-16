@@ -317,7 +317,8 @@ const NO_PROFILE: ParsedProfile = { userId: null, username: null };
 async function attemptFetchProfile(
   token: string | null,
 ): Promise<
-  { transientFailure: true } | { transientFailure: false; profile: ParsedProfile }
+  | { transientFailure: true }
+  | { transientFailure: false; profile: ParsedProfile }
 > {
   let response: Response;
   try {
@@ -345,7 +346,8 @@ async function attemptFetchProfile(
       transientFailure: false,
       profile: {
         userId: typeof profile.userId === "string" ? profile.userId : null,
-        username: typeof profile.username === "string" ? profile.username : null,
+        username:
+          typeof profile.username === "string" ? profile.username : null,
       },
     };
   } catch {

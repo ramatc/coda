@@ -120,7 +120,9 @@ export class AvatarService {
       );
     }
     if (!Number.isInteger(request.size) || request.size <= 0) {
-      throw new BadRequestException("Avatar file size must be a positive integer.");
+      throw new BadRequestException(
+        "Avatar file size must be a positive integer.",
+      );
     }
     if (request.size > MAX_AVATAR_BYTES) {
       throw new BadRequestException(
@@ -151,7 +153,9 @@ export class AvatarService {
     const value = this.config.get<string>(key);
     if (!value) {
       this.logger.error(`${key} is not configured`);
-      throw new BadRequestException(`Avatar storage is not configured (${key}).`);
+      throw new BadRequestException(
+        `Avatar storage is not configured (${key}).`,
+      );
     }
     return value;
   }

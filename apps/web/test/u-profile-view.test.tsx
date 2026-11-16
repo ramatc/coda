@@ -102,11 +102,7 @@ describe("ProfileView", () => {
     expect(ownerHtml).toContain("upload-island");
 
     const visitorHtml = renderToStaticMarkup(
-      <ProfileView
-        profile={baseProfile}
-        isOwnProfile={false}
-        stats={baseStats}
-      >
+      <ProfileView profile={baseProfile} isOwnProfile={false} stats={baseStats}>
         <button>upload-island</button>
       </ProfileView>,
     );
@@ -249,7 +245,9 @@ describe("ProfileView composed with both slice-2 sections", () => {
     expect(lists).not.toBe(backlog);
     expect(lists.contains(backlog)).toBe(false);
     // Each section holds only its own rows — no bleed between them.
-    expect(within(lists).getByRole("link", { name: "Best of 2026" })).not.toBeNull();
+    expect(
+      within(lists).getByRole("link", { name: "Best of 2026" }),
+    ).not.toBeNull();
     expect(within(lists).queryByText("Kid A")).toBeNull();
     expect(within(backlog).getByRole("link", { name: "Kid A" })).not.toBeNull();
     expect(within(backlog).queryByText("Best of 2026")).toBeNull();
@@ -258,10 +256,14 @@ describe("ProfileView composed with both slice-2 sections", () => {
   it("keeps the slice-1 profile content intact alongside the new sections", () => {
     renderProfile(BACKLOG, LISTS);
 
-    expect(screen.getByRole("heading", { name: "Ada Lovelace" })).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Ada Lovelace" }),
+    ).not.toBeNull();
     expect(screen.getByText("Analytical Engine enthusiast")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Follow" })).not.toBeNull();
-    expect(screen.getByTestId("follower-count").textContent).toBe("3 followers");
+    expect(screen.getByTestId("follower-count").textContent).toBe(
+      "3 followers",
+    );
   });
 
   it("still renders both sections, each with its own empty state, on an empty profile", () => {

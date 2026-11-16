@@ -12,9 +12,8 @@ vi.mock("@clerk/nextjs", () => ({
   SignIn: () => <div data-testid="clerk-sign-in" />,
 }));
 
-const { default: SignInPage } = await import(
-  "../app/sign-in/[[...sign-in]]/page"
-);
+const { default: SignInPage } =
+  await import("../app/sign-in/[[...sign-in]]/page");
 
 afterEach(() => {
   cleanup();

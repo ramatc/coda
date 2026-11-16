@@ -77,10 +77,18 @@ async function bootstrap(): Promise<void> {
   // Workers use blocking Redis commands, so sharing one connection between the
   // page, album, enrich, and search-sync Workers would let one Worker's blocking
   // read stall the others' commands on the same socket.
-  const pageConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
-  const albumConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
-  const enrichConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
-  const searchConnection = createBullConnection(config.get<string>(REDIS_URL_ENV));
+  const pageConnection = createBullConnection(
+    config.get<string>(REDIS_URL_ENV),
+  );
+  const albumConnection = createBullConnection(
+    config.get<string>(REDIS_URL_ENV),
+  );
+  const enrichConnection = createBullConnection(
+    config.get<string>(REDIS_URL_ENV),
+  );
+  const searchConnection = createBullConnection(
+    config.get<string>(REDIS_URL_ENV),
+  );
 
   // Configure the Meilisearch indexes (searchable/filterable/sortable attributes)
   // once at boot, before any search-sync job runs. Best-effort: if Meili is
@@ -286,7 +294,9 @@ async function bootstrap(): Promise<void> {
       // Decision #6. No bespoke lock/revival/escalation logic (PR5/PR6 lesson).
       const result = await searchSyncService.syncAlbum(job.data.spotifyId);
       if (result.status !== "synced") {
-        logger.log(`Search-sync for album ${job.data.spotifyId}: ${result.status}`);
+        logger.log(
+          `Search-sync for album ${job.data.spotifyId}: ${result.status}`,
+        );
       }
     },
     { connection: searchConnection },

@@ -28,9 +28,9 @@ describe("fetchSocialStats", () => {
     const url = fetchMock.mock.calls[0]?.[0];
     expect(String(url)).toContain("/users/ada/social");
     const init = fetchMock.mock.calls[0]?.[1];
-    expect(
-      (init?.headers as Record<string, string>).Authorization,
-    ).toBe("Bearer test-token");
+    expect((init?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer test-token",
+    );
   });
 
   it("encodes the username in the URL", async () => {
@@ -79,9 +79,9 @@ describe("followUser", () => {
     expect(url).toContain("/users/ada/follow");
     const init = fetchMock.mock.calls[0]?.[1];
     expect(init?.method).toBe("POST");
-    expect(
-      (init?.headers as Record<string, string>).Authorization,
-    ).toBe("Bearer test-token");
+    expect((init?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer test-token",
+    );
   });
 
   it("encodes the username in the URL", async () => {
@@ -116,9 +116,9 @@ describe("unfollowUser", () => {
     expect(url).toContain("/users/ada/follow");
     const init = fetchMock.mock.calls[0]?.[1];
     expect(init?.method).toBe("DELETE");
-    expect(
-      (init?.headers as Record<string, string>).Authorization,
-    ).toBe("Bearer test-token");
+    expect((init?.headers as Record<string, string>).Authorization).toBe(
+      "Bearer test-token",
+    );
   });
 
   it("encodes the username in the URL", async () => {

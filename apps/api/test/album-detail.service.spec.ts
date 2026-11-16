@@ -77,9 +77,10 @@ function createFakePrisma() {
       },
     },
     rating: {
-      async aggregate(args: {
-        where: { albumId: string };
-      }): Promise<{ _avg: { score: number | null }; _count: { _all: number } }> {
+      async aggregate(args: { where: { albumId: string } }): Promise<{
+        _avg: { score: number | null };
+        _count: { _all: number };
+      }> {
         const rows = ratings.filter((r) => r.albumId === args.where.albumId);
         const count = rows.length;
         const avg =

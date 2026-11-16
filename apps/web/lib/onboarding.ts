@@ -118,7 +118,9 @@ export async function fetchOnboardingStatus(
  * {@link fetchOnboardingStatus}) rather than throwing during `/onboarding`
  * render.
  */
-export async function fetchGenres(token: string | null): Promise<GenreOption[]> {
+export async function fetchGenres(
+  token: string | null,
+): Promise<GenreOption[]> {
   try {
     const response = await fetch(`${getApiBaseUrl()}/onboarding/genres`, {
       headers: { Authorization: `Bearer ${token ?? ""}` },

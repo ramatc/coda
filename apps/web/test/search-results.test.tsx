@@ -2,10 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { SearchResults } from "../app/search/search-results";
-import type {
-  AlbumSearchResult,
-  ArtistSearchResult,
-} from "../lib/search";
+import type { AlbumSearchResult, ArtistSearchResult } from "../lib/search";
 
 // Render next/link as a plain anchor so the pure component renders without a
 // router context (same spirit as mocking next/navigation elsewhere).

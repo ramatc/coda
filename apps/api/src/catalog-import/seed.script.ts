@@ -39,7 +39,9 @@ async function main(): Promise<void> {
     logger.log("Starting Spotify catalog seed...");
     const result = await service.runImport({
       limit: SPOTIFY_PAGE_LIMIT,
-      startOffset: Number.isNaN(startOffset as number) ? undefined : startOffset,
+      startOffset: Number.isNaN(startOffset as number)
+        ? undefined
+        : startOffset,
     });
     // `result.enqueueFailures` (judgment-day issue #1, round 3): surfaced here
     // too so this CLI's own summary line — not just `runImport`'s internal

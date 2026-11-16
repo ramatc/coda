@@ -1,9 +1,6 @@
 import Link from "next/link";
 import { albumHref } from "../../lib/search";
-import type {
-  AlbumSearchResult,
-  ArtistSearchResult,
-} from "../../lib/search";
+import type { AlbumSearchResult, ArtistSearchResult } from "../../lib/search";
 
 interface SearchResultsProps {
   /** Section heading above the album grid (e.g. "Popular" or "Albums"). */

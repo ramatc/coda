@@ -77,7 +77,9 @@ async function bootstrap(): Promise<void> {
     logger.error(`Notification email job ${job?.id} failed: ${err.message}`);
   });
 
-  logger.log("Notification email worker running (notification-email). Ctrl-C to stop.");
+  logger.log(
+    "Notification email worker running (notification-email). Ctrl-C to stop.",
+  );
 
   const shutdown = async (): Promise<void> => {
     logger.log("Shutting down notification email worker...");

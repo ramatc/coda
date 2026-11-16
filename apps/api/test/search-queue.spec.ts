@@ -9,7 +9,9 @@ import {
 // No live Redis/BullMQ in the sandbox: stub the connection factory and the
 // `Queue` class, matching catalog-queue.spec.ts.
 vi.mock("../src/catalog-import/catalog-redis.js", () => ({
-  createBullProducerConnection: () => ({ quit: vi.fn().mockResolvedValue("OK") }),
+  createBullProducerConnection: () => ({
+    quit: vi.fn().mockResolvedValue("OK"),
+  }),
 }));
 
 interface FakeAddedJob {

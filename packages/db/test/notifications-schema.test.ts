@@ -57,12 +57,16 @@ describe("Notification model (schema.prisma)", () => {
   const model = block(SCHEMA, "model Notification");
 
   it("requires actorUserId and leaves only the comment FK nullable (design Decisions 1 and 3)", () => {
-    expect(model).toMatch(/recipientUserId\s+String\s+@map\("recipient_user_id"\)/);
+    expect(model).toMatch(
+      /recipientUserId\s+String\s+@map\("recipient_user_id"\)/,
+    );
     // No `?` on actorUserId: v1 has no system notifications, so the FK is required.
     expect(model).toMatch(/actorUserId\s+String\s+@map\("actor_user_id"\)/);
     expect(model).not.toMatch(/actorUserId\s+String\?/);
     // FOLLOW rows carry no target FK at all, so the comment FK must be nullable.
-    expect(model).toMatch(/reviewCommentId\s+String\?\s+@map\("review_comment_id"\)/);
+    expect(model).toMatch(
+      /reviewCommentId\s+String\?\s+@map\("review_comment_id"\)/,
+    );
     expect(model).toMatch(/readAt\s+DateTime\?\s+@map\("read_at"\)/);
     // There is deliberately no scalar FK to Follow (its PK is composite).
     expect(model).not.toContain("followId");

@@ -1,4 +1,12 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { NotificationType } from "@coda/db";
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -30,10 +38,13 @@ interface FakeJob<T> {
 }
 
 const quitMock = vi.fn().mockResolvedValue("OK");
-const createBullConnectionMock = vi.fn((..._args: unknown[]) => ({ quit: quitMock }));
+const createBullConnectionMock = vi.fn((..._args: unknown[]) => ({
+  quit: quitMock,
+}));
 
 vi.mock("../src/catalog-import/catalog-redis.js", () => ({
-  createBullConnection: (...args: unknown[]) => createBullConnectionMock(...args),
+  createBullConnection: (...args: unknown[]) =>
+    createBullConnectionMock(...args),
 }));
 
 const workerInstances: Array<{
@@ -141,7 +152,9 @@ describe("notification-email worker bootstrap", () => {
   beforeEach(() => {
     fakePrisma.client.notification.findUnique.mockReset();
     fakeResend.send.mockReset();
-    errorSpy = vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    errorSpy = vi
+      .spyOn(Logger.prototype, "error")
+      .mockImplementation(() => undefined);
     exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as unknown as typeof process.exit);
@@ -175,7 +188,9 @@ describe("notification-email worker bootstrap", () => {
     });
     fakeResend.send.mockResolvedValue({ status: "sent", id: "email-1" });
 
-    await workerInstances[0]!.processor({ data: { notificationId: NOTIFICATION_ID } });
+    await workerInstances[0]!.processor({
+      data: { notificationId: NOTIFICATION_ID },
+    });
 
     expect(fakePrisma.client.notification.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: NOTIFICATION_ID } }),
@@ -233,7 +248,9 @@ describe("notification-email worker bootstrap", () => {
       await bootWorker(noAppUrl);
 
       expect(workerInstances).toHaveLength(workersBefore);
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(APP_URL_ENV));
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(APP_URL_ENV),
+      );
       expect(noAppUrl.close).toHaveBeenCalledOnce();
       expect(process.exitCode).toBe(1);
     } finally {

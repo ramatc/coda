@@ -18,7 +18,6 @@ export const prisma: PrismaClient = resolveSingleton(globalForPrisma, () => {
 
   return new PrismaClient({
     adapter,
-    log:
-      process.env.NODE_ENV === "production" ? ["error"] : ["warn", "error"],
+    log: process.env.NODE_ENV === "production" ? ["error"] : ["warn", "error"],
   });
 });
